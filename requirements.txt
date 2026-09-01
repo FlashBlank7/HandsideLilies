@@ -1,0 +1,4 @@
+cryptography>=42,<47
+PySide6>=6.8,<7
+Pillow>=10,<13
+tzdata>=2025.2,<2027

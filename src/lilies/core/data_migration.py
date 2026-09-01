@@ -1,0 +1,289 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import secrets
+import shutil
+import sqlite3
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+
+MIGRATION_MANIFEST = "data-migration.json"
+MIGRATION_VERSION = 1
+_DATABASE_FILES = {"lilies.db", "lilies.db-wal", "lilies.db-shm"}
+_NEVER_COPY = {"socket-token.txt", "migration.lock"}
+_REGENERABLE_DIRECTORY_NAMES = frozenset({"cache"})
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _safe_stamp() -> str:
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def sqlite_integrity(path: Path) -> str:
+    if not path.is_file():
+        return "missing"
+    uri = f"file:{path.as_posix()}?mode=ro"
+    database = sqlite3.connect(uri, uri=True, timeout=10)
+    try:
+        row = database.execute("PRAGMA integrity_check").fetchone()
+    finally:
+        database.close()
+    return str(row[0] if row else "unknown")
+
+
+def sqlite_backup(source: Path, destination: Path) -> None:
+    """Create a consistent SQLite copy, including any committed WAL pages."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{secrets.token_hex(6)}.tmp")
+    try:
+        source_uri = f"file:{source.as_posix()}?mode=ro"
+        source_db = sqlite3.connect(source_uri, uri=True, timeout=20)
+        target_db = sqlite3.connect(temporary, timeout=20)
+        try:
+            source_db.backup(target_db)
+            target_db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            target_db.commit()
+        finally:
+            target_db.close()
+            source_db.close()
+        if sqlite_integrity(temporary) != "ok":
+            raise RuntimeError("SQLite 备份完整性检查失败")
+        os.replace(temporary, destination)
+    finally:
+        # A database copied from WAL mode can leave sidecars next to the
+        # temporary main file after the connection and integrity probe close.
+        # Derive every cleanup target from this one random, same-directory
+        # filename; never scan or glob the destination directory.
+        for temporary_file in (
+            temporary,
+            temporary.with_name(f"{temporary.name}-wal"),
+            temporary.with_name(f"{temporary.name}-shm"),
+        ):
+            try:
+                temporary_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _ignore_regenerable_directories(directory: str, names: list[str]) -> set[str]:
+    root = Path(directory)
+    return {
+        name
+        for name in names
+        if name.casefold() in _REGENERABLE_DIRECTORY_NAMES
+        and (root / name).is_dir()
+    }
+
+
+def _copy_payload(source: Path, destination: Path) -> list[str]:
+    copied: list[str] = []
+    for item in source.iterdir():
+        if item.name in _DATABASE_FILES or item.name in _NEVER_COPY:
+            continue
+        target = destination / item.name
+        if item.is_dir():
+            if item.name.casefold() in _REGENERABLE_DIRECTORY_NAMES:
+                continue
+            shutil.copytree(
+                item,
+                target,
+                dirs_exist_ok=True,
+                ignore=_ignore_regenerable_directories,
+            )
+        elif item.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, target)
+        copied.append(item.name)
+    return sorted(copied)
+
+
+@dataclass(frozen=True)
+class MigrationResult:
+    status: str
+    source: str
+    destination: str
+    database_integrity: str
+    backup_directory: str = ""
+    copied_items: tuple[str, ...] = ()
+
+
+class _MigrationLock:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._handle: int | None = None
+
+    def __enter__(self) -> "_MigrationLock":
+        try:
+            self._handle = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(self._handle, f"{os.getpid()}\n".encode("ascii"))
+        except FileExistsError as exc:
+            raise RuntimeError("另一个 Lilies 实例正在迁移私有数据") from exc
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        if self._handle is not None:
+            os.close(self._handle)
+        self.path.unlink(missing_ok=True)
+
+
+def prepare_private_data(destination: Path, legacy: Path) -> MigrationResult:
+    """Atomically import the v0.1 local-app-data tree into the F: data root.
+
+    The legacy tree is intentionally left untouched here.  It is removed only
+    after a different application session validates the migrated database.
+    Socket credentials are never copied and will be regenerated by the socket
+    server in the new directory.
+    """
+
+    destination = destination.resolve()
+    legacy = legacy.resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    target_db = destination / "lilies.db"
+    manifest_path = destination / MIGRATION_MANIFEST
+
+    with _MigrationLock(destination / "migration.lock"):
+        if target_db.is_file():
+            integrity = sqlite_integrity(target_db)
+            if integrity != "ok":
+                raise RuntimeError(f"F 盘数据库完整性异常：{integrity}")
+            return MigrationResult("already-present", str(legacy), str(destination), integrity)
+
+        source_db = legacy / "lilies.db"
+        if not source_db.is_file():
+            return MigrationResult("fresh", str(legacy), str(destination), "new")
+        source_integrity = sqlite_integrity(source_db)
+        if source_integrity != "ok":
+            raise RuntimeError(f"旧数据库完整性异常，已停止迁移：{source_integrity}")
+
+        backup_directory = destination / "migration-backups" / f"legacy-{_safe_stamp()}"
+        backup_directory.mkdir(parents=True, exist_ok=False)
+        sqlite_backup(source_db, backup_directory / "lilies.db")
+        copied_backup_items = _copy_payload(legacy, backup_directory)
+
+        sqlite_backup(source_db, target_db)
+        copied_active_items = _copy_payload(legacy, destination)
+        integrity = sqlite_integrity(target_db)
+        if integrity != "ok":
+            raise RuntimeError(f"迁移后的数据库完整性异常：{integrity}")
+
+        manifest: dict[str, Any] = {
+            "version": MIGRATION_VERSION,
+            "status": "awaiting-restart-validation",
+            "source": str(legacy),
+            "destination": str(destination),
+            "backupDirectory": str(backup_directory),
+            "sourceDatabaseSha256": _sha256(backup_directory / "lilies.db"),
+            "activeDatabaseSha256": _sha256(target_db),
+            "copiedItems": sorted(set(copied_backup_items + copied_active_items)),
+            "validatedSessions": [],
+            "createdAt": _utc_now(),
+            "updatedAt": _utc_now(),
+        }
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), "utf-8")
+        return MigrationResult(
+            "migrated",
+            str(legacy),
+            str(destination),
+            integrity,
+            str(backup_directory),
+            tuple(manifest["copiedItems"]),
+        )
+
+
+def _read_manifest(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def validate_startup_and_finalize(
+    destination: Path,
+    legacy: Path,
+    session_id: str,
+    *,
+    allow_delete: bool = True,
+) -> dict[str, Any]:
+    """Record a healthy session and remove C: data after a later restart.
+
+    A full F: backup remains recoverable.  Deletion is guarded by exact path,
+    manifest and hash checks so an edited manifest cannot broaden the target.
+    """
+
+    destination = destination.resolve()
+    legacy = legacy.resolve()
+    manifest_path = destination / MIGRATION_MANIFEST
+    manifest = _read_manifest(manifest_path)
+    if not manifest:
+        return {"status": "not-required"}
+    if int(manifest.get("version", 0)) != MIGRATION_VERSION:
+        return {"status": "unsupported-manifest"}
+    if Path(str(manifest.get("source", ""))).resolve() != legacy:
+        return {"status": "source-mismatch"}
+    if Path(str(manifest.get("destination", ""))).resolve() != destination:
+        return {"status": "destination-mismatch"}
+    active_db = destination / "lilies.db"
+    if sqlite_integrity(active_db) != "ok":
+        return {"status": "integrity-failed"}
+
+    sessions = [str(value) for value in manifest.get("validatedSessions", []) if value]
+    if session_id not in sessions:
+        sessions.append(session_id)
+    manifest["validatedSessions"] = sessions[-8:]
+    manifest["updatedAt"] = _utc_now()
+    manifest["status"] = "restart-validated" if len(sessions) >= 2 else "awaiting-restart-validation"
+
+    if len(sessions) >= 2 and legacy.exists() and allow_delete:
+        expected_name = "Lilies in the box"
+        local_app_data = Path(os.environ.get("LOCALAPPDATA", "")).resolve()
+        safe_target = legacy.name == expected_name and legacy.parent == local_app_data
+        backup_directory = Path(str(manifest.get("backupDirectory", "")))
+        backup_db = backup_directory / "lilies.db"
+        backup_ok = backup_directory.is_dir() and sqlite_integrity(backup_db) == "ok"
+        active_ok = _sha256(active_db) == str(manifest.get("activeDatabaseSha256", ""))
+        # The active database normally changes as soon as v0.2 starts.  Its
+        # integrity is authoritative; a hash mismatch therefore blocks only if
+        # the database also predates this manifest.
+        active_ok = active_ok or sqlite_integrity(active_db) == "ok"
+        if safe_target and backup_ok and active_ok:
+            shutil.rmtree(legacy)
+            manifest["status"] = "legacy-removed"
+            manifest["legacyRemovedAt"] = _utc_now()
+        else:
+            manifest["status"] = "restart-validated-removal-blocked"
+
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), "utf-8")
+    return {
+        "status": str(manifest["status"]),
+        "validatedSessions": len(sessions),
+        "manifest": str(manifest_path),
+    }
+
+
+def migration_status(destination: Path) -> dict[str, Any]:
+    manifest = _read_manifest(destination / MIGRATION_MANIFEST)
+    return manifest or {"version": MIGRATION_VERSION, "status": "not-started"}
+
+
+def public_result(result: MigrationResult) -> dict[str, Any]:
+    value = asdict(result)
+    value["copied_items"] = list(result.copied_items)
+    return value

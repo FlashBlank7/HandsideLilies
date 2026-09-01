@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3840" height="2400" viewBox="0 0 3840 2400">
+  <g fill="none" stroke-linejoin="round">
+    <path d="M260 2080 L470 280 L3370 280 L3580 2080" stroke="#8e7859" stroke-opacity=".22" stroke-width="22"/>
+    <path d="M470 280 L890 610 L2950 610 L3370 280" stroke="#d5c39f" stroke-opacity=".36" stroke-width="34"/>
+    <path d="M890 610 L690 2020 M2950 610 L3150 2020" stroke="#9f8968" stroke-opacity=".18" stroke-width="18"/>
+  </g>
+</svg>

@@ -1,0 +1,56 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-runs/
+.pytest*/
+.pytest-*/
+.pytest-tmp-*/
+.tmp*/
+.test-tmp/
+.diagnostics/
+.feature-audit/
+.codex-*/
+.hit-*/
+*.egg-info/
+build/
+dist/
+artifacts/
+private-data/
+release-backups/
+%SystemDrive%/
+NVIDIA Corporation/
+
+# Local caches, reports and editor state.
+*.log
+*.tmp
+.coverage*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+
+# Credentials and machine-local connector configuration must never be
+# committed.  Example/template files remain allowed explicitly.
+.env
+.env.*
+!.env.example
+*client_secret*.json
+*credentials*.json
+*.pem
+*.p12
+*.key
+
+# Runtime databases and tokens are private even if accidentally written
+# outside private-data during a failed migration.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+socket-token.txt
+
+themes/first-encounter/assets/generated-*

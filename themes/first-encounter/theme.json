@@ -1,0 +1,492 @@
+{
+  "id": "first-encounter",
+  "version": "0.3.42",
+  "title": "初遇",
+  "renderers": ["scene2d", "video"],
+  "defaultRenderer": "scene2d",
+  "intro": {"playOnce": true, "durationMs": 6200, "replayable": true},
+  "palette": {
+    "paper": "#eee6d8", "paperLight": "#fffdf7", "surface": "#fffdf8",
+    "surfaceRaised": "#fffaf0", "ink": "#4d4a45", "muted": "#8e887e",
+    "hairline": "#d4c6b3", "shadow": "#4d403222", "focus": "#6f817c",
+    "cord": "#9f3129", "crackLight": "#e9ffff"
+  },
+  "dock": {
+    "style": "paper-fold-minimal", "collapsedWidth": 64, "collapsedHeight": 6,
+    "expandedMaxWidth": 1080, "expandedHeight": 52, "groupPreviewLimit": 6
+  },
+  "ui": {
+    "language": "paper-porcelain", "cornerRadius": 8, "foldDepth": 10,
+    "motion": {"quickMs": 160, "settleMs": 320, "breathMs": 2900}
+  },
+  "character": {
+    "defaultPose": "idle-prayer",
+    "defaultOutfit": "first-encounter",
+    "poseAssetGateVersion": 3,
+    "outfitAssetGateVersion": 1,
+    "poses": ["idle-prayer", "perch-top", "perch-prone", "title-sit", "edge-peek", "edge-peek-live", "listening", "listening-live", "focus-watch", "reading", "presenting", "box-support", "resting"],
+    "outfits": ["summer-cotton-dress", "home-cardigan", "reading-smock", "focus-coat", "rest-nightdress", "first-encounter"],
+    "poseBundles": {
+      "idle-prayer": {"recipe": "prayer", "clickMask": "character", "compatibleOutfits": ["*"]},
+      "perch-top": {"recipe": "perch", "clickMask": "character", "compatibleOutfits": ["first-encounter", "summer-cotton-dress", "home-cardigan"]},
+      "perch-prone": {"recipe": "pose-artwork", "artworkAsset": "posePerchProne", "clickMask": "perch", "compatibleOutfits": ["first-encounter", "summer-cotton-dress"], "artworkOutfits": ["first-encounter", "summer-cotton-dress"]},
+      "title-sit": {"recipe": "pose-artwork", "artworkAsset": "poseTitleSit", "clickMask": "character", "compatibleOutfits": ["first-encounter", "summer-cotton-dress"], "artworkOutfits": ["first-encounter", "summer-cotton-dress"]},
+      "edge-peek": {"recipe": "edge-peek", "clickMask": "character", "compatibleOutfits": ["first-encounter", "summer-cotton-dress", "home-cardigan"]},
+      "edge-peek-live": {"recipe": "pose-artwork", "artworkAsset": "poseEdgePeek", "clickMask": "edge-peek", "compatibleOutfits": ["first-encounter", "summer-cotton-dress"], "artworkOutfits": ["first-encounter", "summer-cotton-dress"]},
+      "listening": {"recipe": "lean", "clickMask": "character", "compatibleOutfits": ["*"]},
+      "listening-live": {"recipe": "pose-artwork", "artworkAsset": "poseListeningLive", "clickMask": "character", "compatibleOutfits": ["first-encounter", "summer-cotton-dress"], "artworkOutfits": ["first-encounter", "summer-cotton-dress"]},
+      "focus-watch": {"recipe": "pose-artwork", "artworkAsset": "poseFocusKneel", "clickMask": "character", "compatibleOutfits": ["*"], "artworkOutfits": ["first-encounter", "summer-cotton-dress"]},
+      "reading": {"recipe": "pose-artwork", "artworkAsset": "poseExpansionSheet", "spriteId": "reading", "clickMask": "sprite-bounds", "compatibleOutfits": ["reading-smock", "home-cardigan", "first-encounter", "summer-cotton-dress"], "artworkOutfits": ["first-encounter", "summer-cotton-dress"]},
+      "presenting": {"recipe": "pose-artwork", "artworkAsset": "poseExpansionSheet", "spriteId": "presenting", "clickMask": "sprite-bounds", "compatibleOutfits": ["focus-coat", "first-encounter", "summer-cotton-dress"], "artworkOutfits": ["first-encounter", "summer-cotton-dress"]},
+      "box-support": {"recipe": "pose-artwork", "artworkAsset": "poseExpansionSheet", "spriteId": "box-support", "clickMask": "sprite-bounds", "compatibleOutfits": ["*"], "artworkOutfits": ["first-encounter", "summer-cotton-dress"]},
+      "resting": {"recipe": "pose-artwork", "artworkAsset": "poseExpansionSheet", "spriteId": "resting", "clickMask": "sprite-bounds", "compatibleOutfits": ["rest-nightdress", "home-cardigan", "first-encounter", "summer-cotton-dress"], "artworkOutfits": ["first-encounter", "summer-cotton-dress"]}
+    },
+    "habitatPoseVariants": {
+      "desktop-prayer": {
+        "strategy": "desktop", "basePose": "idle-prayer", "heightFactor": 1.0,
+        "layered": {"bodyRotation": 0.0, "headRotation": 0.0, "torsoRotation": 0.0, "skirtRotation": 0.0, "headOffset": [0.0, 0.0], "torsoOffset": [0.0, 0.0], "skirtOffset": [0.0, 0.0]},
+        "artwork": {"rotationBias": 0.0, "motionGain": 1.0}
+      },
+      "pointer-safe-rest": {
+        "strategy": "desktop", "basePose": "title-sit", "heightFactor": 0.90,
+        "layered": {"bodyRotation": -2.0, "headRotation": -3.0, "torsoRotation": 1.5, "skirtRotation": -1.0, "headOffset": [-0.008, 0.006], "torsoOffset": [0.006, -0.008], "skirtOffset": [-0.004, -0.010]},
+        "artwork": {"rotationBias": -0.20, "motionGain": 0.70}
+      },
+      "micro-corner-grip": {
+        "strategy": "tiny", "basePose": "edge-peek-live", "heightFactor": 1.0, "optionalArtworkAsset": "poseMicroCornerGripV1", "optionalArtworkEnabled": false, "proceduralLayeredFallback": true, "artworkOutfits": ["first-encounter", "summer-cotton-dress"],
+        "layered": {"bodyRotation": -6.0, "sideAware": true, "layeredContactAnchor": [0.28, 0.64], "headClipEnd": 0.34, "torsoClipEnd": 0.62, "headScale": [0.92, 0.95], "torsoScale": [0.82, 1.04], "skirtScale": [0.70, 1.08], "headRotation": 5.0, "torsoRotation": -2.5, "skirtRotation": 2.0, "headOffset": [0.018, -0.008], "torsoOffset": [-0.010, 0.004], "skirtOffset": [-0.018, 0.012]},
+        "artwork": {"rotationBias": -0.20, "sideAware": true, "motionGain": 0.72}
+      },
+      "compact-title-curl": {
+        "strategy": "small", "basePose": "title-sit", "heightFactor": 0.86, "optionalArtworkAsset": "poseWindowProneV2", "optionalArtworkEnabled": false, "proceduralLayeredFallback": true, "artworkOutfits": ["first-encounter", "summer-cotton-dress"],
+        "layered": {"bodyRotation": -5.5, "layeredContactAnchor": [0.60, 0.72], "headRotation": -8.0, "torsoRotation": 4.0, "skirtRotation": -2.5, "headOffset": [-0.015, 0.016], "torsoOffset": [0.010, -0.012], "skirtOffset": [-0.010, -0.020]},
+        "artwork": {"rotationBias": -0.45, "motionGain": 0.62}
+      },
+      "title-sit-balance": {
+        "strategy": "small", "basePose": "title-sit", "heightFactor": 0.90,
+        "layered": {"bodyRotation": -1.0, "headRotation": -3.0, "torsoRotation": 1.5, "skirtRotation": -1.0, "headOffset": [-0.008, 0.004], "torsoOffset": [0.006, -0.006], "skirtOffset": [-0.004, -0.010]},
+        "artwork": {"rotationBias": -0.15, "motionGain": 0.85}
+      },
+      "portrait-title-watch": {
+        "strategy": "medium", "basePose": "title-sit", "heightFactor": 0.82,
+        "layered": {"bodyRotation": -2.5, "headRotation": -5.0, "torsoRotation": 2.0, "skirtRotation": -1.5, "headOffset": [-0.010, 0.008], "torsoOffset": [0.008, -0.008], "skirtOffset": [-0.006, -0.012]},
+        "artwork": {"rotationBias": -0.25, "motionGain": 0.74}
+      },
+      "window-perch-tucked": {
+        "strategy": "medium", "basePose": "perch-prone", "heightFactor": 0.56, "optionalArtworkAsset": "poseWindowDangleV1", "optionalArtworkEnabled": false, "proceduralLayeredFallback": true, "artworkOutfits": ["first-encounter", "summer-cotton-dress"],
+        "layered": {"bodyRotation": 28.0, "layeredContactAnchor": [0.50, 0.44], "headClipEnd": 0.30, "torsoClipEnd": 0.56, "headScale": [0.96, 0.92], "torsoScale": [1.10, 0.78], "skirtScale": [1.18, 0.62], "headRotation": -10.0, "torsoRotation": 5.0, "skirtRotation": -5.0, "headOffset": [-0.020, 0.018], "torsoOffset": [0.014, -0.016], "skirtOffset": [-0.018, -0.028]},
+        "artwork": {"rotationBias": -0.40, "motionGain": 0.70}
+      },
+      "window-perch": {
+        "strategy": "medium", "basePose": "perch-prone", "heightFactor": 0.58, "optionalArtworkAsset": "poseWindowDangleV1", "optionalArtworkEnabled": false, "proceduralLayeredFallback": true, "artworkOutfits": ["first-encounter", "summer-cotton-dress"],
+        "layered": {"bodyRotation": 18.0, "layeredContactAnchor": [0.50, 0.42], "headClipEnd": 0.29, "torsoClipEnd": 0.52, "headScale": [1.00, 0.98], "torsoScale": [0.92, 1.12], "skirtScale": [0.78, 1.28], "headRotation": -8.0, "torsoRotation": 4.0, "skirtRotation": -4.0, "headOffset": [-0.018, 0.012], "torsoOffset": [0.012, -0.014], "skirtOffset": [-0.016, -0.022]},
+        "artwork": {"rotationBias": 0.10, "motionGain": 0.82}
+      },
+      "wide-window-sprawl": {
+        "strategy": "large", "basePose": "perch-prone", "heightFactor": 0.58, "optionalArtworkAsset": "poseWideWindowSprawlV1", "optionalArtworkEnabled": false, "proceduralLayeredFallback": true, "artworkOutfits": ["first-encounter", "summer-cotton-dress"],
+        "layered": {"bodyRotation": 72.0, "layeredContactAnchor": [0.50, 0.52], "headRotation": -6.0, "torsoRotation": 3.0, "skirtRotation": -3.0, "headOffset": [-0.014, 0.008], "torsoOffset": [0.010, -0.012], "skirtOffset": [-0.014, -0.018]},
+        "artwork": {"rotationBias": 0.30, "motionGain": 0.88}
+      },
+      "panoramic-prone": {
+        "strategy": "large", "basePose": "perch-prone", "heightFactor": 0.56, "optionalArtworkAsset": "poseWideWindowSprawlV1", "optionalArtworkEnabled": false, "proceduralLayeredFallback": true, "artworkOutfits": ["first-encounter", "summer-cotton-dress"],
+        "layered": {"bodyRotation": 78.0, "layeredContactAnchor": [0.50, 0.50], "headRotation": -4.0, "torsoRotation": 2.0, "skirtRotation": -2.0, "headOffset": [-0.010, 0.006], "torsoOffset": [0.008, -0.010], "skirtOffset": [-0.012, -0.014]},
+        "artwork": {"rotationBias": 0.45, "motionGain": 0.68}
+      },
+      "screen-edge-watch": {
+        "strategy": "maximized", "basePose": "edge-peek-live", "heightFactor": 1.0, "optionalArtworkAsset": "poseEdgeLeanV1", "optionalArtworkEnabled": false, "proceduralLayeredFallback": true, "artworkOutfits": ["first-encounter", "summer-cotton-dress"],
+        "layered": {"bodyRotation": -8.0, "sideAware": true, "layeredContactAnchor": [0.18, 0.58], "headRotation": 5.0, "torsoRotation": -3.0, "skirtRotation": 2.0, "headOffset": [0.018, -0.006], "torsoOffset": [-0.010, 0.004], "skirtOffset": [-0.016, 0.010]},
+        "artwork": {"rotationBias": -0.25, "sideAware": true, "motionGain": 0.78}
+      },
+      "cautious-return": {
+        "strategy": "edge", "basePose": "edge-peek-live", "heightFactor": 1.0, "optionalArtworkAsset": "poseEdgeLeanV1", "optionalArtworkEnabled": false, "proceduralLayeredFallback": true, "artworkOutfits": ["first-encounter", "summer-cotton-dress"],
+        "layered": {"bodyRotation": 6.0, "sideAware": true, "layeredContactAnchor": [0.34, 0.54], "headRotation": -4.0, "torsoRotation": 2.0, "skirtRotation": -1.5, "headOffset": [-0.014, 0.006], "torsoOffset": [0.008, -0.004], "skirtOffset": [0.012, -0.008]},
+        "artwork": {"rotationBias": 0.20, "sideAware": true, "motionGain": 0.76}
+      },
+      "caption-side-lean": {
+        "strategy": "edge", "basePose": "edge-peek-live", "heightFactor": 1.0, "optionalArtworkAsset": "poseEdgeLeanV1", "optionalArtworkEnabled": false, "proceduralLayeredFallback": true, "artworkOutfits": ["first-encounter", "summer-cotton-dress"],
+        "layered": {"bodyRotation": 12.0, "sideAware": true, "layeredContactAnchor": [0.12, 0.74], "headRotation": -6.0, "torsoRotation": 3.0, "skirtRotation": -2.0, "headOffset": [-0.018, 0.008], "torsoOffset": [0.012, -0.006], "skirtOffset": [0.016, -0.010]},
+        "artwork": {"rotationBias": 0.40, "sideAware": true, "motionGain": 0.82}
+      },
+      "edge-listen": {
+        "strategy": "edge", "basePose": "listening-live", "heightFactor": 1.0,
+        "layered": {"bodyRotation": 4.0, "sideAware": true, "headRotation": -5.0, "torsoRotation": 2.5, "skirtRotation": -1.5, "headOffset": [-0.012, 0.006], "torsoOffset": [0.008, -0.004], "skirtOffset": [0.010, -0.008]},
+        "artwork": {"rotationBias": 0.15, "sideAware": true, "motionGain": 0.72}
+      }
+    },
+    "poseArtworkSpecs": {
+      "poseMicroCornerGripV1": {
+        "optional": true,
+        "resolutionTier": "production-v1",
+        "pixelSize": [1536, 1536], "minimumSize": [1536, 1536],
+        "aspectRatio": 1.0,
+        "anchor": [0.28, 0.64], "cordAnchor": [0.44, 0.48],
+        "clickMask": {
+          "type": "composite",
+          "ellipses": [[0.48, 0.25, 0.38, 0.23], [0.22, 0.52, 0.12, 0.18]],
+          "polygons": [[[0.25, 0.35], [0.68, 0.34], [0.82, 0.88], [0.22, 0.92]]]
+        },
+        "requiresMeasurement": ["cordAnchor"],
+        "silhouetteGate": {
+          "distinctFromAsset": "poseEdgePeek",
+          "maxIntersectionOverUnion": 0.82,
+          "minDifferenceRatio": 0.18
+        },
+        "quality": {
+          "minTransparentRatio": 0.20, "minSolidRatio": 0.10,
+          "minTransparentCornerRatio": 0.98,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "poseWindowProneV2": {
+        "optional": true,
+        "resolutionTier": "production-v1",
+        "pixelSize": [1536, 1024], "minimumSize": [1536, 1024],
+        "aspectRatio": 1.5,
+        "anchor": [0.50, 0.68], "cordAnchor": [0.46, 0.56],
+        "clickMask": {
+          "type": "composite",
+          "ellipses": [[0.32, 0.47, 0.29, 0.37]],
+          "polygons": [[[0.23, 0.57], [0.77, 0.47], [0.95, 0.70], [0.72, 0.90], [0.20, 0.82]]]
+        },
+        "requiresMeasurement": ["anchor", "cordAnchor"],
+        "silhouetteGate": {
+          "distinctFromAsset": "poseTitleSit",
+          "maxIntersectionOverUnion": 0.82,
+          "minDifferenceRatio": 0.18
+        },
+        "quality": {
+          "minTransparentRatio": 0.20, "minSolidRatio": 0.10,
+          "minTransparentCornerRatio": 0.98,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "poseWindowDangleV1": {
+        "optional": true,
+        "resolutionTier": "production-v1",
+        "pixelSize": [1280, 1536], "minimumSize": [1280, 1536],
+        "aspectRatio": 0.8333333333333334,
+        "anchor": [0.50, 0.60], "cordAnchor": [0.50, 0.60],
+        "clickMask": {
+          "type": "composite",
+          "ellipses": [[0.50, 0.21, 0.39, 0.20]],
+          "polygons": [[[0.27, 0.30], [0.73, 0.30], [0.78, 0.88], [0.62, 0.98], [0.38, 0.98], [0.22, 0.88]]]
+        },
+        "requiresMeasurement": ["cordAnchor"],
+        "silhouetteGate": {
+          "distinctFromAsset": "posePerchProne",
+          "maxIntersectionOverUnion": 0.82,
+          "minDifferenceRatio": 0.18
+        },
+        "quality": {
+          "minTransparentRatio": 0.20, "minSolidRatio": 0.10,
+          "minTransparentCornerRatio": 0.98,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "poseWideWindowSprawlV1": {
+        "optional": true,
+        "resolutionTier": "production-v1",
+        "pixelSize": [2048, 1024], "minimumSize": [2048, 1024],
+        "aspectRatio": 2.0,
+        "anchor": [0.50, 0.82], "cordAnchor": [0.42, 0.58],
+        "clickMask": {
+          "type": "composite",
+          "ellipses": [[0.27, 0.48, 0.24, 0.38]],
+          "polygons": [[[0.20, 0.56], [0.75, 0.44], [0.96, 0.64], [0.78, 0.88], [0.18, 0.82]]]
+        },
+        "requiresMeasurement": ["anchor", "cordAnchor"],
+        "silhouetteGate": {
+          "distinctFromAsset": "posePerchProne",
+          "maxIntersectionOverUnion": 0.82,
+          "minDifferenceRatio": 0.18
+        },
+        "quality": {
+          "minTransparentRatio": 0.20, "minSolidRatio": 0.10,
+          "minTransparentCornerRatio": 0.98,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "poseEdgeLeanV1": {
+        "optional": true,
+        "resolutionTier": "production-v1",
+        "pixelSize": [1024, 2048], "minimumSize": [1024, 2048],
+        "aspectRatio": 0.5,
+        "anchor": [0.16, 0.62], "cordAnchor": [0.34, 0.46],
+        "clickMask": {
+          "type": "composite",
+          "ellipses": [[0.52, 0.19, 0.44, 0.18]],
+          "polygons": [[[0.14, 0.28], [0.78, 0.28], [0.88, 0.86], [0.65, 0.99], [0.25, 0.99], [0.10, 0.82]]]
+        },
+        "requiresMeasurement": ["anchor", "cordAnchor"],
+        "silhouetteGate": {
+          "distinctFromAsset": "poseEdgePeek",
+          "maxIntersectionOverUnion": 0.82,
+          "minDifferenceRatio": 0.18
+        },
+        "quality": {
+          "minTransparentRatio": 0.20, "minSolidRatio": 0.10,
+          "minTransparentCornerRatio": 0.98,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "posePerchProne": {
+        "resolutionTier": "legacy-v1",
+        "pixelSize": [365, 364], "minimumSize": [360, 360],
+        "aspectRatio": 1.0027472527472527,
+        "clickMask": {"type": "ellipse", "ellipse": [0.50, 0.50, 0.48, 0.48]},
+        "quality": {
+          "minTransparentRatio": 0.20, "minSolidRatio": 0.10,
+          "minTransparentCornerRatio": 1.0,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.001,
+          "maxWhiteFringeRiskRatio": 0.005
+        }
+      },
+      "poseTitleSit": {
+        "resolutionTier": "legacy-v1",
+        "pixelSize": [350, 592], "minimumSize": [340, 580],
+        "aspectRatio": 0.5912162162162162,
+        "clickMask": {
+          "type": "composite",
+          "ellipses": [[0.52, 0.21, 0.35, 0.19]],
+          "polygons": [[[0.31, 0.32], [0.73, 0.31], [0.84, 0.72], [0.58, 0.99], [0.06, 0.96], [0.17, 0.57]]]
+        },
+        "quality": {
+          "minTransparentRatio": 0.20, "minSolidRatio": 0.10,
+          "minTransparentCornerRatio": 1.0,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.001,
+          "maxWhiteFringeRiskRatio": 0.005
+        }
+      },
+      "poseEdgePeek": {
+        "resolutionTier": "legacy-v1",
+        "pixelSize": [227, 620], "minimumSize": [220, 600],
+        "aspectRatio": 0.3661290322580645,
+        "clickMask": {"type": "rect", "rect": [0.12, 0.02, 0.86, 0.96]},
+        "quality": {
+          "minTransparentRatio": 0.20, "minSolidRatio": 0.10,
+          "minTransparentCornerRatio": 1.0,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.001,
+          "maxWhiteFringeRiskRatio": 0.005
+        }
+      },
+      "poseListeningLive": {
+        "resolutionTier": "legacy-v1",
+        "pixelSize": [314, 614], "minimumSize": [300, 600],
+        "aspectRatio": 0.511400651465798,
+        "clickMask": {
+          "type": "composite",
+          "ellipses": [[0.48, 0.20, 0.42, 0.18]],
+          "polygons": [[[0.25, 0.31], [0.78, 0.30], [0.92, 0.69], [0.72, 0.99], [0.30, 0.99], [0.20, 0.61]]]
+        },
+        "quality": {
+          "minTransparentRatio": 0.20, "minSolidRatio": 0.10,
+          "minTransparentCornerRatio": 1.0,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.001,
+          "maxWhiteFringeRiskRatio": 0.005
+        }
+      },
+      "poseFocusKneel": {
+        "resolutionTier": "production-v1",
+        "pixelSize": [1145, 1374], "minimumSize": [1145, 1374],
+        "aspectRatio": 0.8333333333333334,
+        "clickMask": {
+          "type": "composite",
+          "ellipses": [[0.52, 0.25, 0.43, 0.24]],
+          "polygons": [[[0.36, 0.44], [0.67, 0.43], [0.83, 0.84], [0.72, 0.98], [0.24, 0.98], [0.25, 0.72]]]
+        },
+        "sha256": "bde04df0eb20e3e248df4d2fb46a3773d1376a516772c368c275d12a199b0376",
+        "quality": {
+          "minTransparentRatio": 0.20,
+          "minSolidRatio": 0.10,
+          "minTransparentCornerRatio": 0.98,
+          "maxTransparentRgbLeakRatio": 0.001,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "poseExpansionSheet": {
+        "resolutionTier": "production-v1",
+        "pixelSize": [1230, 1278], "minimumSize": [1230, 1278],
+        "aspectRatio": 0.9624413145539906,
+        "sha256": "6f6cfe5f995e4f81adef40475059ba2218085a67d059d6020cd4ba60ba5ad481",
+        "layout": "2x2-custom-clips",
+        "quality": {
+          "minTransparentRatio": 0.40, "minSolidRatio": 0.20,
+          "minTransparentCornerRatio": 0.98,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        },
+        "sprites": {
+          "reading": {
+            "poseId": "reading", "quadrant": "top-left",
+            "sourceRect": [120, 8, 470, 500],
+            "anchor": [0.5, 0.5], "cordAnchor": [0.557, 0.702],
+            "clickMask": {"type": "rect", "rect": [0.08, 0.03, 0.90, 0.93], "alphaThreshold": 16}
+          },
+          "presenting": {
+            "poseId": "presenting", "quadrant": "top-right",
+            "sourceRect": [730, 0, 430, 705],
+            "anchor": [0.5, 0.5], "cordAnchor": [0.39, 0.39],
+            "clickMask": {"type": "rect", "rect": [0.06, 0.02, 0.90, 0.96], "alphaThreshold": 16}
+          },
+          "box-support": {
+            "poseId": "box-support", "quadrant": "bottom-left",
+            "sourceRect": [70, 510, 470, 768],
+            "anchor": [0.5, 0.5], "cordAnchor": [0.58, 0.44],
+            "clickMask": {"type": "rect", "rect": [0.07, 0.03, 0.88, 0.92], "alphaThreshold": 16}
+          },
+          "resting": {
+            "poseId": "resting", "quadrant": "bottom-right",
+            "sourceRect": [665, 700, 495, 578],
+            "anchor": [0.5, 0.5], "cordAnchor": [0.53, 0.38],
+            "clickMask": {"type": "rect", "rect": [0.05, 0.05, 0.88, 0.91], "alphaThreshold": 16}
+          }
+        }
+      }
+    },
+    "outfitBundles": {
+      "first-encounter": {"asset": "desktopPet", "anchorVersion": 2, "implementationStatus": "production"},
+      "summer-cotton-dress": {"asset": "desktopPetSummer", "anchorVersion": 2, "implementationStatus": "visual-alias", "visualAliasOf": "first-encounter"},
+      "home-cardigan": {"asset": "desktopPetHome", "anchorVersion": 2, "implementationStatus": "production"},
+      "reading-smock": {"asset": "desktopPetReading", "anchorVersion": 2, "implementationStatus": "production"},
+      "focus-coat": {"asset": "desktopPetFocus", "anchorVersion": 2, "implementationStatus": "production"},
+      "rest-nightdress": {"asset": "desktopPetRest", "anchorVersion": 2, "implementationStatus": "production"}
+    },
+    "outfitAlignment": {
+      "anchorVersion": 2,
+      "solidAlphaThreshold": 192,
+      "canonicalOutfit": "first-encounter",
+      "canonicalSolidCenterX": 0.4989373007438895,
+      "canonicalFeetY": 0.9563397129186603,
+      "supportCord": [0.39, 0.425]
+    },
+    "outfitArtworkSpecs": {
+      "first-encounter": {
+        "asset": "desktopPet", "resolutionTier": "production-v1",
+        "pixelSize": [941, 1672], "minimumSize": [900, 1600],
+        "aspectRatio": 0.562799043062201, "anchorVersion": 2,
+        "sha256": "c424c710dfbff06398fcbb5490052cc1dcdba8dc5966fe019c5582d815c4d7d9",
+        "alignment": {"solidCenterX": 0.4989373007438895, "feetY": 0.9563397129186603},
+        "quality": {
+          "minTransparentRatio": 0.40, "minSolidRatio": 0.30,
+          "minTransparentCornerRatio": 1.0,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "summer-cotton-dress": {
+        "asset": "desktopPetSummer", "resolutionTier": "production-v1",
+        "pixelSize": [941, 1672], "minimumSize": [900, 1600],
+        "aspectRatio": 0.562799043062201, "anchorVersion": 2,
+        "sha256": "c424c710dfbff06398fcbb5490052cc1dcdba8dc5966fe019c5582d815c4d7d9",
+        "alignment": {"solidCenterX": 0.4989373007438895, "feetY": 0.9563397129186603},
+        "quality": {
+          "minTransparentRatio": 0.40, "minSolidRatio": 0.30,
+          "minTransparentCornerRatio": 1.0,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "home-cardigan": {
+        "asset": "desktopPetHome", "resolutionTier": "production-v1",
+        "pixelSize": [940, 1672], "minimumSize": [900, 1600],
+        "aspectRatio": 0.562200956937799, "anchorVersion": 2,
+        "sha256": "f3c67add3dd7aa808ca472e10279f6567be366edfa2492699a37f24eaa600d23",
+        "alignment": {"solidCenterX": 0.4978723404255319, "feetY": 0.9611244019138756},
+        "quality": {
+          "minTransparentRatio": 0.40, "minSolidRatio": 0.30,
+          "minTransparentCornerRatio": 1.0,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "reading-smock": {
+        "asset": "desktopPetReading", "resolutionTier": "production-v1",
+        "pixelSize": [941, 1672], "minimumSize": [900, 1600],
+        "aspectRatio": 0.562799043062201, "anchorVersion": 2,
+        "sha256": "6d8687e4352f107de20a0f51581b503896a974ff4f7065b059b4eeef88815cbc",
+        "alignment": {"solidCenterX": 0.49946865037194477, "feetY": 0.9844497607655502},
+        "quality": {
+          "minTransparentRatio": 0.40, "minSolidRatio": 0.30,
+          "minTransparentCornerRatio": 1.0,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "focus-coat": {
+        "asset": "desktopPetFocus", "resolutionTier": "production-v1",
+        "pixelSize": [944, 1666], "minimumSize": [900, 1600],
+        "aspectRatio": 0.5666266506602641, "anchorVersion": 2,
+        "sha256": "a01a7b0c452c57fd8a0c58f6cabf0a942ccc2c14221ccd73890603f9b2579b65",
+        "alignment": {"solidCenterX": 0.4957627118644068, "feetY": 0.9573829531812725},
+        "quality": {
+          "minTransparentRatio": 0.40, "minSolidRatio": 0.30,
+          "minTransparentCornerRatio": 1.0,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      },
+      "rest-nightdress": {
+        "asset": "desktopPetRest", "resolutionTier": "production-v1",
+        "pixelSize": [940, 1672], "minimumSize": [900, 1600],
+        "aspectRatio": 0.562200956937799, "anchorVersion": 2,
+        "sha256": "9bceaa79320e822f4db2f6044c545de14224018a3171b83e6b86dd54ad8b96fc",
+        "alignment": {"solidCenterX": 0.498936170212766, "feetY": 0.9509569377990431},
+        "quality": {
+          "minTransparentRatio": 0.40, "minSolidRatio": 0.30,
+          "minTransparentCornerRatio": 1.0,
+          "maxTransparentRgbLeakRatio": 0.0005,
+          "maxGreenBoundaryRatio": 0.002,
+          "maxWhiteFringeRiskRatio": 0.01
+        }
+      }
+    },
+    "anchors": {"neckCord": [0.5, 0.295], "headPivot": [0.5, 0.19], "feet": [0.5, 0.97], "supportCord": [0.39, 0.425]}
+  },
+  "iconPack": "assets/icon-pack.json",
+  "assets": {
+    "background": "assets/first-encounter-background-master.png",
+    "lilith": "assets/lilith-cracked-cutout-master.png",
+    "desktopPet": "assets/lilith-desktop-pet-chibi-v4.png",
+    "desktopPetSummer": "assets/lilith-desktop-pet-chibi-v4.png",
+    "desktopPetHome": "assets/lilith-outfit-home-cardigan-transparent-v2.png",
+    "desktopPetReading": "assets/lilith-outfit-reading-smock-transparent-v1.png",
+    "desktopPetFocus": "assets/lilith-outfit-focus-coat-transparent-v1.png",
+    "desktopPetRest": "assets/lilith-outfit-rest-nightdress-transparent-v2.png",
+    "posePerchProne": "assets/lilith-pose-perch-prone-v1.png",
+    "poseTitleSit": "assets/lilith-pose-title-sit-v1.png",
+    "poseEdgePeek": "assets/lilith-pose-edge-peek-v1.png",
+    "poseListeningLive": "assets/lilith-pose-listening-live-v1.png",
+    "poseFocusKneel": "assets/lilith-pose-focus-kneel-v1.png",
+    "poseExpansionSheet": "assets/lilith-pose-expansion-sheet-v1.png",
+    "poseMicroCornerGripV1": "assets/lilith-pose-micro-corner-grip-v1.png",
+    "poseWindowProneV2": "assets/lilith-pose-window-prone-v2.png",
+    "poseWindowDangleV1": "assets/lilith-pose-window-dangle-v1.png",
+    "poseWideWindowSprawlV1": "assets/lilith-pose-wide-window-sprawl-v1.png",
+    "poseEdgeLeanV1": "assets/lilith-pose-edge-lean-v1.png",
+    "cartonBack": "assets/carton-back.svg", "cartonForeground": "assets/carton-front.svg",
+    "crackGlow": "assets/crack-glow.svg", "redCord": "assets/red-cord.svg",
+    "dust": "assets/dust.svg", "video": "assets/first-encounter-loop.mp4"
+  },
+  "performance": {"activeFps": 60, "coveredFps": 15, "pauseWhenHidden": true}
+}

@@ -1,0 +1,13 @@
+{
+  "id": "first-encounter-porcelain-line",
+  "version": "0.1.0",
+  "style": "porcelain-line",
+  "glyphs": {
+    "application": "◉",
+    "folder": "▱",
+    "file": "□",
+    "box": "○",
+    "memory": "◇",
+    "system": "⌁"
+  }
+}

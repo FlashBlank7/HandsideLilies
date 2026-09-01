@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lilies-in-the-box"
+version = "0.3.42"
+description = "Lilies in the box — a recoverable Windows desktop shell and local Lilith agent."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "cryptography>=42,<47",
+  "PySide6>=6.8,<7",
+  "Pillow>=10,<13",
+  "tzdata>=2025.2,<2027",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "PyInstaller>=6.10,<7",
+  "imageio-ffmpeg>=0.6,<1",
+]
+
+[project.scripts]
+lilies-in-the-box = "lilies.app:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]

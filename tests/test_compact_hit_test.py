@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import os
 from ctypes import wintypes
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
+from PySide6.QtTest import QTest
 
 from lilies.app import CompactHitTestFilter, CompactPointerEventFilter
 
@@ -171,6 +173,30 @@ def test_high_rate_native_pointer_stream_keeps_only_the_newest_sample():
     }
 
 
+def test_system_owned_pointer_stream_skips_all_sampling_work():
+    root = _NativeMoveRoot()
+    root.setProperty("manualDragActive", True)
+    event_filter = CompactPointerEventFilter(root)
+    assert event_filter.tryStartSystemMove(71) is True
+
+    for index in range(1000):
+        event = QMouseEvent(
+            QEvent.Type.MouseMove,
+            QPointF(20.0, 30.0),
+            QPointF(float(index), float(index + 10)),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        assert event_filter.eventFilter(root, event) is True
+
+    assert event_filter.takeLatestPointerEvent(0) == {
+        "available": False,
+        "serial": 0,
+    }
+    event_filter.acknowledgeSystemMoveFinished(71)
+
+
 def test_active_manual_drag_consumes_only_moves_and_keeps_release_point():
     root = QObject()
     root.setProperty("manualDragActive", False)
@@ -249,6 +275,18 @@ class _NativeMoveRoot(QObject):
     def setPosition(self, point):
         self.positions.append(QPoint(point))
 
+    def width(self):
+        return 420
+
+    def height(self):
+        return 396
+
+    def devicePixelRatio(self):
+        return 1.5
+
+    def screen(self):
+        return None
+
 
 def test_drag_position_bridge_moves_both_axes_atomically_and_rejects_nan():
     root = _NativeMoveRoot()
@@ -280,3 +318,60 @@ def test_native_move_completion_waits_one_turn_and_honors_release_ack():
     event_filter.acknowledgeSystemMoveFinished(42)
     app.processEvents()
     assert root.completions == [41]
+
+
+def test_drag_diagnostics_are_content_free_and_persist_after_release(tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _NativeMoveRoot()
+    report_path = tmp_path / "runtime" / "pet-drag-latest.json"
+    event_filter = CompactPointerEventFilter(
+        root,
+        diagnostics_path=report_path,
+    )
+    press = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(40.0, 50.0),
+        QPointF(440.0, 550.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    assert event_filter.eventFilter(root, press) is False
+    assert event_filter.tryStartSystemMove(81) is True
+    event_filter.noteSystemMoveEntered(100, 100)
+    # The root reports DPR 1.5, so the logical 4 px threshold is 6 physical
+    # pixels. The exact boundary is still a click; only a larger path latches.
+    event_filter.noteSystemWindowMoving(106, 100)
+    assert event_filter.systemMoveHadMotion(81) is False
+    event_filter.noteSystemWindowMoving(107, 100)
+    move = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(46.0, 54.0),
+        QPointF(446.0, 554.0),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    assert event_filter.eventFilter(root, move) is True
+    event_filter.noteSystemMoveExited()
+    assert event_filter.systemMoveHadMotion(81) is True
+    assert event_filter.systemMoveHadMotion(82) is False
+    event_filter.completeGestureDiagnostics(81, True, True, True)
+    QTest.qWait(220)
+
+    report = json.loads(report_path.read_text("utf-8"))
+    assert report["mode"] == "native"
+    assert report["moved"] is True
+    assert report["systemMoveStartReturned"] is True
+    assert report["systemMoveEntered"] is True
+    assert report["systemMoveExited"] is True
+    assert report["systemMovingMessages"] == 2
+    assert report["nativeMotionDistancePhysical"] == 7.0
+    assert report["dragThresholdPhysical"] == 6.0
+    assert report["nativeMouseMovesSuppressed"] == 1
+    assert report["directMoveCommits"] == 0
+    assert report["devicePixelRatio"] == 1.5
+    assert not any(
+        key.casefold() in {"x", "y", "cursor", "title", "text"}
+        for key in report
+    )

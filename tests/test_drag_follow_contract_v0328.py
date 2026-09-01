@@ -21,9 +21,12 @@ def test_direct_character_drag_uses_the_atomic_window_position_bridge() -> None:
 
     assert "nativeMoveController.moveWindowForDrag(" in helper
     assert "x = targetX" in helper and "y = targetY" in helper
-    assert follow.count("moveWindowForDrag(") == 2
-    assert follow.index("if (nativeSystemMoveActive)") < follow.index(
-        "moveWindowForDrag(cursorX - dragGrabOffsetX"
+    # One frame has one geometry authority and one atomic commit.  The old
+    # first-threshold branch submitted an eager move and then submitted the
+    # same target again at the bottom of this function.
+    assert follow.count("moveWindowForDrag(") == 1
+    assert follow.index("nativeSystemMoveStartPending") < follow.index(
+        "moveWindowForDrag(targetX, targetY)"
     )
 
     app_source = (ROOT / "src" / "lilies" / "app.py").read_text("utf-8")
@@ -44,10 +47,13 @@ def test_high_rate_pointer_events_are_coalesced_to_one_move_per_drag_frame() -> 
     assert "dragPointerEventPending = true" in event_handler
     assert "followPointerAt(" not in event_handler
     assert "if (followPendingPointerEvent())" in frame_handler
+    assert "nativeSystemMoveStartPending" in frame_handler
+    assert "nativeSystemMoveActive" in frame_handler
     frame_animation_start = source.index("FrameAnimation {", frame_end)
     frame_animation_end = source.index("Timer {", frame_animation_start)
     frame_animation = source[frame_animation_start:frame_animation_end]
     assert "running: petWindow.manualDragActive" in frame_animation
+    assert "&& !petWindow.nativeSystemMoveStartPending" in frame_animation
     assert "onTriggered: petWindow.followPointerFrame()" in frame_animation
     assert "interval:" not in frame_animation
 
@@ -70,6 +76,9 @@ def test_native_move_is_consumed_after_press_without_swallowing_release() -> Non
     )
     event_filter = app_source[event_filter_start:event_filter_end]
 
+    assert event_filter.index("self._active_system_move_serial > 0") < event_filter.index(
+        "point = event.globalPosition()"
+    )
     assert "event.type() == QEvent.Type.MouseMove" in event_filter
     assert 'bool(self.root.property("manualDragActive"))' in event_filter
     assert "MouseButtonRelease" not in event_filter.split("return (", 1)[1]

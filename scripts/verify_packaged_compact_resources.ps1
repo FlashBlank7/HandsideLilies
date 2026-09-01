@@ -326,15 +326,15 @@ function Get-PackagedDistFootprint([string]$DistRoot) {
 }
 
 $ProjectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$ExpectedApplicationVersion = '0.3.43'
+$ExpectedApplicationVersion = '0.3.44'
 if ([string]::IsNullOrWhiteSpace($Executable)) {
     $Executable = Join-Path $ProjectRoot 'dist\LiliesInTheBox\LiliesInTheBox.exe'
 }
 if ([string]::IsNullOrWhiteSpace($SelfTestReport)) {
-    $SelfTestReport = Join-Path $ProjectRoot 'artifacts\packaged-self-test-v0343.json'
+    $SelfTestReport = Join-Path $ProjectRoot 'artifacts\packaged-self-test-v0344.json'
 }
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
-    $ReportPath = Join-Path $ProjectRoot 'artifacts\packaged-compact-resource-v0343.json'
+    $ReportPath = Join-Path $ProjectRoot 'artifacts\packaged-compact-resource-v0344.json'
 }
 
 $Executable = [IO.Path]::GetFullPath($Executable)

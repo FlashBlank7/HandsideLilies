@@ -62,25 +62,35 @@ def test_native_system_move_and_manual_fallback_never_move_same_frame() -> None:
     consume_start = source.index("function consumePointerEvent(", follow_start)
     follow_handler = source[follow_start:consume_start]
 
-    native_guard = follow_handler.index("if (nativeSystemMoveActive)\n                    return")
-    manual_assignment = follow_handler.index(
-        "moveWindowForDrag(cursorX - dragGrabOffsetX"
+    native_guard = follow_handler.index(
+        "if (!manualDragActive || nativeSystemMoveStartPending"
     )
+    manual_assignment = follow_handler.index("moveWindowForDrag(targetX, targetY)")
     assert native_guard < manual_assignment
+    assert follow_handler.count("moveWindowForDrag(") == 1
+    frame_start = source.index("function followPointerFrame()")
+    frame_end = source.index("function followGlobalPointerNow()", frame_start)
+    frame_handler = source[frame_start:frame_end]
+    assert "nativeSystemMoveStartPending" in frame_handler
+    assert "nativeSystemMoveActive" in frame_handler
 
 
-def test_native_move_latches_path_displacement_even_if_it_returns_to_origin() -> None:
+def test_native_move_latches_path_without_qml_geometry_hot_callbacks() -> None:
     source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
-    start = source.index("function recordNativeWindowMotion()")
-    end = source.index("onVisibleChanged:", start)
-    handler = source[start:end]
+    assert "onXChanged: recordNativeWindowMotion()" not in source
+    assert "onYChanged: recordNativeWindowMotion()" not in source
+    assert "function recordNativeWindowMotion()" not in source
 
-    assert "onXChanged: recordNativeWindowMotion()" in source
-    assert "onYChanged: recordNativeWindowMotion()" in source
-    assert "nativeSystemMoveStartPending" in handler
-    assert "nativeSystemMoveActive" in handler
-    assert "x - dragWindowX, y - dragWindowY" in handler
-    assert "dragMoved = true" in handler
+    start = source.index("function finishCharacterGesture(")
+    end = source.index("function finishNativeSystemMove(", start)
+    handler = source[start:end]
+    assert "nativeMoveController.systemMoveHadMotion(" in handler
+    assert "dragMoved || nativePathMoved" in handler
+
+    app_source = (ROOT / "src" / "lilies" / "app.py").read_text("utf-8")
+    assert "def systemMoveHadMotion(" in app_source
+    assert "self._system_move_max_distance_squared" in app_source
+    assert "self._system_move_threshold_physical**2" in app_source
 
 
 def test_native_move_completion_is_serialized_and_cancel_waits_for_it() -> None:
@@ -91,6 +101,9 @@ def test_native_move_completion_is_serialized_and_cancel_waits_for_it() -> None:
     cancel_start = source.index("onCharacterCanceled:")
     cancel_end = source.index("onWheelStepped:", cancel_start)
     cancel_handler = source[cancel_start:cancel_end]
+    release_start = source.index("onCharacterReleased:")
+    release_end = source.index("onCharacterCanceled:", release_start)
+    release_handler = source[release_start:release_end]
 
     assert "serial !== nativeSystemMoveGestureSerial" in finish_handler
     assert "finishCharacterGesture(false, true, serial)" in finish_handler
@@ -99,6 +112,14 @@ def test_native_move_completion_is_serialized_and_cancel_waits_for_it() -> None:
     assert "petWindow.nativeSystemMoveCancelPending = true" in cancel_handler
     assert cancel_handler.index("nativeSystemMoveCancelPending = true") < cancel_handler.index(
         "return"
+    )
+    assert "petWindow.nativeSystemMoveStartPending" in release_handler
+    assert "|| petWindow.nativeSystemMoveActive" in release_handler
+    assert release_handler.index("nativeSystemMoveCancelPending = true") < release_handler.index(
+        "return"
+    )
+    assert release_handler.index("return") < release_handler.index(
+        "petWindow.finishCharacterGesture("
     )
 
     app_source = (ROOT / "src" / "lilies" / "app.py").read_text("utf-8")
@@ -114,35 +135,63 @@ def test_gesture_finish_has_one_stationary_and_one_moved_outcome() -> None:
     end = source.index("function finishNativeSystemMove(", start)
     handler = source[start:end]
 
-    assert "detachForManualDrag()" in handler
+    assert "dragFinalizePending = true" in handler
     assert "desktop.clampDraggedFigureToArea(targetArea, true)" in handler
     assert handler.index("desktop.clampDraggedFigureToArea(targetArea, true)") < handler.index(
-        "detachForManualDrag()"
+        "dragFinalizePending = true"
     )
-    assert "dragPresentationSettleTimer.restart()" in handler
-    assert "compactWindow.expanded = !compactWindow.expanded" in handler
+    finalizer_start = handler.index("function finalizeMovedCharacterGesture()")
+    finalizer = handler[finalizer_start:]
+    assert "backend.detachPetHabitat(x, y)" in finalizer
+    assert "dragPresentationSettleTimer.restart()" in finalizer
+    assert handler.index("Qt.callLater(function()") < finalizer_start
+    assert "compactWindow.expanded = !dragMenuWasExpanded" in handler
     assert "nativeMoveController.acknowledgeSystemMoveFinished(" in handler
     assert "desktop.scheduleCompactLayoutPersistence()" in handler
 
 
-def test_direct_drag_detaches_before_first_pointer_reposition() -> None:
+def test_drag_freezes_pose_and_defers_detach_until_after_release() -> None:
     source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
     start = source.index("function followPointerAt(")
     end = source.index("function consumePointerEvent(", start)
     handler = source[start:end]
 
     first_drag = handler.index("if (!dragMoved) {")
-    detach = handler.index("detachForManualDrag()", first_drag)
-    first_position = handler.index(
-        "moveWindowForDrag(cursorX - dragGrabOffsetX", first_drag
-    )
-    assert first_drag < detach < first_position
+    first_position = handler.index("moveWindowForDrag(targetX, targetY)", first_drag)
+    assert first_drag < first_position
+    assert "detachForManualDrag()" not in handler
+    assert "remapCharacterGrabAfterDetach()" not in handler
+
+    assert "function recordNativeWindowMotion()" not in source
+
+    press_start = source.index("onCharacterPressStarted:")
+    press_end = source.index("onCharacterPointerMoved:", press_start)
+    assert "compactLilith.interactionSnap = true" in source[press_start:press_end]
+    assert "compactWindow.prepareForCharacterDrag()" in source[press_start:press_end]
+    assert "orbitProgressAnimation.stop()" in source
+    assert "boxRotationAnimation.stop()" in source
+    assert source.count("enabled: !petWindow.manualDragActive") >= 2
 
     body_source = (ROOT / "qml" / "V03PetBody.qml").read_text("utf-8")
     assert "property bool interactionSnap: false" in body_source
     assert body_source.count("enabled: !root.interactionSnap") >= 20
     assert "onManualDragActiveChanged:" in source
     assert "compactLilith.interactionSnap = false" in source
+
+
+def test_pending_release_detach_is_committed_before_hidden_state_clears_it() -> None:
+    source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
+    pet_start = source.index("id: petWindow")
+    visible_start = source.index("onVisibleChanged:", pet_start)
+    visible_end = source.index("Behavior on x", visible_start)
+    handler = source[visible_start:visible_end]
+
+    assert handler.index("if (dragFinalizePending)") < handler.index(
+        "finalizeInterruptedInteractionForHide()"
+    )
+    assert handler.index("finalizeMovedCharacterGesture()") < handler.index(
+        "dragFinalizePending = false"
+    )
 
 
 def test_release_clamp_tracks_visible_figure_and_rechecks_after_pose_transition() -> None:

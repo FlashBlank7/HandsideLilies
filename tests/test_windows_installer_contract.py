@@ -11,8 +11,8 @@ def test_installer_rejects_wrong_exe_version_before_any_mutation() -> None:
 
     call = "Assert-ReleaseExecutable $SourceExe"
     assert "function Assert-ReleaseExecutable" in installer
-    assert "$ExpectedFileVersion = '0.3.43.0'" in installer
-    assert "$ExpectedProductVersion = '0.3.43'" in installer
+    assert "$ExpectedFileVersion = '0.3.44.0'" in installer
+    assert "$ExpectedProductVersion = '0.3.44'" in installer
     assert ".VersionInfo" in installer
     assert "FileVersion" in installer
     assert "ProductVersion" in installer

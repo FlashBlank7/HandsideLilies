@@ -52,7 +52,9 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
     """Let clicks pass through the invisible part of the compact tool window."""
 
     WM_NCHITTEST = 0x0084
+    WM_ENTERSIZEMOVE = 0x0231
     WM_EXITSIZEMOVE = 0x0232
+    WM_MOVING = 0x0216
     HTCLIENT = 1
     HTTRANSPARENT = -1
 
@@ -175,6 +177,30 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         if self.native_window_id <= 0 or int(msg.hWnd) != self.native_window_id:
             return False, 0
         self.native_dispatch_count += 1
+        if msg.message == self.WM_ENTERSIZEMOVE:
+            controller = self.native_move_controller
+            if controller is not None:
+                rect = wintypes.RECT()
+                if ctypes.windll.user32.GetWindowRect(
+                    int(msg.hWnd), ctypes.byref(rect)
+                ):
+                    controller.noteSystemMoveEntered(rect.left, rect.top)
+                else:
+                    controller.noteSystemMoveEntered()
+            return False, 0
+        if msg.message == self.WM_MOVING:
+            controller = self.native_move_controller
+            if controller is not None:
+                try:
+                    if not int(msg.lParam):
+                        raise ValueError("WM_MOVING did not provide a RECT")
+                    proposed = wintypes.RECT.from_address(int(msg.lParam))
+                    controller.noteSystemWindowMoving(
+                        proposed.left, proposed.top
+                    )
+                except (TypeError, ValueError):
+                    controller.noteSystemWindowMoving()
+            return False, 0
         if msg.message == self.WM_EXITSIZEMOVE:
             # QWindowsWindow releases native capture before entering the
             # system move loop.  Depending on the final cursor position, Qt
@@ -184,17 +210,23 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             # to finish the same gesture.
             controller = self.native_move_controller
             if controller is not None:
+                controller.noteSystemMoveExited()
                 controller.queueSystemMoveFinished()
             return False, 0
         if msg.message != self.WM_NCHITTEST:
             return False, 0
         self.native_hit_test_count += 1
-        try:
-            drag_active = bool(self.root.property("manualDragActive")) or bool(
-                self.root.property("nativeSystemMoveActive")
-            )
-        except (AttributeError, KeyError, RuntimeError, TypeError):
-            drag_active = False
+        controller = self.native_move_controller
+        drag_active = bool(
+            controller is not None and controller.native_system_move_active
+        )
+        if not drag_active:
+            try:
+                drag_active = bool(self.root.property("manualDragActive")) or bool(
+                    self.root.property("nativeSystemMoveActive")
+                )
+            except (AttributeError, KeyError, RuntimeError, TypeError):
+                drag_active = False
         if drag_active:
             # The press already proved that this gesture began on an
             # interactive island. Re-walking the full QQuickItem tree for
@@ -244,14 +276,67 @@ class CompactPointerEventFilter(QObject):
         }
     )
 
-    def __init__(self, root: QQuickWindow) -> None:
+    def __init__(
+        self,
+        root: QQuickWindow,
+        *,
+        diagnostics_path: Path | None = None,
+    ) -> None:
         super().__init__(root)
         self.root = root
+        self._diagnostics_path = (
+            Path(diagnostics_path) if diagnostics_path is not None else None
+        )
         self.serial = 0
         self._active_system_move_serial = 0
         self._last_direct_position: QPoint | None = None
         self._latest_global_x = 0.0
         self._latest_global_y = 0.0
+        self._drag_started_at = 0.0
+        self._diagnostic_gesture_serial = 0
+        self._system_move_origin_physical: tuple[int, int] | None = None
+        self._system_move_max_distance_squared = 0.0
+        self._system_move_threshold_physical = 4.0
+        self._system_move_start_returned = False
+        self._system_move_entered = False
+        self._system_move_exited = False
+        self._system_window_moving_messages = 0
+        self._native_mouse_moves_suppressed = 0
+        self._direct_move_commits = 0
+        self._last_drag_diagnostics: dict[str, object] = {}
+        self._drag_diagnostics_timer = QTimer(self)
+        self._drag_diagnostics_timer.setSingleShot(True)
+        self._drag_diagnostics_timer.setInterval(180)
+        self._drag_diagnostics_timer.timeout.connect(
+            self._write_drag_diagnostics
+        )
+
+    @property
+    def native_system_move_active(self) -> bool:
+        """Whether Windows currently owns the pointer/window move pair."""
+
+        return self._active_system_move_serial > 0
+
+    def _reset_drag_diagnostics(self) -> None:
+        self._drag_diagnostics_timer.stop()
+        self._drag_started_at = time.perf_counter()
+        self._diagnostic_gesture_serial = 0
+        self._system_move_origin_physical = None
+        self._system_move_max_distance_squared = 0.0
+        try:
+            device_pixel_ratio = float(self.root.devicePixelRatio() or 1.0)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            device_pixel_ratio = 1.0
+        self._system_move_threshold_physical = 4.0 * max(
+            0.25, device_pixel_ratio
+        )
+        self._system_move_start_returned = False
+        self._system_move_entered = False
+        self._system_move_exited = False
+        self._system_window_moving_messages = 0
+        self._native_mouse_moves_suppressed = 0
+        self._direct_move_commits = 0
+        self._last_drag_diagnostics = {}
 
     @Slot(int, result=bool)
     def tryStartSystemMove(self, gesture_serial: int) -> bool:
@@ -265,10 +350,17 @@ class CompactPointerEventFilter(QObject):
         gesture_serial = int(gesture_serial)
         if gesture_serial <= 0:
             return False
+        # Claim this gesture before Qt posts SC_DRAGMOVE.  This closes the
+        # small press-to-native-message window in which a high-polling mouse
+        # could otherwise feed the direct fallback as well as DWM.
+        self._active_system_move_serial = gesture_serial
+        self._diagnostic_gesture_serial = gesture_serial
         try:
             started = bool(self.root.startSystemMove())
         except (AttributeError, RuntimeError, TypeError, ValueError):
+            self._active_system_move_serial = 0
             return False
+        self._system_move_start_returned = started
         self._active_system_move_serial = gesture_serial if started else 0
         return started
 
@@ -305,7 +397,160 @@ class CompactPointerEventFilter(QObject):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return False
         self._last_direct_position = target
+        self._direct_move_commits += 1
         return True
+
+    @Slot()
+    @Slot(int, int)
+    def noteSystemMoveEntered(
+        self,
+        physical_x: int | None = None,
+        physical_y: int | None = None,
+    ) -> None:
+        self._system_move_entered = True
+        if physical_x is not None and physical_y is not None:
+            self._system_move_origin_physical = (
+                int(physical_x),
+                int(physical_y),
+            )
+
+    @Slot()
+    @Slot(int, int)
+    def noteSystemWindowMoving(
+        self,
+        physical_x: int | None = None,
+        physical_y: int | None = None,
+    ) -> None:
+        self._system_window_moving_messages += 1
+        origin = self._system_move_origin_physical
+        if origin is None or physical_x is None or physical_y is None:
+            return
+        dx = int(physical_x) - origin[0]
+        dy = int(physical_y) - origin[1]
+        self._system_move_max_distance_squared = max(
+            self._system_move_max_distance_squared,
+            float(dx * dx + dy * dy),
+        )
+
+    @Slot(int, result=bool)
+    def systemMoveHadMotion(self, gesture_serial: int) -> bool:
+        """Report native path motion without waking QML on every geometry frame."""
+
+        serial = int(gesture_serial)
+        return (
+            serial > 0
+            and serial == self._diagnostic_gesture_serial
+            and self._system_move_max_distance_squared
+            > self._system_move_threshold_physical**2
+        )
+
+    @Slot()
+    def noteSystemMoveExited(self) -> None:
+        self._system_move_exited = True
+        if self._last_drag_diagnostics:
+            self._last_drag_diagnostics["systemMoveExited"] = True
+            self._last_drag_diagnostics["systemMovingMessages"] = (
+                self._system_window_moving_messages
+            )
+            self._schedule_drag_diagnostics_write()
+
+    @Slot(int, bool, bool, bool)
+    def completeGestureDiagnostics(
+        self,
+        gesture_serial: int,
+        moved: bool,
+        native_active: bool,
+        native_attempted: bool,
+    ) -> None:
+        """Persist bounded, content-free evidence after a drag/click ends."""
+
+        elapsed_ms = (
+            max(0.0, (time.perf_counter() - self._drag_started_at) * 1000.0)
+            if self._drag_started_at > 0.0
+            else 0.0
+        )
+        try:
+            screen = self.root.screen()
+        except (AttributeError, RuntimeError, TypeError):
+            screen = None
+        try:
+            refresh_rate = float(screen.refreshRate()) if screen else 0.0
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            refresh_rate = 0.0
+        try:
+            device_pixel_ratio = float(self.root.devicePixelRatio() or 1.0)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            device_pixel_ratio = 1.0
+        mode = (
+            "native"
+            if bool(native_active)
+            else "direct-fallback"
+            if bool(native_attempted)
+            else "direct"
+        )
+        self._last_drag_diagnostics = {
+            "schemaVersion": 1,
+            "recordedAt": datetime.now(UTC).isoformat(),
+            "mode": mode,
+            "gestureSerial": max(0, int(gesture_serial)),
+            "moved": bool(moved),
+            "durationMs": round(elapsed_ms, 3),
+            "systemMoveStartReturned": bool(self._system_move_start_returned),
+            "systemMoveEntered": bool(self._system_move_entered),
+            "systemMoveExited": bool(self._system_move_exited),
+            "systemMovingMessages": self._system_window_moving_messages,
+            "nativeMotionDistancePhysical": round(
+                math.sqrt(self._system_move_max_distance_squared), 3
+            ),
+            "dragThresholdPhysical": round(
+                self._system_move_threshold_physical, 3
+            ),
+            "nativeMouseMovesSuppressed": self._native_mouse_moves_suppressed,
+            "directMoveCommits": self._direct_move_commits,
+            "windowLogicalWidth": int(self.root.width()),
+            "windowLogicalHeight": int(self.root.height()),
+            "devicePixelRatio": round(device_pixel_ratio, 4),
+            "screenRefreshRate": round(refresh_rate, 3),
+        }
+        self._schedule_drag_diagnostics_write()
+
+    @Slot(result="QVariantMap")
+    def dragDiagnosticsSnapshot(self) -> dict[str, object]:
+        return dict(self._last_drag_diagnostics)
+
+    def _schedule_drag_diagnostics_write(self) -> None:
+        if (
+            self._diagnostics_path is None
+            or not bool(self._last_drag_diagnostics.get("moved"))
+        ):
+            return
+        # Collapse release/WM_EXITSIZEMOVE updates into one tiny write after
+        # the interaction-critical turn.  The diagnostic must never compete
+        # with menu presentation or the first post-drag render frame.
+        self._drag_diagnostics_timer.start()
+
+    def _write_drag_diagnostics(self) -> None:
+        path = self._diagnostics_path
+        if path is None or not self._last_drag_diagnostics:
+            return
+        temporary = path.with_name(f".{path.name}.tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(
+                json.dumps(
+                    self._last_drag_diagnostics,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            os.replace(temporary, path)
+        except (OSError, TypeError, ValueError):
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @Slot(int)
     def acknowledgeSystemMoveFinished(self, gesture_serial: int) -> None:
@@ -361,8 +606,20 @@ class CompactPointerEventFilter(QObject):
             return False
         if not isinstance(event, QMouseEvent):
             return False
+        if (
+            event.type() == QEvent.Type.MouseMove
+            and self._active_system_move_serial > 0
+        ):
+            # DWM already owns this gesture.  Do not even read globalPosition
+            # or touch a QML property for every 500/1000 Hz sample: the native
+            # move loop needs neither, and crossing Python/QML here was pure
+            # GUI-thread pressure.  Consuming the Qt delivery also keeps the
+            # large MouseArea tree out of the hot path.
+            self._native_mouse_moves_suppressed += 1
+            return True
         if event.type() == QEvent.Type.MouseButtonPress:
             self._last_direct_position = None
+            self._reset_drag_diagnostics()
         point = event.globalPosition()
         self.serial += 1
         self._latest_global_x = float(point.x())
@@ -1375,7 +1632,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.43")
+    app.setApplicationVersion("0.3.44")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:
@@ -1549,7 +1806,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     app._lilies_desktop_presentation_probe = desktop_presentation_probe
     backend.set_desktop_window_handle(int(root_window.winId()))
-    pointer_event_filter = CompactPointerEventFilter(pet_window)
+    pointer_event_filter = CompactPointerEventFilter(
+        pet_window,
+        diagnostics_path=(
+            backend.data_directory / "runtime" / "pet-drag-latest.json"
+        ),
+    )
     pet_window.setProperty("nativeMoveController", pointer_event_filter)
     pet_window.installEventFilter(pointer_event_filter)
     app._lilies_pointer_event_filter = pointer_event_filter

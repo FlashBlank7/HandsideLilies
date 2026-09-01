@@ -1764,6 +1764,13 @@ Window {
         property int nativeSystemMoveGestureCounter: 0
         property int nativeSystemMoveGestureSerial: 0
         property bool nativeSystemMoveCancelPending: false
+        // A moved gesture keeps the exact presentation that was grabbed for
+        // the whole native/direct move. Habitat detachment is deliberately
+        // deferred until the window manager has finished, so the first DWM
+        // frame never rebuilds pose artwork and dozens of anchor bindings
+        // while the pointer is already in motion.
+        property bool dragFinalizePending: false
+        property bool dragMenuWasExpanded: false
         property bool geometryClampActive: false
         property bool resizeDragActive: false
         property real dragWindowX: 0
@@ -1808,8 +1815,6 @@ Window {
         property real compactAccessoryLeft: compactBox.x
         property real compactAccessoryTop: compactBox.y
         property real compactAccessoryWidth: compactBox.width
-        onXChanged: recordNativeWindowMotion()
-        onYChanged: recordNativeWindowMotion()
         onManualDragActiveChanged: {
             // Keep habitat geometry snapped for the whole held gesture, then
             // always restore ordinary pose transitions on release/cancel.
@@ -1820,22 +1825,6 @@ Window {
         }
         function characterContains(localX, localY) {
             return compactLilith.containsCharacterPoint(localX, localY)
-        }
-        function recordNativeWindowMotion() {
-            if (!manualDragActive || dragMoved
-                    || (!nativeSystemMoveStartPending
-                        && !nativeSystemMoveActive))
-                return
-            if (!compactLilith.dragDisplacementExceeded(
-                    x - dragWindowX, y - dragWindowY))
-                return
-            // A native system move does not deliver ordinary MouseArea moves.
-            // Latch that the window crossed the drag threshold so an
-            // out-and-back gesture cannot be mistaken for a stationary click.
-            dragMoved = true
-            compactWindow.expanded = false
-            detachForManualDrag()
-            remapCharacterGrabAfterDetach()
         }
         function detachForManualDrag() {
             compactLilith.interactionSnap = true
@@ -1903,6 +1892,12 @@ Window {
             if (visible && backend.petFloatMode === "always") {
                 raise()
             } else if (!visible) {
+                // A direct release can queue its habitat detach for the next
+                // event turn. If presence changes in that narrow gap, commit
+                // it before clearing state so the free position cannot stay
+                // attached to an old host window.
+                if (dragFinalizePending)
+                    finalizeMovedCharacterGesture()
                 finalizeInterruptedInteractionForHide()
                 if (nativeMoveController && nativeSystemMoveGestureSerial > 0)
                     nativeMoveController.acknowledgeSystemMoveFinished(
@@ -1914,6 +1909,7 @@ Window {
                 nativeSystemMoveStartPending = false
                 nativeSystemMoveGestureSerial = 0
                 nativeSystemMoveCancelPending = false
+                dragFinalizePending = false
                 dragMoved = false
                 dragPointerEventPending = false
                 dragWorkAreaValid = false
@@ -2073,10 +2069,33 @@ Window {
             // cursor travel (dragMoved) or real native-window displacement is
             // authoritative; reportedMoved is retained solely for the stable
             // signal ABI used by older themes.
-            var actualMoved = dragMoved
+            var completedSerial = nativeSystemMoveGestureSerial
+            var nativePathMoved = false
+            if (nativeMoveController
+                    && typeof nativeMoveController.systemMoveHadMotion
+                       === "function") {
+                try {
+                    nativePathMoved = Boolean(
+                        nativeMoveController.systemMoveHadMotion(
+                            completedSerial))
+                } catch (error) {
+                    nativePathMoved = false
+                }
+            }
+            var actualMoved = dragMoved || nativePathMoved
                               || compactLilith.dragDisplacementExceeded(
                                   x - dragWindowX, y - dragWindowY)
-            var completedSerial = nativeSystemMoveGestureSerial
+            if (nativeMoveController
+                    && typeof nativeMoveController.completeGestureDiagnostics
+                       === "function") {
+                try {
+                    nativeMoveController.completeGestureDiagnostics(
+                        completedSerial, actualMoved,
+                        nativeSystemMoveActive, nativeSystemMoveAttempted)
+                } catch (error) {
+                    // Diagnostics must never affect interaction completion.
+                }
+            }
             if (actualMoved) {
                 var cursor = backend.cursorPosition()
                 var targetArea = dragWorkAreaAt(
@@ -2084,16 +2103,12 @@ Window {
                 desktop.compactBoxSize = desktop.fittedCompactSize(
                     desktop.preferredCompactBoxSize, targetArea)
                 desktop.clampDraggedFigureToArea(targetArea, true)
-                // Synchronize the habitat controller only after the visible
-                // release position is final.  Otherwise its desktop fallback
-                // can retain the pre-clamp coordinates while the QWindow and
-                // persisted layout use another position.
-                detachForManualDrag()
-                // A host-edge pose cross-fades back to the standing pose.
-                // Recheck only after that visual transition has settled so
-                // its final visible bounds, rather than the large transparent
-                // QWindow canvas, remain recoverable at the monitor edge.
-                dragPresentationSettleTimer.restart()
+                // Do not detach here. This function can be reached from the
+                // WM_EXITSIZEMOVE completion callback; synchronously changing
+                // habitat then would still rebuild the character scene graph
+                // in the native move turn. The queued finalizer below runs
+                // after the move loop and performs the state change once.
+                dragFinalizePending = true
             }
             manualDragActive = false
             nativeSystemMoveActive = false
@@ -2109,12 +2124,34 @@ Window {
             if (!actualMoved) {
                 applyHabitatState()
                 if (Boolean(toggleIfStationary))
-                    compactWindow.expanded = !compactWindow.expanded
+                    compactWindow.expanded = !dragMenuWasExpanded
+                else
+                    compactWindow.expanded = dragMenuWasExpanded
             }
             backend.setPetInteractionLock("character", false)
             desktop.scheduleCompactLayoutPersistence()
             dragCharacterGrabValid = false
             dragCharacterGrabRemapped = false
+            if (actualMoved) {
+                Qt.callLater(function() {
+                    petWindow.finalizeMovedCharacterGesture()
+                })
+            }
+            return true
+        }
+
+        function finalizeMovedCharacterGesture() {
+            if (!dragFinalizePending || manualDragActive || resizeDragActive)
+                return false
+            dragFinalizePending = false
+            // The held silhouette stayed frozen for the complete gesture.
+            // Re-enable normal pose Behaviors before detaching so Lilith can
+            // settle after, never during, pointer-critical motion.
+            compactLilith.interactionSnap = false
+            backend.detachPetHabitat(x, y)
+            // Recheck only after the release transition has settled. This
+            // keeps the final visible figure recoverable at monitor edges.
+            dragPresentationSettleTimer.restart()
             return true
         }
 
@@ -2128,7 +2165,8 @@ Window {
         }
 
         function followPointerAt(cursorX, cursorY) {
-            if (!manualDragActive)
+            if (!manualDragActive || nativeSystemMoveStartPending
+                    || nativeSystemMoveActive)
                 return
             cursorX = Number(cursorX)
             cursorY = Number(cursorY)
@@ -2141,32 +2179,17 @@ Window {
                 return
             if (!dragMoved) {
                 dragMoved = true
-                // Detach as soon as the gesture is undeniably a drag.  The
-                // 220--300 ms host-pose transition can then complete while
-                // the pointer is still moving instead of changing Lilith's
-                // visible anchor after the mouse button is released.
-                detachForManualDrag()
-                remapCharacterGrabAfterDetach()
                 // A radial menu travelling with the pointer feels like a
                 // second object was accidentally grabbed.  Collapse it as
                 // soon as this gesture is unambiguously a drag.
                 compactWindow.expanded = false
-                // A successful system move has owned the pointer since the
-                // original press.  Do not reposition the QWindow from QML as
-                // well: two independent move authorities are exactly what
-                // causes the pet to lag behind and then jump under the hand.
-                if (nativeSystemMoveActive)
-                    return
-                // Align the original grab point before handing motion to the
-                // fallback mover.  The normal Windows path has already tried
-                // startSystemMove() during the press event; this late request
-                // is retained only for unusual platform event ordering.
-                moveWindowForDrag(cursorX - dragGrabOffsetX,
-                                  cursorY - dragGrabOffsetY)
+                // The normal Windows path already requested ownership during
+                // the press event. A late retry is only a compatibility
+                // guard; do not submit duplicate geometry in this frame.
                 if (tryNativeSystemMove())
                     return
             }
-            if (nativeSystemMoveActive)
+            if (nativeSystemMoveStartPending || nativeSystemMoveActive)
                 return
             var targetArea = dragWorkAreaAt(cursorX, cursorY)
             // Preserve the normalized point held by the user when crossing
@@ -2290,7 +2313,8 @@ Window {
         }
 
         function followPointerFrame() {
-            if (!manualDragActive || nativeSystemMoveActive)
+            if (!manualDragActive || nativeSystemMoveStartPending
+                    || nativeSystemMoveActive)
                 return
             if (followPendingPointerEvent())
                 return
@@ -2315,6 +2339,7 @@ Window {
             // and can submit geometry just after DWM's composition deadline.
             running: petWindow.manualDragActive
                      && !petWindow.nativeSystemMoveActive
+                     && !petWindow.nativeSystemMoveStartPending
             onTriggered: petWindow.followPointerFrame()
         }
         Timer {
@@ -2577,8 +2602,19 @@ Window {
             onTriggered: compactWindow.statusToastText = ""
         }
 
+        function prepareForCharacterDrag() {
+            orbitProgressAnimation.stop()
+            boxRotationAnimation.stop()
+            expanded = false
+        }
+
         Behavior on orbitProgress {
-            NumberAnimation { duration: 640; easing.type: Easing.OutCubic }
+            enabled: !petWindow.manualDragActive
+            NumberAnimation {
+                id: orbitProgressAnimation
+                duration: 640
+                easing.type: Easing.OutCubic
+            }
         }
 
         Item {
@@ -2677,10 +2713,18 @@ Window {
                         petWindow.nativeSystemMoveGestureCounter
                     petWindow.nativeSystemMoveCancelPending = false
                     petWindow.dragMoved = false
+                    petWindow.dragFinalizePending = false
+                    petWindow.dragMenuWasExpanded = compactWindow.expanded
+                    // Radial controls never travel with the held character.
+                    // A stationary release restores the correct toggle from
+                    // dragMenuWasExpanded; a real drag leaves them closed.
+                    compactWindow.prepareForCharacterDrag()
+                    // Freeze the exact silhouette that received the press.
+                    // Habitat detachment now happens only after release.
+                    compactLilith.interactionSnap = true
                     petWindow.dragWindowX = petWindow.x
                     petWindow.dragWindowY = petWindow.y
-                    // Capture the anatomical point before a threshold drag
-                    // detaches a perch/edge pose into the standing pose.
+                    // Capture the anatomical point of the frozen pressed pose.
                     // Item-local QML coordinates are the only reliable source
                     // for that point; the event bridge below supplies the
                     // independently stable global cursor position.
@@ -2703,6 +2747,14 @@ Window {
                     petWindow.followPointerEvent(pointerX, pointerY)
                 }
                 onCharacterReleased: function(moved) {
+                    if (petWindow.nativeSystemMoveStartPending
+                            || petWindow.nativeSystemMoveActive) {
+                        // Qt can synthesize this release before Windows sends
+                        // WM_EXITSIZEMOVE. Keep the frozen scene intact; the
+                        // native exit message is the sole completion owner.
+                        petWindow.nativeSystemMoveCancelPending = true
+                        return
+                    }
                     petWindow.finishCharacterGesture(
                         moved, true, petWindow.nativeSystemMoveGestureSerial)
                 }
@@ -3164,7 +3216,14 @@ Window {
                 border.width: Math.max(1, width * 0.018)
                 rotation: compactWindow.turn
                 z: 4
-                Behavior on rotation { NumberAnimation { duration: 760; easing.type: Easing.InOutCubic } }
+                Behavior on rotation {
+                    enabled: !petWindow.manualDragActive
+                    NumberAnimation {
+                        id: boxRotationAnimation
+                        duration: 760
+                        easing.type: Easing.InOutCubic
+                    }
+                }
 
                 Rectangle {
                     anchors.centerIn: parent

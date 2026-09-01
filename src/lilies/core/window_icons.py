@@ -9,6 +9,7 @@ an icon, allowing the Dock to keep its text fallback.
 
 import hashlib
 import os
+import threading
 from pathlib import Path
 from typing import Protocol
 
@@ -32,44 +33,88 @@ class WindowIconCache:
         self.size = max(32, min(int(size), 256))
         self._memory: dict[str, str] = {}
         self._provider: object | None = None
+        self._lock = threading.RLock()
 
-    def resolve(self, record: IconRecord) -> str:
+    def _cache_entry(self, record: IconRecord) -> tuple[Path, str, Path] | None:
+        """Return the stable cache identity without touching a Qt object."""
+
         executable = Path(str(record.executable_path or "").strip().strip('"'))
         if not executable.is_file():
-            return ""
+            return None
         try:
             stat = executable.stat()
+            resolved = executable.resolve()
         except OSError:
-            return ""
+            return None
         fingerprint = "\0".join(
             (
-                os.path.normcase(str(executable.resolve())),
+                os.path.normcase(str(resolved)),
                 str(stat.st_size),
                 str(stat.st_mtime_ns),
                 str(self.size),
             )
         )
-        digest = hashlib.sha256(fingerprint.encode("utf-8", errors="surrogatepass")).hexdigest()
-        cached_url = self._memory.get(digest)
+        digest = hashlib.sha256(
+            fingerprint.encode("utf-8", errors="surrogatepass")
+        ).hexdigest()
+        return executable, digest, self.cache_root / f"{digest}.png"
+
+    def _lookup_entry(self, digest: str, destination: Path) -> str:
+        with self._lock:
+            cached_url = self._memory.get(digest)
         if cached_url:
             return cached_url
-        destination = self.cache_root / f"{digest}.png"
-        if destination.is_file() and destination.stat().st_size > 0:
-            url = destination.as_uri()
+        try:
+            available = destination.is_file() and destination.stat().st_size > 0
+        except OSError:
+            available = False
+        if not available:
+            return ""
+        url = destination.as_uri()
+        with self._lock:
             self._memory[digest] = url
-            return url
+        return url
+
+    def lookup(self, record: IconRecord) -> str:
+        """Return an already cached icon without using Qt GUI classes.
+
+        Window enumeration runs away from the GUI thread.  That worker may
+        safely call this cache-only path; QFileIconProvider and QPixmap remain
+        confined to :meth:`resolve` on Qt's GUI thread.
+        """
+
+        entry = self._cache_entry(record)
+        if entry is None:
+            return ""
+        _executable, digest, destination = entry
+        return self._lookup_entry(digest, destination)
+
+    def resolve(self, record: IconRecord) -> str:
+        entry = self._cache_entry(record)
+        if entry is None:
+            return ""
+        executable, digest, destination = entry
+        cached_url = self._lookup_entry(digest, destination)
+        if cached_url:
+            return cached_url
 
         try:
-            from PySide6.QtCore import QFileInfo, QSize
+            from PySide6.QtCore import QFileInfo, QSize, QThread
             from PySide6.QtGui import QGuiApplication
             from PySide6.QtWidgets import QFileIconProvider
 
-            if QGuiApplication.instance() is None:
+            application = QGuiApplication.instance()
+            if (
+                application is None
+                or QThread.currentThread() != application.thread()
+            ):
                 return ""
             self.cache_root.mkdir(parents=True, exist_ok=True)
-            if self._provider is None:
-                self._provider = QFileIconProvider()
-            icon = self._provider.icon(QFileInfo(str(executable)))
+            with self._lock:
+                if self._provider is None:
+                    self._provider = QFileIconProvider()
+                provider = self._provider
+            icon = provider.icon(QFileInfo(str(executable)))
             if icon.isNull():
                 return ""
             pixmap = icon.pixmap(QSize(self.size, self.size))
@@ -82,7 +127,8 @@ class WindowIconCache:
         except (ImportError, OSError, RuntimeError):
             return ""
         url = destination.as_uri()
-        self._memory[digest] = url
+        with self._lock:
+            self._memory[digest] = url
         return url
 
 

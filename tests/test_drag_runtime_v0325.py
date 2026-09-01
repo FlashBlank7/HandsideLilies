@@ -35,6 +35,7 @@ def test_drag_runtime_regressions_v0325_offscreen() -> None:
     assert all(
         outcome[name]["passed"] is True
         for name in (
+            "windowGlideFreezesSynchronouslyOnPress",
             "directThresholdAndBridge",
             "directNearEdgeRelease",
             "characterGrabContinuity",
@@ -43,8 +44,10 @@ def test_drag_runtime_regressions_v0325_offscreen() -> None:
             "interruptedDragCommitsBeforeHide",
             "staleScreenConstraintIgnored",
             "nativeStartCancelReentry",
+            "expandedMenuNativePressStopsMotion",
             "nativeOutAndBackLatch",
             "failedNativeStartFallsBackDirect",
+            "directReleaseHideRaceFinalizesExactlyOnce",
             "avoidanceInteractionGuard",
         )
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import threading
 from ctypes import wintypes
 
 import pytest
@@ -10,7 +11,11 @@ from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, Q
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 
-from lilies.app import CompactHitTestFilter, CompactPointerEventFilter
+from lilies.app import (
+    CompactHitTestFilter,
+    CompactPointerEventFilter,
+    _LatestJsonFileWriter,
+)
 
 
 class _Root:
@@ -287,6 +292,165 @@ class _NativeMoveRoot(QObject):
     def screen(self):
         return None
 
+    def winId(self):
+        return 4321
+
+
+class _NativeFilterApp:
+    def __init__(self, *, failed_install_attempts: int = 0) -> None:
+        self.removed: list[object] = []
+        self.installed: list[object] = []
+        self.failed_install_attempts = int(failed_install_attempts)
+
+    def removeNativeEventFilter(self, value) -> None:
+        self.removed.append(value)
+
+    def installNativeEventFilter(self, value) -> None:
+        if self.failed_install_attempts > 0:
+            self.failed_install_attempts -= 1
+            raise RuntimeError("platform object is being recreated")
+        self.installed.append(value)
+
+
+class _QtFilterRetryRoot(_NativeMoveRoot):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed_qt_install_attempts = 1
+        self.qt_installs: list[object] = []
+
+    def installEventFilter(self, value) -> None:
+        if self.failed_qt_install_attempts > 0:
+            self.failed_qt_install_attempts -= 1
+            raise RuntimeError("QWindow event dispatcher is being recreated")
+        self.qt_installs.append(value)
+
+
+def test_system_move_suspends_python_native_filter_until_completion() -> None:
+    root = _NativeMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    app = _NativeFilterApp()
+    native_filter = object()
+    event_filter.configure_native_drag_filter(app, native_filter)
+
+    assert event_filter.tryStartSystemMove(35) is True
+    assert app.removed == [native_filter]
+    assert app.installed == []
+    assert event_filter._native_drag_filter_suspended is True
+    assert event_filter._qt_pointer_filter_suspended is True
+
+    event_filter.acknowledgeSystemMoveFinished(35)
+    assert app.installed == [native_filter]
+    assert event_filter._native_drag_filter_suspended is False
+    assert event_filter._qt_pointer_filter_suspended is False
+
+
+def test_win_id_change_refreshes_cached_native_filter_target() -> None:
+    root = _NativeMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    native_app = _NativeFilterApp()
+
+    class NativeFilter:
+        native_window_id = 7
+
+    native_filter = NativeFilter()
+    event_filter.configure_native_drag_filter(native_app, native_filter)
+
+    assert event_filter.eventFilter(
+        root, QEvent(QEvent.Type.WinIdChange)
+    ) is False
+    assert native_filter.native_window_id == 4321
+
+
+def test_failed_system_move_restores_python_native_filter_immediately() -> None:
+    root = _NativeMoveRoot()
+    root.startSystemMove = lambda: False
+    event_filter = CompactPointerEventFilter(root)
+    app = _NativeFilterApp()
+    native_filter = object()
+    event_filter.configure_native_drag_filter(app, native_filter)
+
+    assert event_filter.tryStartSystemMove(36) is False
+    assert app.removed == [native_filter]
+    assert app.installed == [native_filter]
+    assert event_filter._native_drag_filter_suspended is False
+
+
+def test_native_filter_resume_keeps_retry_authority_until_install_succeeds() -> None:
+    root = _NativeMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    app = _NativeFilterApp(failed_install_attempts=1)
+    native_filter = object()
+    event_filter.configure_native_drag_filter(app, native_filter)
+
+    assert event_filter.tryStartSystemMove(37) is True
+    event_filter.acknowledgeSystemMoveFinished(37)
+    assert event_filter._native_drag_filter_suspended is True
+    assert app.installed == []
+
+    event_filter._resume_native_drag_filter()
+    assert event_filter._native_drag_filter_suspended is False
+    assert app.installed == [native_filter]
+
+
+def test_qt_pointer_filter_resume_retries_after_native_filter_succeeds() -> None:
+    root = _QtFilterRetryRoot()
+    event_filter = CompactPointerEventFilter(root)
+    app = _NativeFilterApp()
+    native_filter = object()
+    event_filter.configure_native_drag_filter(app, native_filter)
+
+    assert event_filter.tryStartSystemMove(371) is True
+    event_filter.acknowledgeSystemMoveFinished(371)
+    assert event_filter._native_drag_filter_suspended is False
+    assert event_filter._qt_pointer_filter_suspended is True
+    assert app.installed == [native_filter]
+
+    event_filter._resume_native_drag_filter()
+    assert event_filter._qt_pointer_filter_suspended is False
+    assert root.qt_installs == [event_filter]
+
+
+def test_release_watchdog_failure_restores_filter_and_finishes_gesture() -> None:
+    app_loop = QCoreApplication.instance() or QCoreApplication([])
+    root = _NativeMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    native_app = _NativeFilterApp()
+    native_filter = object()
+    event_filter.configure_native_drag_filter(native_app, native_filter)
+
+    assert event_filter.tryStartSystemMove(38) is True
+
+    def unavailable_button_state() -> bool:
+        raise OSError("User32 unavailable")
+
+    event_filter._left_button_is_down = unavailable_button_state
+    event_filter._poll_system_move_release()
+    app_loop.processEvents()
+
+    assert root.completions == [38]
+    assert native_app.installed == [native_filter]
+    assert event_filter.native_system_move_active is False
+    assert event_filter._completion_queued_by == "button-state-unavailable"
+
+
+def test_release_watchdog_has_bounded_native_move_fail_safe() -> None:
+    app_loop = QCoreApplication.instance() or QCoreApplication([])
+    root = _NativeMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    native_app = _NativeFilterApp()
+    native_filter = object()
+    event_filter.configure_native_drag_filter(native_app, native_filter)
+
+    assert event_filter.tryStartSystemMove(39) is True
+    event_filter._SYSTEM_MOVE_MAX_HOLD_SECONDS = 0.0
+    event_filter._poll_system_move_release()
+    app_loop.processEvents()
+
+    assert root.completions == [39]
+    assert native_app.installed == [native_filter]
+    assert event_filter.native_system_move_active is False
+    assert event_filter._completion_queued_by == "native-move-timeout"
+
 
 def test_drag_position_bridge_moves_both_axes_atomically_and_rejects_nan():
     root = _NativeMoveRoot()
@@ -357,7 +521,7 @@ def test_drag_diagnostics_are_content_free_and_persist_after_release(tmp_path):
     assert event_filter.systemMoveHadMotion(81) is True
     assert event_filter.systemMoveHadMotion(82) is False
     event_filter.completeGestureDiagnostics(81, True, True, True)
-    QTest.qWait(220)
+    assert event_filter.wait_for_drag_diagnostics_write(1.0) is True
 
     report = json.loads(report_path.read_text("utf-8"))
     assert report["mode"] == "native"
@@ -375,3 +539,111 @@ def test_drag_diagnostics_are_content_free_and_persist_after_release(tmp_path):
         key.casefold() in {"x", "y", "cursor", "title", "text"}
         for key in report
     )
+    event_filter.close_drag_diagnostics_writer()
+
+
+def test_drag_diagnostics_writer_is_background_single_writer_and_latest_only(
+    tmp_path,
+):
+    writer = _LatestJsonFileWriter(tmp_path / "pet-drag-latest.json")
+    main_thread = threading.get_ident()
+    first_started = threading.Event()
+    release_first = threading.Event()
+    writes: list[tuple[int, int]] = []
+    original_write = writer._write_snapshot
+
+    def gated_write(snapshot):
+        marker = int(snapshot["marker"])
+        writes.append((marker, threading.get_ident()))
+        if marker == 1:
+            first_started.set()
+            assert release_first.wait(2.0)
+        return original_write(snapshot)
+
+    writer._write_snapshot = gated_write
+    writer.submit({"marker": 1})
+    assert first_started.wait(1.0)
+    writer.submit({"marker": 2})
+    latest_sequence = writer.submit({"marker": 3})
+    release_first.set()
+
+    assert writer.wait_for_completion(latest_sequence, 2.0)
+    assert [marker for marker, _thread in writes] == [1, 3]
+    assert all(thread != main_thread for _marker, thread in writes)
+    assert json.loads(writer.path.read_text("utf-8")) == {"marker": 3}
+    assert writer.close(1.0) is True
+
+
+def test_drag_diagnostics_writer_preserves_old_file_and_recovers_after_error(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "pet-drag-latest.json"
+    path.write_text('{"marker": 0}\n', "utf-8")
+    writer = _LatestJsonFileWriter(path)
+    real_replace = os.replace
+
+    def fail_replace(_source, _destination):
+        raise PermissionError("diagnostic target is temporarily locked")
+
+    monkeypatch.setattr("lilies.app.os.replace", fail_replace)
+    failed_sequence = writer.submit({"marker": 1})
+    assert writer.wait_for_completion(failed_sequence, 1.0) is False
+    assert json.loads(path.read_text("utf-8")) == {"marker": 0}
+
+    monkeypatch.setattr("lilies.app.os.replace", real_replace)
+    recovered_sequence = writer.submit({"marker": 2})
+    assert writer.wait_for_completion(recovered_sequence, 1.0) is True
+    assert json.loads(path.read_text("utf-8")) == {"marker": 2}
+    assert writer.close(1.0) is True
+
+
+def test_drag_diagnostics_writer_survives_an_unexpected_worker_exception(
+    tmp_path,
+):
+    writer = _LatestJsonFileWriter(tmp_path / "pet-drag-latest.json")
+    original_write = writer._write_snapshot
+    attempts = 0
+
+    def fail_once(snapshot):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("unexpected serializer failure")
+        return original_write(snapshot)
+
+    writer._write_snapshot = fail_once
+    failed_sequence = writer.submit({"marker": 1})
+    assert writer.wait_for_completion(failed_sequence, 1.0) is False
+
+    recovered_sequence = writer.submit({"marker": 2})
+    assert writer.wait_for_completion(recovered_sequence, 1.0) is True
+    assert json.loads(writer.path.read_text("utf-8")) == {"marker": 2}
+    assert writer.close(1.0) is True
+    assert writer.submit({"marker": 3}) == 0
+
+
+def test_new_press_flushes_pending_drag_diagnostic_without_gui_file_io(
+    tmp_path,
+):
+    root = _NativeMoveRoot()
+    report_path = tmp_path / "runtime" / "pet-drag-latest.json"
+    event_filter = CompactPointerEventFilter(
+        root,
+        diagnostics_path=report_path,
+    )
+    event_filter.completeGestureDiagnostics(91, True, False, False)
+    assert event_filter._drag_diagnostics_timer.isActive()
+
+    next_press = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(10.0, 12.0),
+        QPointF(110.0, 112.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    assert event_filter.eventFilter(root, next_press) is False
+    assert not event_filter._drag_diagnostics_timer.isActive()
+    assert event_filter.wait_for_drag_diagnostics_write(1.0)
+    assert json.loads(report_path.read_text("utf-8"))["gestureSerial"] == 91
+    event_filter.close_drag_diagnostics_writer()

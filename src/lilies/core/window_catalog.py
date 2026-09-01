@@ -616,6 +616,7 @@ class WindowCatalogService:
         self._mru: list[int] = []
         self._groups: list[WindowGroup] = []
         self._dirty_since: float | None = None
+        self._dirty_generation = 0
         self._last_refresh = -math.inf
         self._last_error = ""
         self._unsubscribe: Callable[[], None] | None = None
@@ -658,16 +659,27 @@ class WindowCatalogService:
         with self._lock:
             if event.kind is WinEventKind.FOREGROUND and event.hwnd:
                 self._promote_mru(event.hwnd)
+            self._dirty_generation += 1
             if self._dirty_since is None:
                 self._dirty_since = now
 
-    def pump(self, now: float | None = None) -> bool:
+    def pump(
+        self,
+        now: float | None = None,
+        *,
+        refresh: bool = True,
+    ) -> bool:
         """Drain native events and run one debounce/safety-refresh tick."""
 
         self.event_hub.dispatch_pending()
-        return self.tick(now)
+        return self.tick(now, refresh=refresh)
 
-    def tick(self, now: float | None = None) -> bool:
+    def tick(
+        self,
+        now: float | None = None,
+        *,
+        refresh: bool = True,
+    ) -> bool:
         current = self.clock() if now is None else float(now)
         with self._lock:
             dirty_ready = (
@@ -676,15 +688,25 @@ class WindowCatalogService:
             )
             safety_due = current - self._last_refresh >= self.safety_refresh_seconds
         if dirty_ready or safety_due:
-            self.refresh(current)
+            if refresh:
+                self.refresh(current)
             return True
         return False
 
-    def refresh(self, now: float | None = None) -> list[dict[str, object]]:
+    def refresh(
+        self,
+        now: float | None = None,
+        *,
+        notify: bool = True,
+        icon_resolver: IconResolver | None = None,
+    ) -> list[dict[str, object]]:
         current = self.clock() if now is None else float(now)
+        resolver = self.icon_resolver if icon_resolver is None else icon_resolver
+        with self._lock:
+            refresh_generation = self._dirty_generation
         try:
             discovered = [
-                self._with_icon(item.normalized())
+                self._with_icon(item.normalized(), resolver)
                 for item in self.provider.enumerate_windows()
                 if int(item.handle) > 0 and item.visible and item.title.strip()
             ]
@@ -694,7 +716,8 @@ class WindowCatalogService:
             # failure instead of flashing an empty Dock.
             with self._lock:
                 self._last_error = type(exc).__name__
-                self._dirty_since = None
+                if self._dirty_generation == refresh_generation:
+                    self._dirty_since = None
                 self._last_refresh = current
                 return self.groups()
 
@@ -735,16 +758,18 @@ class WindowCatalogService:
                 )
             )
             self._groups = groups
-            self._dirty_since = None
+            if self._dirty_generation == refresh_generation:
+                self._dirty_since = None
             self._last_refresh = current
             self._last_error = error
             listeners = tuple(self._listeners)
             exported = [group.to_dict() for group in groups]
-        for listener in listeners:
-            try:
-                listener([dict(group) for group in exported])
-            except Exception:
-                continue
+        if notify:
+            for listener in listeners:
+                try:
+                    listener([dict(group) for group in exported])
+                except Exception:
+                    continue
         return exported
 
     def groups(self) -> list[dict[str, object]]:
@@ -775,6 +800,11 @@ class WindowCatalogService:
         if activated:
             with self._lock:
                 self._promote_mru(target)
+                # ``refresh`` now runs on a background thread.  Treat a
+                # successful local activation exactly like a native event so
+                # an older enumeration that was already in flight cannot
+                # clear this refresh obligation when it commits its snapshot.
+                self._dirty_generation += 1
                 if self._dirty_since is None:
                     self._dirty_since = self.clock()
         return activated
@@ -794,11 +824,15 @@ class WindowCatalogService:
         self._mru = [item for item in self._mru if item != target]
         self._mru.insert(0, target)
 
-    def _with_icon(self, record: WindowRecord) -> WindowRecord:
-        if record.icon_url or self.icon_resolver is None:
+    def _with_icon(
+        self,
+        record: WindowRecord,
+        resolver: IconResolver | None,
+    ) -> WindowRecord:
+        if record.icon_url or resolver is None:
             return record
         try:
-            icon_url = str(self.icon_resolver(record) or "")
+            icon_url = str(resolver(record) or "")
         except (OSError, RuntimeError, ValueError):
             icon_url = ""
         return replace(record, icon_url=icon_url)

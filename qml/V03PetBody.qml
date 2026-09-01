@@ -10,11 +10,13 @@ Item {
     property string pose: "idle-prayer"
     property bool paused: false
     property bool lowPower: false
+    property bool inputEnabled: true
     // A manual drag changes from a host-edge silhouette to the free-standing
     // silhouette.  During that gesture the exact grabbed pixels must stay
     // under the pointer, so habitat-driven geometry changes snap once instead
     // of spending 220--300 ms sliding inside the moving transparent window.
     property bool interactionSnap: false
+    property bool geometryFrozenForInteraction: false
     property real characterHeight: height * 0.70
     property color cordColor: "#9f3129"
     property color crackColor: "#e9ffff"
@@ -240,6 +242,58 @@ Item {
                                                    || cordAnchorXAnimation.running
                                                    || cordAnchorYAnimation.running
                                                    || layeredBodyRotationAnimation.running
+                                                   || variantHeadRotationAnimation.running
+                                                   || variantTorsoRotationAnimation.running
+                                                   || variantSkirtRotationAnimation.running
+                                                   || variantHeadOffsetXAnimation.running
+                                                   || variantHeadOffsetYAnimation.running
+                                                   || variantTorsoOffsetXAnimation.running
+                                                   || variantTorsoOffsetYAnimation.running
+                                                   || variantSkirtOffsetXAnimation.running
+                                                   || variantSkirtOffsetYAnimation.running
+                                                   || variantHeadScaleXAnimation.running
+                                                   || variantHeadScaleYAnimation.running
+                                                   || variantTorsoScaleXAnimation.running
+                                                   || variantTorsoScaleYAnimation.running
+                                                   || variantSkirtScaleXAnimation.running
+                                                   || variantSkirtScaleYAnimation.running
+                                                   || variantHeadClipAnimation.running
+                                                   || variantTorsoClipAnimation.running
+
+    function activeTransitionAnimations() {
+        var active = []
+        if (presentationTransition.running) active.push("presentation")
+        if (characterScaleAnimation.running) active.push("character-scale")
+        if (anchorXAnimation.running) active.push("anchor-x")
+        if (anchorYAnimation.running) active.push("anchor-y")
+        if (contactXAnimation.running) active.push("contact-x")
+        if (contactYAnimation.running) active.push("contact-y")
+        if (fallbackHeightAnimation.running) active.push("fallback-height")
+        if (habitatBlendAnimation.running) active.push("habitat-blend")
+        if (artworkBlendAnimation.running) active.push("artwork-blend")
+        if (artworkRatioAnimation.running) active.push("artwork-ratio")
+        if (cordAnchorXAnimation.running) active.push("cord-anchor-x")
+        if (cordAnchorYAnimation.running) active.push("cord-anchor-y")
+        if (layeredBodyRotationAnimation.running) active.push("body-rotation")
+        if (variantHeadRotationAnimation.running) active.push("head-rotation")
+        if (variantTorsoRotationAnimation.running) active.push("torso-rotation")
+        if (variantSkirtRotationAnimation.running) active.push("skirt-rotation")
+        if (variantHeadOffsetXAnimation.running) active.push("head-offset-x")
+        if (variantHeadOffsetYAnimation.running) active.push("head-offset-y")
+        if (variantTorsoOffsetXAnimation.running) active.push("torso-offset-x")
+        if (variantTorsoOffsetYAnimation.running) active.push("torso-offset-y")
+        if (variantSkirtOffsetXAnimation.running) active.push("skirt-offset-x")
+        if (variantSkirtOffsetYAnimation.running) active.push("skirt-offset-y")
+        if (variantHeadScaleXAnimation.running) active.push("head-scale-x")
+        if (variantHeadScaleYAnimation.running) active.push("head-scale-y")
+        if (variantTorsoScaleXAnimation.running) active.push("torso-scale-x")
+        if (variantTorsoScaleYAnimation.running) active.push("torso-scale-y")
+        if (variantSkirtScaleXAnimation.running) active.push("skirt-scale-x")
+        if (variantSkirtScaleYAnimation.running) active.push("skirt-scale-y")
+        if (variantHeadClipAnimation.running) active.push("head-clip")
+        if (variantTorsoClipAnimation.running) active.push("torso-clip")
+        return active
+    }
 
     Behavior on renderedCharacterScale {
         enabled: !root.interactionSnap
@@ -338,71 +392,122 @@ Item {
     }
     Behavior on renderedVariantHeadRotation {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantHeadRotationAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantTorsoRotation {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantTorsoRotationAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantSkirtRotation {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantSkirtRotationAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantHeadOffsetX {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantHeadOffsetXAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantHeadOffsetY {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantHeadOffsetYAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantTorsoOffsetX {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantTorsoOffsetXAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantTorsoOffsetY {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantTorsoOffsetYAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantSkirtOffsetX {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantSkirtOffsetXAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantSkirtOffsetY {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantSkirtOffsetYAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantHeadScaleX {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantHeadScaleXAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantHeadScaleY {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantHeadScaleYAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantTorsoScaleX {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantTorsoScaleXAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantTorsoScaleY {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantTorsoScaleYAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantSkirtScaleX {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantSkirtScaleXAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantSkirtScaleY {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantSkirtScaleYAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantHeadClipEnd {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantHeadClipAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
     Behavior on renderedVariantTorsoClipEnd {
         enabled: !root.interactionSnap
-        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            id: variantTorsoClipAnimation
+            duration: 280; easing.type: Easing.OutCubic
+        }
     }
 
     readonly property string outfitId: {
@@ -620,6 +725,143 @@ Item {
         artworkBlendAnimation.restart()
     }
 
+    function freezeGeometryAnimations() {
+        if (geometryFrozenForInteraction)
+            return
+        geometryFrozenForInteraction = true
+        // A pose cross-fade is a standalone animation rather than a Behavior.
+        // Collapse it to the currently dominant decoded slot before freezing
+        // geometry, otherwise two high-resolution alpha images keep blending
+        // for another 220 ms after the user has grabbed the window.
+        poseArtworkFrame.stabilizeTransition()
+        // Disabling a Behavior prevents the next transition but does not stop
+        // an animation that is already running.  Self-assignment while every
+        // Behavior is disabled cancels that animation at its current pixel
+        // value, so a press cannot spend its first 220--300 ms relaying out
+        // the silhouette, click mask and rope while the native window moves.
+        renderedCharacterScale = renderedCharacterScale
+        renderedAnchorNormX = renderedAnchorNormX
+        renderedAnchorNormY = renderedAnchorNormY
+        renderedContactX = renderedContactX
+        renderedContactY = renderedContactY
+        renderedFallbackPoseHeightFactor = renderedFallbackPoseHeightFactor
+        renderedHabitatBlend = renderedHabitatBlend
+        renderedPoseArtworkRatio = renderedPoseArtworkRatio
+        renderedPoseCordAnchorX = renderedPoseCordAnchorX
+        renderedPoseCordAnchorY = renderedPoseCordAnchorY
+        renderedLayeredRequestedRotation = renderedLayeredRequestedRotation
+        renderedVariantHeadRotation = renderedVariantHeadRotation
+        renderedVariantTorsoRotation = renderedVariantTorsoRotation
+        renderedVariantSkirtRotation = renderedVariantSkirtRotation
+        renderedVariantHeadOffsetX = renderedVariantHeadOffsetX
+        renderedVariantHeadOffsetY = renderedVariantHeadOffsetY
+        renderedVariantTorsoOffsetX = renderedVariantTorsoOffsetX
+        renderedVariantTorsoOffsetY = renderedVariantTorsoOffsetY
+        renderedVariantSkirtOffsetX = renderedVariantSkirtOffsetX
+        renderedVariantSkirtOffsetY = renderedVariantSkirtOffsetY
+        renderedVariantHeadScaleX = renderedVariantHeadScaleX
+        renderedVariantHeadScaleY = renderedVariantHeadScaleY
+        renderedVariantTorsoScaleX = renderedVariantTorsoScaleX
+        renderedVariantTorsoScaleY = renderedVariantTorsoScaleY
+        renderedVariantSkirtScaleX = renderedVariantSkirtScaleX
+        renderedVariantSkirtScaleY = renderedVariantSkirtScaleY
+        renderedVariantHeadClipEnd = renderedVariantHeadClipEnd
+        renderedVariantTorsoClipEnd = renderedVariantTorsoClipEnd
+    }
+
+    function restoreGeometryBindings() {
+        if (!geometryFrozenForInteraction)
+            return
+        geometryFrozenForInteraction = false
+        renderedCharacterScale = Qt.binding(function() {
+            return root.habitatCharacterScale
+        })
+        renderedAnchorNormX = Qt.binding(function() {
+            return root.habitatAnchorNormX
+        })
+        renderedAnchorNormY = Qt.binding(function() {
+            return root.habitatAnchorNormY
+        })
+        renderedContactX = Qt.binding(function() {
+            return root.habitatContactX
+        })
+        renderedContactY = Qt.binding(function() {
+            return root.habitatContactY
+        })
+        renderedFallbackPoseHeightFactor = Qt.binding(function() {
+            return root.fallbackPoseHeightFactor
+        })
+        renderedHabitatBlend = Qt.binding(function() {
+            return root.habitatLayoutActive ? 1.0 : 0.0
+        })
+        renderedPoseArtworkRatio = Qt.binding(function() {
+            return root.poseArtworkAspectRatio
+        })
+        renderedPoseCordAnchorX = Qt.binding(function() {
+            return root.poseArtworkCordAnchor.x
+        })
+        renderedPoseCordAnchorY = Qt.binding(function() {
+            return root.poseArtworkCordAnchor.y
+        })
+        renderedLayeredRequestedRotation = Qt.binding(function() {
+            return root.layeredPoseRotation
+        })
+        renderedVariantHeadRotation = Qt.binding(function() {
+            return root.variantHeadRotation
+        })
+        renderedVariantTorsoRotation = Qt.binding(function() {
+            return root.variantTorsoRotation
+        })
+        renderedVariantSkirtRotation = Qt.binding(function() {
+            return root.variantSkirtRotation
+        })
+        renderedVariantHeadOffsetX = Qt.binding(function() {
+            return root.variantHeadOffsetX
+                   * (root.variantLayeredSideAware ? root.habitatSideSign : 1.0)
+        })
+        renderedVariantHeadOffsetY = Qt.binding(function() {
+            return root.variantHeadOffsetY
+        })
+        renderedVariantTorsoOffsetX = Qt.binding(function() {
+            return root.variantTorsoOffsetX
+                   * (root.variantLayeredSideAware ? root.habitatSideSign : 1.0)
+        })
+        renderedVariantTorsoOffsetY = Qt.binding(function() {
+            return root.variantTorsoOffsetY
+        })
+        renderedVariantSkirtOffsetX = Qt.binding(function() {
+            return root.variantSkirtOffsetX
+                   * (root.variantLayeredSideAware ? root.habitatSideSign : 1.0)
+        })
+        renderedVariantSkirtOffsetY = Qt.binding(function() {
+            return root.variantSkirtOffsetY
+        })
+        renderedVariantHeadScaleX = Qt.binding(function() {
+            return root.variantHeadScaleX
+        })
+        renderedVariantHeadScaleY = Qt.binding(function() {
+            return root.variantHeadScaleY
+        })
+        renderedVariantTorsoScaleX = Qt.binding(function() {
+            return root.variantTorsoScaleX
+        })
+        renderedVariantTorsoScaleY = Qt.binding(function() {
+            return root.variantTorsoScaleY
+        })
+        renderedVariantSkirtScaleX = Qt.binding(function() {
+            return root.variantSkirtScaleX
+        })
+        renderedVariantSkirtScaleY = Qt.binding(function() {
+            return root.variantSkirtScaleY
+        })
+        renderedVariantHeadClipEnd = Qt.binding(function() {
+            return root.variantHeadClipEnd
+        })
+        renderedVariantTorsoClipEnd = Qt.binding(function() {
+            return root.variantTorsoClipEnd
+        })
+    }
+
     onUsesPoseArtworkChanged: synchronizeArtworkBlend(!interactionSnap)
     // `usesPoseArtwork` contains a JavaScript outfit-policy call. Some Qt
     // builds do not emit its derived-property notifier after a long chain of
@@ -629,8 +871,12 @@ Item {
     onPoseArtworkKeyChanged: synchronizeArtworkBlend(!interactionSnap)
     onOutfitIdChanged: synchronizeArtworkBlend(!interactionSnap)
     onInteractionSnapChanged: {
-        if (interactionSnap)
+        if (interactionSnap) {
             synchronizeArtworkBlend(false)
+            freezeGeometryAnimations()
+        } else {
+            restoreGeometryBindings()
+        }
     }
     Component.onCompleted: synchronizeArtworkBlend(false)
     // Do not derive layout from Image.implicitWidth while an asynchronous
@@ -2073,7 +2319,7 @@ Item {
         objectName: "desktopPetCharacterHitMask"
         anchors.fill: parent
         z: 20
-        enabled: root.visible
+        enabled: root.visible && root.inputEnabled
         containmentMask: unifiedCharacterMask
         acceptedButtons: Qt.LeftButton
         hoverEnabled: true

@@ -134,7 +134,11 @@ def test_activate_window_returns_failure_and_publishes_visible_reason(
     app = QApplication.instance() or QApplication([])
     backend = Backend(smoke=True, force_compact=True)
     try:
-        monkeypatch.setattr(backend.window_catalog, "refresh", lambda: None)
+        monkeypatch.setattr(
+            backend.window_catalog,
+            "refresh",
+            lambda *_args, **_kwargs: [],
+        )
         monkeypatch.setattr(backend.window_catalog, "activate", lambda _handle: False)
         assert backend.activateWindow(12345) is False
         assert "无法切换" in backend.status
@@ -850,6 +854,7 @@ def test_pet_interaction_locks_are_aggregated_by_reason(tmp_path, monkeypatch):
         assert backend._pet_interaction_locked is True
         assert backend._pet_interaction_lock_reasons == {"drag", "menu"}
         assert backend._pet_cursor_sample is None
+        assert backend.selection._interaction_suspended is True
 
         # Releasing one overlapping interaction must not enable avoidance
         # while another owner is still active.
@@ -869,6 +874,7 @@ def test_pet_interaction_locks_are_aggregated_by_reason(tmp_path, monkeypatch):
         assert backend._pet_interaction_locked is False
         assert backend._pet_interaction_lock_reasons == set()
         assert backend._pet_interaction_grace_until > 0.0
+        assert backend.selection._interaction_suspended is False
 
         backend.setPetInteractionLock("resize", True)
         backend.setPetInteractionLock("accessory", True)
@@ -974,7 +980,11 @@ def test_native_non_game_full_screen_keeps_companion_but_hides_dock_overlays(
     backend = Backend(smoke=True, force_compact=True)
     try:
         backend._v03_timer.stop()
-        monkeypatch.setattr(backend.window_catalog, "pump", lambda: False)
+        monkeypatch.setattr(
+            backend.window_catalog,
+            "pump",
+            lambda *_args, **_kwargs: False,
+        )
         backend.selection._bubble = {
             "visible": True,
             "text": "temporary selection",

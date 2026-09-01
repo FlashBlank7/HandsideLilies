@@ -1779,10 +1779,6 @@ Window {
         property real dragGrabOffsetY: 0
         property real dragStartCursorX: 0
         property real dragStartCursorY: 0
-        property real dragCharacterGrabNormX: 0.5
-        property real dragCharacterGrabNormY: 0.5
-        property bool dragCharacterGrabValid: false
-        property bool dragCharacterGrabRemapped: false
         property bool dragMoved: false
         // Stable fallback used by offscreen probes and older platform bridges.
         // The Windows bridge keeps live samples in Python and exposes only the
@@ -1829,35 +1825,6 @@ Window {
         function detachForManualDrag() {
             compactLilith.interactionSnap = true
             backend.detachPetHabitat(x, y)
-        }
-        function captureCharacterGrab(localX, localY) {
-            var grab = compactLilith.normalizedCharacterGrab(
-                Number(localX), Number(localY)) || ({})
-            var grabX = Number(grab.x)
-            var grabY = Number(grab.y)
-            dragCharacterGrabValid = Boolean(grab.valid)
-                    && isFinite(grabX) && isFinite(grabY)
-            dragCharacterGrabNormX = dragCharacterGrabValid ? grabX : 0.5
-            dragCharacterGrabNormY = dragCharacterGrabValid ? grabY : 0.5
-            dragCharacterGrabRemapped = false
-        }
-        function remapCharacterGrabAfterDetach() {
-            if (!dragCharacterGrabValid || dragCharacterGrabRemapped)
-                return false
-            var point = compactLilith.characterPointForNormalizedGrab(
-                dragCharacterGrabNormX, dragCharacterGrabNormY)
-            var remappedX = Number(point.x)
-            var remappedY = Number(point.y)
-            if (!isFinite(remappedX) || !isFinite(remappedY))
-                return false
-            // From this frame onward the QWindow origin follows the new
-            // free-standing representation.  Keeping this offset in the same
-            // canonical character space prevents a 60--130 px visual jump
-            // when a perch/edge pose detaches on the first drag frame.
-            dragGrabOffsetX = remappedX
-            dragGrabOffsetY = remappedY
-            dragCharacterGrabRemapped = true
-            return true
         }
         function finalizeInterruptedInteractionForHide() {
             // Presence can switch to SILENT/BLOCKED while the pointer is
@@ -1913,8 +1880,6 @@ Window {
                 dragMoved = false
                 dragPointerEventPending = false
                 dragWorkAreaValid = false
-                dragCharacterGrabValid = false
-                dragCharacterGrabRemapped = false
                 compactWindow.expanded = false
                 backend.clearPetInteractionLocks()
             }
@@ -1944,10 +1909,20 @@ Window {
             // Pointer avoidance and habitat attachment intentionally glide into
             // place.  If the person grabs Lilith mid-glide, however, those
             // animations must relinquish the window immediately; merely
-            // disabling the Behavior does not stop an animation already in
-            // flight.
-            petXPositionAnimation.stop()
-            petYPositionAnimation.stop()
+            // disabling the Behavior (or stopping its child animation) does
+            // not cancel a transition already owned by Behavior.  The caller
+            // raises a synchronous guard before these exact self-writes cancel
+            // that transition without moving the held silhouette.  Keeping
+            // the guard local also makes direct callers and future gestures
+            // safe regardless of their flag ordering.
+            var heldX = Number(x)
+            var heldY = Number(y)
+            var previousClamp = geometryClampActive
+            geometryClampActive = true
+            x = heldX
+            y = heldY
+            geometryClampActive = previousClamp
+            return {"x": heldX, "y": heldY}
         }
 
         function moveWindowForDrag(targetX, targetY) {
@@ -2130,8 +2105,6 @@ Window {
             }
             backend.setPetInteractionLock("character", false)
             desktop.scheduleCompactLayoutPersistence()
-            dragCharacterGrabValid = false
-            dragCharacterGrabRemapped = false
             if (actualMoved) {
                 Qt.callLater(function() {
                     petWindow.finalizeMovedCharacterGesture()
@@ -2161,6 +2134,19 @@ Window {
                     || serial <= 0
                     || serial !== nativeSystemMoveGestureSerial)
                 return false
+            return finishCharacterGesture(false, true, serial)
+        }
+
+        function forceFinishNativeSystemMove(gestureSerial) {
+            var serial = Number(gestureSerial)
+            if (!manualDragActive || serial <= 0
+                    || serial !== nativeSystemMoveGestureSerial)
+                return false
+            // The native release watchdog reaches this only after User32 says
+            // the left button is up (or after WM_EXITSIZEMOVE).  Reassert the
+            // native authority if a synthesized QML cancel cleared the mirror
+            // flag before the modal loop's completion callback was delivered.
+            nativeSystemMoveActive = true
             return finishCharacterGesture(false, true, serial)
         }
 
@@ -2678,6 +2664,7 @@ Window {
                 objectName: "compactLilith"
                 anchors.fill: parent
                 appBackend: backend
+                inputEnabled: !petWindow.nativeSystemMoveActive
                 characterHeight: compactWindow.boxSize * 2.20
                 pose: petPoseResolver.resolvedPose
                 paused: petWindow.manualDragActive
@@ -2703,8 +2690,8 @@ Window {
                 z: 3
                 onCharacterPressStarted: function(pointerX, pointerY) {
                     backend.setPetInteractionLock("character", true)
-                    petWindow.cancelPositionAnimations()
                     petWindow.manualDragActive = true
+                    var heldWindow = petWindow.cancelPositionAnimations()
                     petWindow.nativeSystemMoveActive = false
                     petWindow.nativeSystemMoveAttempted = false
                     petWindow.nativeSystemMoveStartPending = false
@@ -2722,13 +2709,8 @@ Window {
                     // Freeze the exact silhouette that received the press.
                     // Habitat detachment now happens only after release.
                     compactLilith.interactionSnap = true
-                    petWindow.dragWindowX = petWindow.x
-                    petWindow.dragWindowY = petWindow.y
-                    // Capture the anatomical point of the frozen pressed pose.
-                    // Item-local QML coordinates are the only reliable source
-                    // for that point; the event bridge below supplies the
-                    // independently stable global cursor position.
-                    petWindow.captureCharacterGrab(pointerX, pointerY)
+                    petWindow.dragWindowX = heldWindow.x
+                    petWindow.dragWindowY = heldWindow.y
                     var cursor = petWindow.consumePointerEvent(pointerX, pointerY)
                     petWindow.dragPointerEventPending = false
                     petWindow.dragWorkArea = desktop.workAreaAt(cursor.x, cursor.y)
@@ -2928,8 +2910,8 @@ Window {
                         backend.setPetInteractionLock("resize", active)
                         if (active) {
                             compactLayoutPersistTimer.stop()
-                            petWindow.cancelPositionAnimations()
                             petWindow.resizeDragActive = true
+                            petWindow.cancelPositionAnimations()
                             gestureStarted = true
                             startSize = compactWindow.boxSize
                             // scenePressPosition is stable for the whole

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import time
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QTest
 
 from lilies.backend import Backend
 from lilies.core.focus_diversion import FocusDiversionMonitor
@@ -35,7 +37,11 @@ def test_high_frequency_native_pump_never_queries_productivity_storage(
     try:
         backend._v03_timer.stop()
         backend._last_v03_pump_at = time.monotonic()
-        monkeypatch.setattr(backend.window_catalog, "pump", lambda: False)
+        monkeypatch.setattr(
+            backend.window_catalog,
+            "pump",
+            lambda *_args, **_kwargs: False,
+        )
         monkeypatch.setattr(
             backend.focus,
             "status",
@@ -54,6 +60,139 @@ def test_high_frequency_native_pump_never_queries_productivity_storage(
         for _ in range(20):
             backend._pump_v03()
     finally:
+        backend.shutdown()
+        app.processEvents()
+
+
+def test_window_catalog_refresh_is_not_started_or_applied_during_pet_drag(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    requests: list[float] = []
+    committed: list[dict[str, object]] = []
+    try:
+        backend._v03_timer.stop()
+        backend._last_v03_pump_at = time.monotonic()
+        monkeypatch.setattr(
+            backend.window_catalog,
+            "pump",
+            lambda *_args, **_kwargs: True,
+        )
+        monkeypatch.setattr(
+            backend,
+            "_request_window_catalog_refresh",
+            lambda now=None: requests.append(float(now or 0.0)),
+        )
+        monkeypatch.setattr(
+            backend,
+            "_commit_window_catalog_refresh",
+            lambda payload: committed.append(dict(payload)),
+        )
+
+        backend._pet_interaction_locked = True
+        backend._apply_window_catalog_refresh({"ok": True, "groups": []})
+        backend._pump_v03()
+        assert requests == []
+        assert committed == []
+        assert backend._window_catalog_pending_payload == {
+            "ok": True,
+            "groups": [],
+        }
+
+        backend._pet_interaction_locked = False
+        backend._pet_interaction_grace_until = 0.0
+        backend._pump_v03()
+        assert committed == [{"ok": True, "groups": []}]
+        assert requests == []
+
+        backend._pump_v03()
+        assert len(requests) == 1
+    finally:
+        backend.shutdown()
+        app.processEvents()
+
+
+def test_75ms_projection_work_is_suspended_during_pet_drag(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    try:
+        backend._v03_timer.stop()
+        monkeypatch.setattr(
+            backend.window_catalog,
+            "pump",
+            lambda *_args, **_kwargs: False,
+        )
+        backend.setPetInteractionLock("drag", True)
+        monkeypatch.setattr(
+            backend,
+            "_sync_habitat_state",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("drag tick projected habitat state")
+            ),
+        )
+        monkeypatch.setattr(
+            backend,
+            "_pump_pet_avoidance",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("drag tick ran pointer avoidance")
+            ),
+        )
+        monkeypatch.setattr(
+            backend.input_pulse,
+            "snapshot",
+            lambda: (_ for _ in ()).throw(
+                AssertionError("drag tick projected input pulse")
+            ),
+        )
+
+        backend._pump_v03()
+    finally:
+        backend.shutdown()
+        app.processEvents()
+
+
+def test_slow_window_catalog_enumeration_never_blocks_gui_pump_and_coalesces(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    started = threading.Event()
+    release = threading.Event()
+    worker_threads: list[int] = []
+    try:
+        backend._v03_timer.stop()
+
+        def slow_refresh(*_args, **_kwargs):
+            worker_threads.append(threading.get_ident())
+            started.set()
+            assert release.wait(1.0)
+            return []
+
+        monkeypatch.setattr(backend.window_catalog, "refresh", slow_refresh)
+        began = time.perf_counter()
+        backend._request_window_catalog_refresh()
+        elapsed = time.perf_counter() - began
+        assert started.wait(0.5)
+        backend._request_window_catalog_refresh()
+
+        assert elapsed < 0.08
+        assert worker_threads == [worker_threads[0]]
+        assert worker_threads[0] != threading.get_ident()
+
+        release.set()
+        deadline = time.monotonic() + 1.0
+        while backend._window_catalog_refresh_running and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert backend._window_catalog_refresh_running is False
+        assert len(worker_threads) == 1
+    finally:
+        release.set()
         backend.shutdown()
         app.processEvents()
 

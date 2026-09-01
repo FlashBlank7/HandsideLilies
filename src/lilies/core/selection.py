@@ -110,6 +110,7 @@ class SelectionService(QObject):
         self._active_broker_task_id = ""
         self._active = active and os.name == "nt"
         self._enabled = bool(database.get_setting("selection_monitor_enabled", True))
+        self._interaction_suspended = False
         self._subscription = CodexSubscriptionClient(database.path.parent / "codex-selection")
         self._bubble: dict[str, Any] = {"visible": False, "text": "", "busy": False, "x": 0, "y": 0}
         self._request_id = 0
@@ -185,6 +186,19 @@ class SelectionService(QObject):
         self.settingsChanged.emit()
         self.statusChanged.emit(self.status)
 
+    def set_interaction_suspended(self, suspended: bool) -> None:
+        """Keep global selection polling out of pointer-critical gestures."""
+
+        value = bool(suspended)
+        if value == self._interaction_suspended:
+            return
+        self._interaction_suspended = value
+        # A desktop-pet drag must never be interpreted as a WPS/PDF text
+        # selection when the button is released over the reading window.
+        self._mouse_down = False
+        self._capture_id += 1
+        self._refresh_monitor()
+
     def dismiss(self) -> None:
         self._cancel_active_broker_task("selection-dismissed")
         self._request_id += 1
@@ -248,7 +262,12 @@ class SelectionService(QObject):
         self._capture_id += 1
 
     def _refresh_monitor(self) -> None:
-        should_run = self._active and self._enabled and self._subscription.ready
+        should_run = (
+            self._active
+            and self._enabled
+            and self._subscription.ready
+            and not self._interaction_suspended
+        )
         if should_run and not self._timer.isActive():
             self._timer.start()
         elif not should_run:

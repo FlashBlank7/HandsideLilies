@@ -8,6 +8,7 @@ import math
 import os
 import sys
 import tempfile
+import threading
 import time
 from datetime import UTC, datetime
 from ctypes import wintypes
@@ -78,6 +79,7 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         self.native_window_id = int(native_window_id)
         self.native_dispatch_count = 0
         self.native_hit_test_count = 0
+        self._native_move_motion_latched = False
 
     @staticmethod
     def _inside(px: float, py: float, left: float, top: float, width: float, height: float) -> bool:
@@ -118,10 +120,28 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         box_top = float(self.root.property("compactAccessoryTop") or 0)
         box_width = float(self.root.property("compactAccessoryWidth") or 0)
 
-        # Controls are checked before the character. A pill may overlap the
-        # character's rectangular frame while still sitting outside its
-        # silhouette; returning early from the mask used to make that pill
-        # click-through even though it was fully visible.
+        # The character and box are by far the common press targets. Resolve
+        # their cheap bounds/mask first so an ordinary grab never traverses
+        # the complete QQuickItem tree. If the point lies in the character's
+        # rectangular frame but outside its silhouette we deliberately keep
+        # going: a visible pill may overlap that transparent corner.
+        if self._inside(px, py, *character):
+            mask = getattr(self.root, "characterContains", None)
+            if callable(mask):
+                try:
+                    if bool(mask(px, py)):
+                        return True
+                except (RuntimeError, TypeError, ValueError):
+                    # A transient QML relayout must not make the visible
+                    # character impossible to recover with the mouse.
+                    return True
+            else:
+                return True
+
+        cx, cy = box_left + box_width / 2, box_top + box_width / 2
+        if box_width > 0 and (px - cx) ** 2 + (py - cy) ** 2 <= (box_width / 2) ** 2:
+            return True
+
         content_item = getattr(self.root, "contentItem", None)
         actions_interactive = bool(self.root.property("compactActionsInteractive"))
         if callable(content_item):
@@ -151,20 +171,6 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             except (RuntimeError, TypeError):
                 pass
 
-        cx, cy = box_left + box_width / 2, box_top + box_width / 2
-        if box_width > 0 and (px - cx) ** 2 + (py - cy) ** 2 <= (box_width / 2) ** 2:
-            return True
-
-        if self._inside(px, py, *character):
-            mask = getattr(self.root, "characterContains", None)
-            if callable(mask):
-                try:
-                    return bool(mask(px, py))
-                except (RuntimeError, TypeError, ValueError):
-                    # A transient QML relayout must not make the visible
-                    # character impossible to recover with the mouse.
-                    return True
-            return True
         return False
 
     def nativeEventFilter(self, event_type: bytes, message: int) -> tuple[bool, int]:
@@ -178,6 +184,7 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             return False, 0
         self.native_dispatch_count += 1
         if msg.message == self.WM_ENTERSIZEMOVE:
+            self._native_move_motion_latched = False
             controller = self.native_move_controller
             if controller is not None:
                 rect = wintypes.RECT()
@@ -190,16 +197,20 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             return False, 0
         if msg.message == self.WM_MOVING:
             controller = self.native_move_controller
-            if controller is not None:
+            if controller is not None and not self._native_move_motion_latched:
                 try:
                     if not int(msg.lParam):
                         raise ValueError("WM_MOVING did not provide a RECT")
                     proposed = wintypes.RECT.from_address(int(msg.lParam))
-                    controller.noteSystemWindowMoving(
-                        proposed.left, proposed.top
+                    self._native_move_motion_latched = bool(
+                        controller.noteSystemWindowMoving(
+                            proposed.left, proposed.top
+                        )
                     )
                 except (TypeError, ValueError):
-                    controller.noteSystemWindowMoving()
+                    self._native_move_motion_latched = bool(
+                        controller.noteSystemWindowMoving()
+                    )
             return False, 0
         if msg.message == self.WM_EXITSIZEMOVE:
             # QWindowsWindow releases native capture before entering the
@@ -210,8 +221,15 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             # to finish the same gesture.
             controller = self.native_move_controller
             if controller is not None:
-                controller.noteSystemMoveExited()
+                rect = wintypes.RECT()
+                if ctypes.windll.user32.GetWindowRect(
+                    int(msg.hWnd), ctypes.byref(rect)
+                ):
+                    controller.noteSystemMoveExited(rect.left, rect.top)
+                else:
+                    controller.noteSystemMoveExited()
                 controller.queueSystemMoveFinished()
+            self._native_move_motion_latched = False
             return False, 0
         if msg.message != self.WM_NCHITTEST:
             return False, 0
@@ -257,6 +275,138 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         return True, self.HTTRANSPARENT
 
 
+class _LatestJsonFileWriter:
+    """Write only the newest diagnostic snapshot on one daemon worker.
+
+    The worker is created with the application, never from a press/release
+    handler.  The GUI thread therefore only replaces an in-memory dictionary
+    and wakes a condition.  If several drags complete while a slow disk write
+    is in flight, intermediate diagnostics are intentionally coalesced:
+    ``pet-drag-latest.json`` promises the latest evidence, not an audit
+    history.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self._condition = threading.Condition()
+        self._pending: tuple[int, dict[str, object]] | None = None
+        self._next_sequence = 0
+        self._settled_sequence = 0
+        self._persisted_sequence = 0
+        self._last_error = ""
+        self._closing = False
+        self._stopped = False
+        self._worker: threading.Thread | None = threading.Thread(
+            target=self._drain,
+            name="lilies-drag-diagnostics",
+            daemon=True,
+        )
+        try:
+            self._worker.start()
+        except RuntimeError as error:
+            self._worker = None
+            self._closing = True
+            self._stopped = True
+            self._last_error = str(error)
+
+    def submit(self, snapshot: dict[str, object]) -> int:
+        with self._condition:
+            if self._closing or self._stopped:
+                return 0
+            self._next_sequence += 1
+            sequence = self._next_sequence
+            self._pending = (sequence, dict(snapshot))
+            self._condition.notify()
+            return sequence
+
+    def wait_for_completion(self, sequence: int, timeout: float) -> bool:
+        target = max(0, int(sequence))
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        with self._condition:
+            while self._settled_sequence < target:
+                if self._stopped:
+                    return False
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    return False
+                self._condition.wait(remaining)
+            return self._persisted_sequence >= target
+
+    def close(self, timeout: float = 0.25) -> bool:
+        """Drain the latest pending value without making process exit hang."""
+
+        with self._condition:
+            self._closing = True
+            self._condition.notify_all()
+            worker = self._worker
+        if worker is None:
+            return True
+        worker.join(max(0.0, float(timeout)))
+        return not worker.is_alive()
+
+    def _drain(self) -> None:
+        while True:
+            with self._condition:
+                while self._pending is None and not self._closing:
+                    self._condition.wait()
+                pending = self._pending
+                self._pending = None
+                if pending is None:
+                    self._stopped = True
+                    self._condition.notify_all()
+                    return
+            sequence, snapshot = pending
+            try:
+                error = self._write_snapshot(snapshot)
+            except Exception as unexpected_error:
+                # Diagnostics are explicitly best-effort.  A future serializer
+                # or test hook must not kill the single writer and strand every
+                # later snapshot behind a stale "worker running" flag.
+                error = str(unexpected_error)
+            with self._condition:
+                self._settled_sequence = max(
+                    self._settled_sequence, sequence
+                )
+                if not error:
+                    self._persisted_sequence = max(
+                        self._persisted_sequence, sequence
+                    )
+                self._last_error = error
+                self._condition.notify_all()
+
+    def _write_snapshot(self, snapshot: dict[str, object]) -> str:
+        temporary = self.path.with_name(f".{self.path.name}.tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(
+                json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except (OSError, TypeError, ValueError) as error:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return str(error)
+        for attempt in range(3):
+            try:
+                os.replace(temporary, self.path)
+                return ""
+            except OSError as error:
+                if (
+                    getattr(error, "winerror", None) in {5, 32, 33}
+                    and attempt < 2
+                ):
+                    time.sleep(0.02 * (attempt + 1))
+                    continue
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return str(error)
+        return "diagnostic replace retry exhausted"
+
+
 class CompactPointerEventFilter(QObject):
     """Expose event-time global mouse coordinates to the compact QML window.
 
@@ -275,6 +425,7 @@ class CompactPointerEventFilter(QObject):
             QEvent.Type.MouseButtonDblClick,
         }
     )
+    _SYSTEM_MOVE_MAX_HOLD_SECONDS = 180.0
 
     def __init__(
         self,
@@ -287,6 +438,12 @@ class CompactPointerEventFilter(QObject):
         self._diagnostics_path = (
             Path(diagnostics_path) if diagnostics_path is not None else None
         )
+        self._diagnostics_writer = (
+            _LatestJsonFileWriter(self._diagnostics_path)
+            if self._diagnostics_path is not None
+            else None
+        )
+        self._last_diagnostics_write_sequence = 0
         self.serial = 0
         self._active_system_move_serial = 0
         self._last_direct_position: QPoint | None = None
@@ -303,12 +460,33 @@ class CompactPointerEventFilter(QObject):
         self._system_window_moving_messages = 0
         self._native_mouse_moves_suppressed = 0
         self._direct_move_commits = 0
+        self._completion_watchdog_polls = 0
+        self._completion_queued_by = ""
+        self._completion_delivery_retries = 0
+        self._system_move_watchdog_started_at = 0.0
+        self._native_filter_app: QApplication | None = None
+        self._native_drag_filter: QAbstractNativeEventFilter | None = None
+        self._native_drag_filter_suspended = False
+        self._qt_pointer_filter_suspended = False
+        self._native_filter_resume_retries = 0
+        self._closing_drag_bridge = False
         self._last_drag_diagnostics: dict[str, object] = {}
+        self._system_move_release_timer = QTimer(self)
+        self._system_move_release_timer.setInterval(24)
+        self._system_move_release_timer.timeout.connect(
+            self._poll_system_move_release
+        )
+        self._native_filter_resume_timer = QTimer(self)
+        self._native_filter_resume_timer.setSingleShot(True)
+        self._native_filter_resume_timer.setInterval(16)
+        self._native_filter_resume_timer.timeout.connect(
+            self._resume_native_drag_filter
+        )
         self._drag_diagnostics_timer = QTimer(self)
         self._drag_diagnostics_timer.setSingleShot(True)
         self._drag_diagnostics_timer.setInterval(180)
         self._drag_diagnostics_timer.timeout.connect(
-            self._write_drag_diagnostics
+            self._enqueue_drag_diagnostics_write
         )
 
     @property
@@ -317,8 +495,128 @@ class CompactPointerEventFilter(QObject):
 
         return self._active_system_move_serial > 0
 
+    def configure_native_drag_filter(
+        self,
+        app: QApplication,
+        native_filter: QAbstractNativeEventFilter,
+    ) -> None:
+        """Allow a system move to bypass Python's application message hook."""
+
+        self._native_filter_app = app
+        self._native_drag_filter = native_filter
+
+    def _suspend_qt_pointer_filter(self) -> None:
+        if self._qt_pointer_filter_suspended:
+            return
+        try:
+            self.root.removeEventFilter(self)
+        except RuntimeError:
+            return
+        self._qt_pointer_filter_suspended = True
+
+    def _resume_qt_pointer_filter(self) -> bool:
+        if not self._qt_pointer_filter_suspended:
+            return True
+        try:
+            self.root.installEventFilter(self)
+        except RuntimeError:
+            return False
+        self._qt_pointer_filter_suspended = False
+        return True
+
+    def _schedule_filter_resume_retry(self) -> None:
+        self._native_filter_resume_retries += 1
+        if not self._closing_drag_bridge:
+            self._native_filter_resume_timer.start(
+                16 if self._native_filter_resume_retries < 8 else 250
+            )
+
+    def _refresh_native_window_id(self) -> None:
+        native_filter = self._native_drag_filter
+        if native_filter is None:
+            return
+        try:
+            native_filter.native_window_id = int(self.root.winId())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+
+    def _suspend_native_drag_filter(self) -> None:
+        # The QObject filter is otherwise invoked once per QMouseEvent even
+        # while DWM owns the move. A 1000 Hz mouse would still cross from Qt
+        # C++ into Python a thousand times per second despite doing no work in
+        # eventFilter(), which is enough to produce visible drag jitter.
+        self._suspend_qt_pointer_filter()
+        if self._native_drag_filter_suspended:
+            return
+        app = self._native_filter_app
+        native_filter = self._native_drag_filter
+        if app is None or native_filter is None:
+            return
+        try:
+            app.removeNativeEventFilter(native_filter)
+        except RuntimeError:
+            return
+        self._native_drag_filter_suspended = True
+        self._native_filter_resume_retries = 0
+
+    def _resume_native_drag_filter(self) -> None:
+        pointer_restored = self._resume_qt_pointer_filter()
+        if not self._native_drag_filter_suspended:
+            if pointer_restored:
+                self._native_filter_resume_retries = 0
+                self._native_filter_resume_timer.stop()
+                self._refresh_native_window_id()
+            else:
+                self._schedule_filter_resume_retry()
+            return
+        app = self._native_filter_app
+        native_filter = self._native_drag_filter
+        if app is None or native_filter is None:
+            self._native_drag_filter_suspended = False
+            return
+        try:
+            app.installNativeEventFilter(native_filter)
+        except RuntimeError:
+            # A QQuickWindow recreation can make the first queued install
+            # race the platform object's event turn.  Keep the suspended bit
+            # authoritative until installation really succeeds; clearing it
+            # early permanently disabled transparent hit testing after one
+            # unlucky drag.
+            self._schedule_filter_resume_retry()
+            return
+        self._native_drag_filter_suspended = False
+        if pointer_restored:
+            self._native_filter_resume_retries = 0
+            self._native_filter_resume_timer.stop()
+            self._refresh_native_window_id()
+        else:
+            self._schedule_filter_resume_retry()
+
+    def _sample_system_window_position(self) -> None:
+        if os.name != "nt":
+            return
+        origin = self._system_move_origin_physical
+        if origin is None:
+            return
+        try:
+            rect = wintypes.RECT()
+            if not ctypes.windll.user32.GetWindowRect(
+                int(self.root.winId()), ctypes.byref(rect)
+            ):
+                return
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return
+        dx = int(rect.left) - origin[0]
+        dy = int(rect.top) - origin[1]
+        self._system_move_max_distance_squared = max(
+            self._system_move_max_distance_squared,
+            float(dx * dx + dy * dy),
+        )
+
     def _reset_drag_diagnostics(self) -> None:
-        self._drag_diagnostics_timer.stop()
+        if self._drag_diagnostics_timer.isActive():
+            self._drag_diagnostics_timer.stop()
+            self._enqueue_drag_diagnostics_write()
         self._drag_started_at = time.perf_counter()
         self._diagnostic_gesture_serial = 0
         self._system_move_origin_physical = None
@@ -336,6 +634,9 @@ class CompactPointerEventFilter(QObject):
         self._system_window_moving_messages = 0
         self._native_mouse_moves_suppressed = 0
         self._direct_move_commits = 0
+        self._completion_watchdog_polls = 0
+        self._completion_queued_by = ""
+        self._completion_delivery_retries = 0
         self._last_drag_diagnostics = {}
 
     @Slot(int, result=bool)
@@ -355,13 +656,52 @@ class CompactPointerEventFilter(QObject):
         # could otherwise feed the direct fallback as well as DWM.
         self._active_system_move_serial = gesture_serial
         self._diagnostic_gesture_serial = gesture_serial
+        if os.name == "nt":
+            # The HWND was materialized during startup.  Capture one exact
+            # physical origin before the modal move loop so diagnostics and
+            # the motion latch still work on systems where Qt consumes the
+            # first WM_ENTERSIZEMOVE before the application-wide filter sees
+            # it.  This is one User32 read per gesture, never per mouse sample.
+            try:
+                rect = wintypes.RECT()
+                if ctypes.windll.user32.GetWindowRect(
+                    int(self.root.winId()), ctypes.byref(rect)
+                ):
+                    self._system_move_origin_physical = (
+                        int(rect.left),
+                        int(rect.top),
+                    )
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                pass
+        # QWindowsWindow implements startSystemMove() by posting a system
+        # command.  While User32 runs the resulting modal loop, an
+        # application-wide PySide native filter would otherwise cross the
+        # C++/Python boundary for every window-position message even when it
+        # immediately returns.  Hit testing is unnecessary after this press
+        # has already established ownership, so remove that filter for the
+        # held gesture and restore it at the first completion boundary.
+        self._suspend_native_drag_filter()
         try:
             started = bool(self.root.startSystemMove())
         except (AttributeError, RuntimeError, TypeError, ValueError):
             self._active_system_move_serial = 0
+            self._system_move_watchdog_started_at = 0.0
+            self._resume_native_drag_filter()
             return False
         self._system_move_start_returned = started
         self._active_system_move_serial = gesture_serial if started else 0
+        if started and os.name == "nt":
+            # WM_EXITSIZEMOVE is the preferred completion signal, but Qt or a
+            # recreated frameless HWND can occasionally consume it before the
+            # application-wide native filter.  Poll only while a native move
+            # is active and only for the public left-button state; no pointer
+            # coordinates, titles or input contents are observed.
+            self._system_move_watchdog_started_at = time.perf_counter()
+            self._system_move_release_timer.start()
+        else:
+            self._system_move_watchdog_started_at = 0.0
+            self._system_move_release_timer.stop()
+            self._resume_native_drag_filter()
         return started
 
     @Slot(float, float, result=bool)
@@ -414,22 +754,26 @@ class CompactPointerEventFilter(QObject):
                 int(physical_y),
             )
 
-    @Slot()
-    @Slot(int, int)
+    @Slot(result=bool)
+    @Slot(int, int, result=bool)
     def noteSystemWindowMoving(
         self,
         physical_x: int | None = None,
         physical_y: int | None = None,
-    ) -> None:
+    ) -> bool:
         self._system_window_moving_messages += 1
         origin = self._system_move_origin_physical
         if origin is None or physical_x is None or physical_y is None:
-            return
+            return False
         dx = int(physical_x) - origin[0]
         dy = int(physical_y) - origin[1]
         self._system_move_max_distance_squared = max(
             self._system_move_max_distance_squared,
             float(dx * dx + dy * dy),
+        )
+        return (
+            self._system_move_max_distance_squared
+            > self._system_move_threshold_physical**2
         )
 
     @Slot(int, result=bool)
@@ -445,8 +789,34 @@ class CompactPointerEventFilter(QObject):
         )
 
     @Slot()
-    def noteSystemMoveExited(self) -> None:
+    @Slot(int, int)
+    def noteSystemMoveExited(
+        self,
+        physical_x: int | None = None,
+        physical_y: int | None = None,
+    ) -> None:
+        origin = self._system_move_origin_physical
+        if origin is not None and physical_x is not None and physical_y is not None:
+            dx = int(physical_x) - origin[0]
+            dy = int(physical_y) - origin[1]
+            self._system_move_max_distance_squared = max(
+                self._system_move_max_distance_squared,
+                float(dx * dx + dy * dy),
+            )
         self._system_move_exited = True
+        self._completion_queued_by = "wm-exit"
+        gesture_serial = self._active_system_move_serial
+        if gesture_serial > 0 and not self._last_drag_diagnostics:
+            # Persist native-loop evidence before relying on a synthesized QML
+            # release.  Some driver/Qt combinations complete the modal move
+            # without delivering that release, which previously left the
+            # exact real-machine failure completely unobservable.
+            self.completeGestureDiagnostics(
+                gesture_serial,
+                self.systemMoveHadMotion(gesture_serial),
+                True,
+                True,
+            )
         if self._last_drag_diagnostics:
             self._last_drag_diagnostics["systemMoveExited"] = True
             self._last_drag_diagnostics["systemMovingMessages"] = (
@@ -507,6 +877,9 @@ class CompactPointerEventFilter(QObject):
             ),
             "nativeMouseMovesSuppressed": self._native_mouse_moves_suppressed,
             "directMoveCommits": self._direct_move_commits,
+            "completionWatchdogPolls": self._completion_watchdog_polls,
+            "completionQueuedBy": self._completion_queued_by,
+            "completionDeliveryRetries": self._completion_delivery_retries,
             "windowLogicalWidth": int(self.root.width()),
             "windowLogicalHeight": int(self.root.height()),
             "devicePixelRatio": round(device_pixel_ratio, 4),
@@ -529,28 +902,42 @@ class CompactPointerEventFilter(QObject):
         # with menu presentation or the first post-drag render frame.
         self._drag_diagnostics_timer.start()
 
-    def _write_drag_diagnostics(self) -> None:
-        path = self._diagnostics_path
-        if path is None or not self._last_drag_diagnostics:
+    def _enqueue_drag_diagnostics_write(self) -> None:
+        writer = self._diagnostics_writer
+        if writer is None or not self._last_drag_diagnostics:
             return
-        temporary = path.with_name(f".{path.name}.tmp")
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary.write_text(
-                json.dumps(
-                    self._last_drag_diagnostics,
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            os.replace(temporary, path)
-        except (OSError, TypeError, ValueError):
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
+        self._last_diagnostics_write_sequence = writer.submit(
+            self._last_drag_diagnostics
+        )
+
+    def wait_for_drag_diagnostics_write(self, timeout: float = 1.0) -> bool:
+        """Wait for the last queued diagnostic in deterministic tests only."""
+
+        if self._drag_diagnostics_timer.isActive():
+            self._drag_diagnostics_timer.stop()
+            self._enqueue_drag_diagnostics_write()
+        writer = self._diagnostics_writer
+        sequence = self._last_diagnostics_write_sequence
+        return bool(
+            writer is not None
+            and sequence > 0
+            and writer.wait_for_completion(sequence, timeout)
+        )
+
+    @Slot()
+    def close_drag_diagnostics_writer(self) -> None:
+        """Flush best-effort diagnostics during an ordinary app shutdown."""
+
+        self._closing_drag_bridge = True
+        self._system_move_release_timer.stop()
+        self._native_filter_resume_timer.stop()
+        self._resume_native_drag_filter()
+        if self._drag_diagnostics_timer.isActive():
+            self._drag_diagnostics_timer.stop()
+            self._enqueue_drag_diagnostics_write()
+        writer = self._diagnostics_writer
+        if writer is not None:
+            writer.close(0.25)
 
     @Slot(int)
     def acknowledgeSystemMoveFinished(self, gesture_serial: int) -> None:
@@ -558,6 +945,9 @@ class CompactPointerEventFilter(QObject):
 
         if int(gesture_serial) == self._active_system_move_serial:
             self._active_system_move_serial = 0
+            self._system_move_watchdog_started_at = 0.0
+            self._system_move_release_timer.stop()
+            self._resume_native_drag_filter()
 
     @Slot(int, result="QVariantMap")
     def takeLatestPointerEvent(self, after_serial: int) -> dict[str, object]:
@@ -578,30 +968,118 @@ class CompactPointerEventFilter(QObject):
             "y": self._latest_global_y,
         }
 
-    def queueSystemMoveFinished(self) -> None:
+    def queueSystemMoveFinished(self, source: str = "wm-exit") -> None:
         """Queue WM_EXITSIZEMOVE completion after ordinary Qt mouse release."""
 
         gesture_serial = self._active_system_move_serial
         if gesture_serial <= 0:
             return
+        self._completion_queued_by = str(source or "unknown")
         QTimer.singleShot(
             0,
             lambda serial=gesture_serial: self._deliverSystemMoveFinished(serial),
         )
 
+    def _poll_system_move_release(self) -> None:
+        gesture_serial = self._active_system_move_serial
+        if gesture_serial <= 0:
+            self._system_move_release_timer.stop()
+            return
+        self._completion_watchdog_polls += 1
+        if (
+            self._system_move_watchdog_started_at > 0.0
+            and time.perf_counter() - self._system_move_watchdog_started_at
+            >= self._SYSTEM_MOVE_MAX_HOLD_SECONDS
+        ):
+            self._sample_system_window_position()
+            self._system_move_release_timer.stop()
+            self.queueSystemMoveFinished("native-move-timeout")
+            return
+        if (
+            self._system_move_max_distance_squared
+            <= self._system_move_threshold_physical**2
+        ):
+            # Latch any real displacement while it exists. The application
+            # native filter is absent during the modal loop, so relying on its
+            # WM_MOVING path would misclassify an out-and-back drag as a click.
+            self._sample_system_window_position()
+        try:
+            left_button_down = self._left_button_is_down()
+        except (AttributeError, OSError, TypeError, ValueError):
+            # The application native filter is intentionally removed for the
+            # modal move, so there is no second WM_EXITSIZEMOVE observer to
+            # fall back to here.  Fail closed: sample the final window rect,
+            # restore hit testing and let QML reconcile the held gesture.
+            self._sample_system_window_position()
+            self._system_move_release_timer.stop()
+            self.queueSystemMoveFinished("button-state-unavailable")
+            return
+        if left_button_down:
+            return
+        self._sample_system_window_position()
+        self._system_move_release_timer.stop()
+        self.queueSystemMoveFinished("button-release-watchdog")
+
+    def _left_button_is_down(self) -> bool:
+        """Read only the public aggregate left-button state for drag exit."""
+
+        return bool(ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000)
+
     def _deliverSystemMoveFinished(self, gesture_serial: int) -> None:
         if gesture_serial != self._active_system_move_serial:
             return
-        self._active_system_move_serial = 0
+        self._resume_native_drag_filter()
         callback = getattr(self.root, "finishNativeSystemMove", None)
         if not callable(callback):
+            self._active_system_move_serial = 0
+            self._system_move_release_timer.stop()
             return
         try:
-            callback(gesture_serial)
+            accepted = callback(gesture_serial)
         except (RuntimeError, TypeError):
-            pass
+            accepted = False
+        # A simple Python test double historically returned None. Production
+        # QML returns an explicit bool; only that explicit False is rejection.
+        if accepted is not False:
+            self._active_system_move_serial = 0
+            self._system_move_watchdog_started_at = 0.0
+            self._system_move_release_timer.stop()
+            return
+        self._completion_delivery_retries += 1
+        force_callback = getattr(self.root, "forceFinishNativeSystemMove", None)
+        if callable(force_callback):
+            try:
+                forced = force_callback(gesture_serial)
+            except (RuntimeError, TypeError):
+                forced = False
+            if forced is not False:
+                self._active_system_move_serial = 0
+                self._system_move_watchdog_started_at = 0.0
+                self._system_move_release_timer.stop()
+                return
+        if self._completion_delivery_retries < 3:
+            QTimer.singleShot(
+                16,
+                lambda serial=gesture_serial: self._deliverSystemMoveFinished(
+                    serial
+                ),
+            )
+            return
+        # Never consume every future MouseMove because a stale QML serial
+        # rejected completion. Visibility/habitat cleanup remains free to
+        # reconcile presentation state, while diagnostics record the retries.
+        self._active_system_move_serial = 0
+        self._system_move_watchdog_started_at = 0.0
+        self._system_move_release_timer.stop()
+        self._resume_native_drag_filter()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.root and event.type() == QEvent.Type.WinIdChange:
+            # Window flag/float-mode changes may recreate the platform HWND.
+            # Refresh the cached id on this ordinary Qt event, never from the
+            # native callback that consumes it.
+            self._refresh_native_window_id()
+            return False
         if watched is not self.root or event.type() not in self._MOUSE_EVENTS:
             return False
         if not isinstance(event, QMouseEvent):
@@ -647,11 +1125,26 @@ class QuickWindowResourceLifecycle(QObject):
     graph normally when opened again.
     """
 
+    _RELEASE_QUIET_MS = 420
+
     def __init__(self, root: QQuickWindow) -> None:
         super().__init__(root)
         self.windows = (root, *tuple(root.findChildren(QQuickWindow)))
+        self._pet_window = root.findChild(QQuickWindow, "petWindow")
+        if root.objectName() == "petWindow":
+            self._pet_window = root
+        self.monitored_windows = tuple(
+            window for window in self.windows if window is not self._pet_window
+        )
+        self._release_timers: dict[QQuickWindow, QTimer] = {}
         for window in self.windows:
             self._configure(window)
+            # The compact pet is intentionally resident and receives a very
+            # high-rate pointer stream. Installing this Python QObject filter
+            # on it would reintroduce one C++ -> Python call per mouse sample
+            # after the dedicated drag filter had been removed.
+            if window is self._pet_window:
+                continue
             window.installEventFilter(self)
             if not window.isVisible():
                 self._schedule_release(window)
@@ -662,7 +1155,47 @@ class QuickWindowResourceLifecycle(QObject):
         window.setPersistentSceneGraph(False)
 
     def _schedule_release(self, window: QQuickWindow) -> None:
-        QTimer.singleShot(0, lambda: self._release_if_still_hidden(window))
+        timer = self._release_timers.get(window)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(
+                lambda target=window: self._release_after_quiet_period(target)
+            )
+            self._release_timers[window] = timer
+        timer.start(self._RELEASE_QUIET_MS)
+
+    def _cancel_release(self, window: QQuickWindow) -> None:
+        timer = self._release_timers.get(window)
+        if timer is not None:
+            timer.stop()
+
+    def _pet_interaction_active(self) -> bool:
+        pet = self._pet_window
+        if pet is None:
+            return False
+        try:
+            return bool(pet.property("manualDragActive")) or bool(
+                pet.property("resizeDragActive")
+            )
+        except RuntimeError:
+            return False
+
+    def _release_after_quiet_period(self, window: QQuickWindow) -> None:
+        try:
+            hidden = not window.isVisible()
+        except RuntimeError:
+            return
+        if not hidden:
+            return
+        # Hiding the focus aura is part of the character press. Releasing its
+        # D3D scene graph from the next turn of Windows' modal move loop causes
+        # a visible first-frame hitch, and rebuilding it on release adds a
+        # second one. Wait until the pointer-critical gesture has been quiet.
+        if self._pet_interaction_active():
+            self._schedule_release(window)
+            return
+        self._release_if_still_hidden(window)
 
     @staticmethod
     def _release_if_still_hidden(window: QQuickWindow) -> None:
@@ -681,6 +1214,7 @@ class QuickWindowResourceLifecycle(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if isinstance(watched, QQuickWindow):
             if event.type() == QEvent.Type.Show:
+                self._cancel_release(watched)
                 self._configure(watched)
             elif event.type() == QEvent.Type.Hide:
                 self._schedule_release(watched)
@@ -1632,7 +2166,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.44")
+    app.setApplicationVersion("0.3.45")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:
@@ -1815,6 +2349,9 @@ def main(argv: list[str] | None = None) -> int:
     pet_window.setProperty("nativeMoveController", pointer_event_filter)
     pet_window.installEventFilter(pointer_event_filter)
     app._lilies_pointer_event_filter = pointer_event_filter
+    app.aboutToQuit.connect(
+        pointer_event_filter.close_drag_diagnostics_writer
+    )
     # Materialize and cache the HWND before installing the application-wide
     # native filter. Never resolve winId() from inside the filter callback.
     pet_native_window_id = int(pet_window.winId())
@@ -1826,6 +2363,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     app.installNativeEventFilter(hit_test_filter)
     app._lilies_hit_test_filter = hit_test_filter
+    pointer_event_filter.configure_native_drag_filter(app, hit_test_filter)
 
     tray = QSystemTrayIcon(tray_icon(), app)
     menu = QMenu()

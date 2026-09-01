@@ -12,7 +12,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QSG_RHI_BACKEND"] = "software"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_REPORT_PATH = PROJECT_ROOT / "artifacts" / "pose-click-mask-v0344.json"
+DEFAULT_REPORT_PATH = PROJECT_ROOT / "artifacts" / "pose-click-mask-v0345.json"
 
 from PySide6.QtCore import QObject, QPointF, Property, QUrl, Signal, Slot
 from PySide6.QtQml import QQmlApplicationEngine

@@ -9,8 +9,8 @@ $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $SourceRoot = Join-Path $ProjectRoot 'dist\LiliesInTheBox'
 $SourceExe = Join-Path $SourceRoot 'LiliesInTheBox.exe'
-$ExpectedFileVersion = '0.3.44.0'
-$ExpectedProductVersion = '0.3.44'
+$ExpectedFileVersion = '0.3.45.0'
+$ExpectedProductVersion = '0.3.45'
 $AllowedBase = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'Programs'))
 $Target = [IO.Path]::GetFullPath($InstallRoot)
 
@@ -37,7 +37,7 @@ function Assert-ReleaseExecutable([string]$Path) {
 Assert-SafeChildPath $Target $AllowedBase
 # This preflight is deliberately before process shutdown, deletion, copying,
 # shortcuts and manifest writes.  An old or unversioned EXE must never be
-# relabelled as v0.3.44 by a successful-looking install manifest.
+# relabelled as v0.3.45 by a successful-looking install manifest.
 Assert-ReleaseExecutable $SourceExe
 
 $TargetExe = Join-Path $Target 'LiliesInTheBox.exe'
@@ -103,7 +103,7 @@ Copy-Item -Path (Join-Path $SourceRoot '*') -Destination $Target -Recurse -Force
 
 $manifest = [ordered]@{
     id = 'lilies-in-the-box'
-    version = '0.3.44'
+    version = '0.3.45'
     installedAt = [DateTimeOffset]::UtcNow.ToString('o')
     source = $SourceRoot
     executable = $TargetExe

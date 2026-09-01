@@ -289,6 +289,7 @@ class Backend(QObject):
     openConversationRequested = Signal()
     externalActivationRequested = Signal(str)
     _activationApplyRequested = Signal(object)
+    _windowCatalogRefreshFinished = Signal(object)
     applicationActivationRequested = Signal(str)
 
     def __init__(
@@ -332,6 +333,10 @@ class Backend(QObject):
         self.model_task_broker = ModelTaskBroker()
         self._window_items: list[dict[str, Any]] = []
         self._window_groups: list[dict[str, Any]] = []
+        self._window_catalog_refresh_running = False
+        self._window_catalog_thread: threading.Thread | None = None
+        self._window_catalog_shutting_down = False
+        self._window_catalog_pending_payload: dict[str, Any] | None = None
         # Presence decisions normally arrive with EVENT_SYSTEM_FOREGROUND.
         # Keep the HWND/fingerprint that produced the last successful decision
         # so WindowCatalog can reconcile same-window full-screen transitions
@@ -659,6 +664,9 @@ class Backend(QObject):
         self._shell_monitor.setInterval(2000)
         self._shell_monitor.timeout.connect(self._monitor_shell)
         self._shell_monitor.start()
+        self._windowCatalogRefreshFinished.connect(
+            self._apply_window_catalog_refresh
+        )
         self._catalog_unsubscribe = self.window_catalog.subscribe(self._on_window_catalog)
         if smoke:
             self.window_catalog.refresh()
@@ -679,7 +687,6 @@ class Backend(QObject):
         self._calendar_sync_timer.setSingleShot(True)
         self._calendar_sync_timer.timeout.connect(self.calendarRefresh)
         self.scanIcons()
-        self.refreshWindows()
         if not smoke and self.calendar_connector is not None:
             try:
                 calendar_connected = bool(
@@ -1358,6 +1365,7 @@ class Backend(QObject):
             self._pet_interaction_grace_until = 0.0
         else:
             self._pet_interaction_grace_until = time.monotonic() + 0.8
+        self.selection.set_interaction_suspended(value)
 
     @Slot(str, bool)
     def setPetInteractionLock(self, reason: str, locked: bool) -> None:
@@ -1545,12 +1553,94 @@ class Backend(QObject):
 
     @Slot()
     def refreshWindows(self) -> None:
-        self.window_catalog.refresh()
+        self._request_window_catalog_refresh()
+
+    def _request_window_catalog_refresh(self, now: float | None = None) -> None:
+        """Enumerate DWM/process state without blocking Qt's GUI thread.
+
+        Cache misses intentionally keep the Dock's text fallback until a GUI
+        startup pass can populate them.  QFileIconProvider/QPixmap must never
+        be constructed in this worker.
+        """
+
+        if self._window_catalog_shutting_down or self._window_catalog_refresh_running:
+            return
+        self._window_catalog_refresh_running = True
+        requested_at = time.monotonic() if now is None else float(now)
+
+        def refresh_in_background() -> None:
+            try:
+                groups = self.window_catalog.refresh(
+                    requested_at,
+                    notify=False,
+                    icon_resolver=self.window_icon_cache.lookup,
+                )
+                payload: dict[str, Any] = {
+                    "ok": True,
+                    "groups": groups,
+                }
+            except Exception as exc:
+                payload = {
+                    "ok": False,
+                    "error": type(exc).__name__,
+                    "groups": self.window_catalog.groups(),
+                }
+            if not self._window_catalog_shutting_down:
+                try:
+                    self._windowCatalogRefreshFinished.emit(payload)
+                except RuntimeError:
+                    # QObject teardown may win the narrow race after the
+                    # shutdown flag check. The catalogue is a cache, so a late
+                    # result is safe to discard.
+                    pass
+
+        thread = threading.Thread(
+            target=refresh_in_background,
+            name="lilies-window-catalog-refresh",
+            daemon=True,
+        )
+        self._window_catalog_thread = thread
+        try:
+            thread.start()
+        except RuntimeError:
+            self._window_catalog_thread = None
+            self._window_catalog_refresh_running = False
+
+    @Slot(object)
+    def _apply_window_catalog_refresh(self, payload: object) -> None:
+        self._window_catalog_refresh_running = False
+        self._window_catalog_thread = None
+        if self._window_catalog_shutting_down:
+            return
+        result = payload if isinstance(payload, dict) else {}
+        if (
+            self._pet_interaction_locked
+            or time.monotonic() < self._pet_interaction_grace_until
+        ):
+            # Even the cheap Qt-side projection can emit presence/habitat and
+            # QML model changes. Never merge it inside Windows' modal move
+            # loop; retain only the newest catalogue until the release grace
+            # period has elapsed.
+            self._window_catalog_pending_payload = dict(result)
+            return
+        self._commit_window_catalog_refresh(result)
+
+    def _commit_window_catalog_refresh(self, result: dict[str, Any]) -> None:
+        if not bool(result.get("ok")):
+            return
+        groups = result.get("groups")
+        if not isinstance(groups, list):
+            return
+        self._on_window_catalog(groups)
 
     def _on_window_catalog(self, groups: list[dict[str, object]]) -> None:
-        self._window_groups = [dict(value) for value in groups]
-        self._window_items = [dict(value) for value in self.window_catalog.list_windows()]
-        active = next((value for value in self._window_items if bool(value.get("active"))), None)
+        next_groups = [dict(value) for value in groups]
+        next_items = [dict(value) for value in self.window_catalog.list_windows()]
+        groups_changed = next_groups != self._window_groups
+        items_changed = next_items != self._window_items
+        self._window_groups = next_groups
+        self._window_items = next_items
+        active = next((value for value in next_items if bool(value.get("active"))), None)
         active_process_id = int((active or {}).get("processId") or 0)
         if active_process_id != os.getpid():
             # A focusable Lilies panel is not an application switch for the
@@ -1559,8 +1649,10 @@ class Backend(QObject):
             # reattaching fifteen seconds after that panel closes.
             self.pet_habitat.update_foreground(active)
         self._reconcile_presence_from_catalog(active)
-        self.windowGroupsChanged.emit()
-        self.windowItemsChanged.emit()
+        if groups_changed:
+            self.windowGroupsChanged.emit()
+        if items_changed:
+            self.windowItemsChanged.emit()
 
     def _apply_foreground_context(self, context: ForegroundContext) -> None:
         """Apply one successfully read foreground context on the Qt thread."""
@@ -1942,7 +2034,25 @@ class Backend(QObject):
             # desktop resumed from sleep.  Refresh once; the normal jittered
             # schedule resumes when the operation finishes.
             self.calendarRefresh()
-        self.window_catalog.pump()
+        catalog_due = self.window_catalog.pump(now, refresh=False)
+        catalog_quiet = (
+            not self._pet_interaction_locked
+            and now >= self._pet_interaction_grace_until
+        )
+        if catalog_quiet:
+            pending_catalog = self._window_catalog_pending_payload
+            if pending_catalog is not None:
+                self._window_catalog_pending_payload = None
+                self._commit_window_catalog_refresh(pending_catalog)
+            elif catalog_due:
+                self._request_window_catalog_refresh(now)
+        # Keep the 75 ms timer out of the render-critical gesture. Foreground
+        # privacy transitions arrive through their event callbacks; the next
+        # ordinary tick safely projects habitat stability, avoidance and input
+        # pulse after release. Without this guard stableSeconds changed on
+        # every tick and emitted a large QVariantMap into the QML pose tree.
+        if self._pet_interaction_locked:
+            return
         habitat = self._sync_habitat_state()
         self._pump_pet_avoidance(now)
         # A producer may have completed while the state remained suppressed;
@@ -1958,6 +2068,11 @@ class Backend(QObject):
     def _refreshProductivityTick(self) -> None:
         """Keep the one-second scheduler alive across one transient failure."""
 
+        # This recurring path performs several SQLite reads. Mutating slots
+        # still refresh immediately, but the scheduler can safely wait for the
+        # next one-second tick instead of stealing a native drag frame.
+        if self._pet_interaction_locked:
+            return
         try:
             self._productivity_tick_in_progress = True
             self.refreshProductivity()
@@ -4004,6 +4119,11 @@ class Backend(QObject):
         self._set_status("这个话题已转入盒子")
 
     def _monitor_shell(self) -> None:
+        # Explorer/recovery checks launch process and registry queries. They
+        # remain on their two-second timer and simply run on the next tick
+        # after a pointer-critical pet gesture finishes.
+        if self._pet_interaction_locked:
+            return
         try:
             if self.shell.maintain_recovery_monitor():
                 self._set_status("Windows 恢复监视器已重新启动")
@@ -4032,6 +4152,8 @@ class Backend(QObject):
         self.shellModeChanged.emit()
 
     def shutdown(self) -> None:
+        self._window_catalog_shutting_down = True
+        self._window_catalog_pending_payload = None
         self._runtime_heartbeat_timer.stop()
         self._shell_monitor.stop()
         self._v03_timer.stop()
@@ -4054,6 +4176,9 @@ class Backend(QObject):
         self._oauth_receivers.clear()
         self.input_pulse.stop()
         self.window_catalog.stop()
+        catalog_thread = self._window_catalog_thread
+        if catalog_thread is not None and catalog_thread.is_alive():
+            catalog_thread.join(timeout=0.25)
         for unsubscribe in (
             self._catalog_unsubscribe,
             self._hub_activity_unsubscribe,

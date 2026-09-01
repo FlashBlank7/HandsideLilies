@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import threading
+
+from PySide6.QtWidgets import QApplication
 
 from lilies.core.win_event import EVENT_SYSTEM_FOREGROUND, WinEvent, WinEventKind
+from lilies.core.window_icons import WindowIconCache
 from lilies.core.window_catalog import (
     WindowCatalogService,
     WindowRecord,
@@ -174,3 +178,124 @@ def test_icon_resolver_enriches_group_and_nested_window_urls() -> None:
     assert resolved == [r"C:\Apps\Reader.exe"]
     assert group["iconUrl"].endswith("reader.png")
     assert group["windows"][0]["iconUrl"] == group["iconUrl"]
+
+
+def test_due_tick_can_be_observed_without_refreshing_synchronously() -> None:
+    clock = Clock(20.0)
+    provider = FakeProvider([record(1, "Paper", r"C:\Apps\Reader.exe")])
+    service = WindowCatalogService(
+        provider,
+        safety_refresh_seconds=10.0,
+        clock=clock,
+    )
+    service.refresh(now=0.0)
+    provider.enumerate_windows = lambda: (_ for _ in ()).throw(
+        AssertionError("GUI tick performed a synchronous enumeration")
+    )
+
+    assert service.tick(now=20.0, refresh=False) is True
+
+
+def test_refresh_does_not_clear_an_event_that_arrived_during_enumeration() -> None:
+    provider = FakeProvider([record(1, "Paper", r"C:\Apps\Reader.exe")])
+    service = WindowCatalogService(provider)
+    original_enumerate = provider.enumerate_windows
+    injected = False
+
+    def enumerate_with_event():
+        nonlocal injected
+        values = original_enumerate()
+        if not injected:
+            injected = True
+            service.handle_event(
+                WinEvent(WinEventKind.FOREGROUND, 1, EVENT_SYSTEM_FOREGROUND)
+            )
+        return values
+
+    provider.enumerate_windows = enumerate_with_event
+    service.refresh(now=10.0)
+
+    assert service.status()["dirty"] is True
+
+
+def test_refresh_does_not_clear_activation_that_arrived_during_enumeration() -> None:
+    provider = FakeProvider(
+        [
+            record(1, "First", r"C:\Apps\one.exe", active=True),
+            record(2, "Second", r"C:\Apps\two.exe"),
+        ]
+    )
+    service = WindowCatalogService(provider)
+    service.refresh(now=1.0)
+    stale_values = list(provider.values)
+    started = threading.Event()
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    def blocked_enumeration():
+        started.set()
+        assert release.wait(1.0)
+        return list(stale_values)
+
+    provider.enumerate_windows = blocked_enumeration
+
+    def refresh_in_background() -> None:
+        try:
+            service.refresh(now=2.0)
+        except BaseException as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    worker = threading.Thread(target=refresh_in_background)
+    worker.start()
+    assert started.wait(1.0)
+    assert service.activate(2) is True
+    provider.values = [
+        replace(stale_values[0], active=False),
+        replace(stale_values[1], active=True),
+    ]
+    release.set()
+    worker.join(1.0)
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert service.status()["dirty"] is True
+
+    provider.enumerate_windows = lambda: list(provider.values)
+    service.refresh(now=3.0)
+    assert service.status()["dirty"] is False
+    assert service.list_windows()[0]["handle"] == 2
+
+
+def test_window_icon_worker_uses_cache_only_and_never_creates_qt_provider(
+    tmp_path,
+) -> None:
+    QApplication.instance() or QApplication([])
+    executable = tmp_path / "reader.exe"
+    executable.write_bytes(b"not-a-real-executable")
+    value = record(7, "Paper", str(executable), active=True)
+    cache = WindowIconCache(tmp_path / "icons")
+    entry = cache._cache_entry(value)
+    assert entry is not None
+    _path, _digest, destination = entry
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"cached-png")
+    results: list[str] = []
+
+    worker = threading.Thread(target=lambda: results.append(cache.lookup(value)))
+    worker.start()
+    worker.join(1.0)
+
+    assert not worker.is_alive()
+    assert results == [destination.as_uri()]
+    assert cache._provider is None
+
+    destination.unlink()
+    cache._memory.clear()
+    miss_results: list[str] = []
+    miss_worker = threading.Thread(
+        target=lambda: miss_results.append(cache.resolve(value))
+    )
+    miss_worker.start()
+    miss_worker.join(1.0)
+    assert miss_results == [""]
+    assert cache._provider is None

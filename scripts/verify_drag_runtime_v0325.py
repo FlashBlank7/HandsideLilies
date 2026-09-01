@@ -334,6 +334,193 @@ def main() -> int:
         compact_window.setProperty("expanded", False)
         QApplication.processEvents()
 
+        # A grab can begin while habitat/pointer-avoidance is still gliding the
+        # top-level window.  Disabling a QML Behavior does not cancel the
+        # transition it already owns, so the press must synchronously freeze
+        # the exact native window position before startSystemMove is posted.
+        pet_window.setProperty("geometryClampActive", True)
+        pet_window.setX(40)
+        pet_window.setY(30)
+        pet_window.setProperty("geometryClampActive", False)
+        glide_baseline = [float(pet_window.x()), float(pet_window.y())]
+        glide_target = [300.0, 150.0]
+        backend._habitat_status = {
+            **dict(backend.habitatState or {}),
+            "state": "normal",
+            "attached": True,
+            "profile": "desktop",
+            "pose": "perch-top",
+            "x": glide_target[0],
+            "y": glide_target[1],
+        }
+        backend.habitatChanged.emit()
+        for _ in range(4):
+            pet_window.requestUpdate()
+            pet_window.grabWindow()
+            QApplication.processEvents()
+            QTest.qWait(16)
+        glide_mid = [float(pet_window.x()), float(pet_window.y())]
+        frozen_geometry_properties = (
+            "renderedCharacterScale",
+            "renderedAnchorNormX",
+            "renderedAnchorNormY",
+            "renderedContactX",
+            "renderedContactY",
+            "renderedFallbackPoseHeightFactor",
+            "renderedHabitatBlend",
+            "renderedPoseArtworkRatio",
+            "renderedPoseCordAnchorX",
+            "renderedPoseCordAnchorY",
+            "renderedLayeredRequestedRotation",
+            "renderedVariantHeadRotation",
+            "renderedVariantTorsoRotation",
+            "renderedVariantSkirtRotation",
+            "renderedVariantHeadOffsetX",
+            "renderedVariantHeadOffsetY",
+            "renderedVariantTorsoOffsetX",
+            "renderedVariantTorsoOffsetY",
+            "renderedVariantSkirtOffsetX",
+            "renderedVariantSkirtOffsetY",
+            "renderedVariantHeadScaleX",
+            "renderedVariantHeadScaleY",
+            "renderedVariantTorsoScaleX",
+            "renderedVariantTorsoScaleY",
+            "renderedVariantSkirtScaleX",
+            "renderedVariantSkirtScaleY",
+            "renderedVariantHeadClipEnd",
+            "renderedVariantTorsoClipEnd",
+        )
+        pose_transition_before_press = bool(
+            pet_body.property("poseTransitionRunning")
+        )
+        active_transitions_before_press = pet_body.activeTransitionAnimations()
+        if isinstance(active_transitions_before_press, QJSValue):
+            active_transitions_before_press = (
+                active_transitions_before_press.toVariant()
+            )
+        backend.setPetDragMode("system")
+        point_x, point_y = _character_point(pet_window)
+        backend.offscreen_cursor = {
+            "x": glide_mid[0] + point_x,
+            "y": glide_mid[1] + point_y,
+        }
+        direct_moves_before_glide_press = len(fake_native.move_calls)
+        pet_body.beginPointer(point_x, point_y)
+        glide_immediate = [float(pet_window.x()), float(pet_window.y())]
+        geometry_immediate = {
+            name: float(pet_body.property(name))
+            for name in frozen_geometry_properties
+        }
+        pose_transition_after_press = bool(
+            pet_body.property("poseTransitionRunning")
+        )
+        active_transitions_after_press = pet_body.activeTransitionAnimations()
+        if isinstance(active_transitions_after_press, QJSValue):
+            active_transitions_after_press = active_transitions_after_press.toVariant()
+        glide_serial = int(
+            pet_window.property("nativeSystemMoveGestureSerial")
+        )
+        glide_press_state = {
+            "manual": bool(pet_window.property("manualDragActive")),
+            "native": bool(pet_window.property("nativeSystemMoveActive")),
+            "serial": glide_serial,
+        }
+        for _ in range(12):
+            pet_window.requestUpdate()
+            pet_window.grabWindow()
+            QApplication.processEvents()
+            QTest.qWait(16)
+        glide_late = [float(pet_window.x()), float(pet_window.y())]
+        geometry_late = {
+            name: float(pet_body.property(name))
+            for name in frozen_geometry_properties
+        }
+        geometry_held_drift = max(
+            abs(geometry_late[name] - geometry_immediate[name])
+            for name in frozen_geometry_properties
+        )
+        pose_transition_after_twelve_frames = bool(
+            pet_body.property("poseTransitionRunning")
+        )
+        active_transitions_after_twelve_frames = (
+            pet_body.activeTransitionAnimations()
+        )
+        if isinstance(active_transitions_after_twelve_frames, QJSValue):
+            active_transitions_after_twelve_frames = (
+                active_transitions_after_twelve_frames.toVariant()
+            )
+        glide_moved_before_press = math.hypot(
+            glide_mid[0] - glide_baseline[0],
+            glide_mid[1] - glide_baseline[1],
+        )
+        glide_remaining_before_press = math.hypot(
+            glide_target[0] - glide_mid[0],
+            glide_target[1] - glide_mid[1],
+        )
+        glide_press_jump = math.hypot(
+            glide_immediate[0] - glide_mid[0],
+            glide_immediate[1] - glide_mid[1],
+        )
+        glide_held_drift = math.hypot(
+            glide_late[0] - glide_immediate[0],
+            glide_late[1] - glide_immediate[1],
+        )
+        outcome["windowGlideFreezesSynchronouslyOnPress"] = {
+            "baseline": glide_baseline,
+            "target": glide_target,
+            "midAnimation": glide_mid,
+            "immediateAfterPress": glide_immediate,
+            "afterTwelveFrames": glide_late,
+            "movedBeforePress": glide_moved_before_press,
+            "remainingBeforePress": glide_remaining_before_press,
+            "pressJump": glide_press_jump,
+            "heldDrift": glide_held_drift,
+            "pressState": glide_press_state,
+            "poseTransitionBeforePress": pose_transition_before_press,
+            "activeTransitionsBeforePress": active_transitions_before_press,
+            "poseTransitionAfterPress": pose_transition_after_press,
+            "activeTransitionsAfterPress": active_transitions_after_press,
+            "poseTransitionAfterTwelveFrames": (
+                pose_transition_after_twelve_frames
+            ),
+            "activeTransitionsAfterTwelveFrames": (
+                active_transitions_after_twelve_frames
+            ),
+            "geometryHeldDrift": geometry_held_drift,
+            "directMoveCommits": (
+                len(fake_native.move_calls) - direct_moves_before_glide_press
+            ),
+            "passed": (
+                glide_moved_before_press > 4.0
+                and glide_remaining_before_press > 12.0
+                and glide_press_state["manual"] is True
+                and glide_press_state["native"] is True
+                and glide_serial > 0
+                and pose_transition_before_press
+                and "presentation"
+                    not in active_transitions_after_twelve_frames
+                and "artwork-blend"
+                    not in active_transitions_after_twelve_frames
+                and glide_press_jump <= 0.01
+                and glide_held_drift <= 0.01
+                and geometry_held_drift <= 0.000001
+                and len(fake_native.move_calls)
+                == direct_moves_before_glide_press
+            ),
+        }
+        fake_native.native_motion_latched = True
+        pet_body.endPointer()
+        QApplication.processEvents()
+        pet_window.finishNativeSystemMove(glide_serial)
+        QApplication.processEvents()
+        backend.detachPetHabitat(float(pet_window.x()), float(pet_window.y()))
+        compact_window.setProperty("expanded", False)
+        fake_native.start_calls.clear()
+        fake_native.move_requests.clear()
+        fake_native.move_calls.clear()
+        fake_native.acknowledged.clear()
+        fake_native.native_motion_latched = False
+
         # A fresh/invalid setting uses the compositor-owned system move. Keep
         # an explicitly persisted direct mode as the deterministic fallback
         # probe: the exact 4 px boundary remains a click; higher-rate samples
@@ -449,23 +636,17 @@ def main() -> int:
         QApplication.processEvents()
         pet_window.followPointerFrame()
         QApplication.processEvents()
-        grab_norm = [
-            float(pet_window.property("dragCharacterGrabNormX")),
-            float(pet_window.property("dragCharacterGrabNormY")),
+        grab_offset = [
+            float(pet_window.property("dragGrabOffsetX")),
+            float(pet_window.property("dragGrabOffsetY")),
         ]
-        mapped_grab = _qml_point(
-            pet_body.characterPointForNormalizedGrab(*grab_norm)
-        )
         held_global = [
-            float(pet_window.x()) + mapped_grab[0],
-            float(pet_window.y()) + mapped_grab[1],
+            float(pet_window.x()) + grab_offset[0],
+            float(pet_window.y()) + grab_offset[1],
         ]
         grab_error = math.hypot(
             held_global[0] - edge_cursor_x,
             held_global[1] - edge_cursor_y,
-        )
-        grab_remapped = bool(
-            pet_window.property("dragCharacterGrabRemapped")
         )
         habitat_attached_during_drag = bool(
             backend.habitatState.get("attached")
@@ -527,11 +708,10 @@ def main() -> int:
         }
         outcome["characterGrabContinuity"] = {
             "attachedPose": attached_pose,
-            "normalizedGrab": grab_norm,
+            "windowGrabOffset": grab_offset,
             "heldGlobal": held_global,
             "cursorGlobal": [edge_cursor_x, edge_cursor_y],
             "errorPixels": grab_error,
-            "remapped": grab_remapped,
             "habitatAttachedDuringDrag": habitat_attached_during_drag,
             "interactionSnapDuringDrag": interaction_snap_during_drag,
             # Keep the exact attached silhouette under the pointer for the
@@ -539,7 +719,6 @@ def main() -> int:
             # movement frame, owns habitat detachment and pose transition.
             "passed": (
                 attached_pose.startswith("edge-peek")
-                and not grab_remapped
                 and habitat_attached_during_drag
                 and interaction_snap_during_drag
                 and grab_error <= 2.0
@@ -928,10 +1107,88 @@ def main() -> int:
         )
         compact_window.setProperty("expanded", False)
 
+        # A fully-open radial menu owns two independent animations: the
+        # action orbit and the accessory-box turn.  Starting a compositor
+        # move must stop both on the originating press stack.  Waiting for a
+        # later render/event turn leaves a visibly rotating halo attached to
+        # the cursor even though Windows already owns the QWindow move.
+        fake_native.cancel_synchronously = False
+        compact_window.setProperty("expanded", True)
+        QTest.qWait(820)
+        expanded_before_native_press = {
+            "expanded": bool(compact_window.property("expanded")),
+            "orbitProgress": float(
+                compact_window.property("orbitProgress")
+            ),
+            "boxRotation": float(compact_box.rotation()),
+        }
+        pet_window.setX(190)
+        pet_window.setY(90)
+        QApplication.processEvents()
+        point_x, point_y = _character_point(pet_window)
+        backend.offscreen_cursor = {
+            "x": round(float(pet_window.x()) + point_x),
+            "y": round(float(pet_window.y()) + point_y),
+        }
+        starts_before_expanded_press = len(fake_native.start_calls)
+        pet_body.beginPointer(point_x, point_y)
+        # Deliberately do not process events here.  This snapshot proves the
+        # press handler itself relinquished both animation authorities before
+        # tryStartSystemMove returned to the native event bridge.
+        expanded_press_immediate = {
+            "expanded": bool(compact_window.property("expanded")),
+            "orbitProgress": float(
+                compact_window.property("orbitProgress")
+            ),
+            "boxRotation": float(compact_box.rotation()),
+            "manualDragActive": bool(
+                pet_window.property("manualDragActive")
+            ),
+            "nativeMoveActive": bool(
+                pet_window.property("nativeSystemMoveActive")
+            ),
+            "gestureSerial": int(
+                pet_window.property("nativeSystemMoveGestureSerial")
+            ),
+            "nativeStarts": (
+                len(fake_native.start_calls) - starts_before_expanded_press
+            ),
+        }
+        expanded_press_serial = int(
+            expanded_press_immediate["gestureSerial"]
+        )
+        # Complete the synthetic native move so no gesture state leaks into
+        # the existing x/y out-and-back cases below.
+        fake_native.native_motion_latched = True
+        pet_body.endPointer()
+        expanded_press_finish = bool(
+            pet_window.finishNativeSystemMove(expanded_press_serial)
+        )
+        QApplication.processEvents()
+        outcome["expandedMenuNativePressStopsMotion"] = {
+            "beforePress": expanded_before_native_press,
+            "immediatelyAfterPress": expanded_press_immediate,
+            "finishAccepted": expanded_press_finish,
+            "passed": (
+                expanded_before_native_press["expanded"] is True
+                and expanded_before_native_press["orbitProgress"] >= 0.99
+                and abs(
+                    expanded_before_native_press["boxRotation"] - 360.0
+                ) <= 0.5
+                and expanded_press_immediate["expanded"] is False
+                and expanded_press_immediate["orbitProgress"] <= 0.01
+                and abs(expanded_press_immediate["boxRotation"]) <= 0.01
+                and expanded_press_immediate["manualDragActive"] is True
+                and expanded_press_immediate["nativeMoveActive"] is True
+                and expanded_press_immediate["gestureSerial"] > 0
+                and expanded_press_immediate["nativeStarts"] == 1
+                and expanded_press_finish
+            ),
+        }
+
         # Exercise both geometry notifications.  Once either axis crosses the
         # threshold, returning the native window to its press origin must not
         # turn the gesture back into a click/menu toggle.
-        fake_native.cancel_synchronously = False
         axis_results: dict[str, object] = {}
         for axis in ("x", "y"):
             starts_expanded = axis == "x"
@@ -1241,6 +1498,144 @@ def main() -> int:
             ),
         }
         fake_native.start_result = True
+
+        # A direct release queues habitat detachment with Qt.callLater.  A
+        # SILENT/BLOCKED transition can hide the pet synchronously before
+        # that callback gets an event turn.  The visibility boundary must
+        # consume the pending finalizer exactly once, while the already
+        # scheduled layout timer must still persist the released position.
+        backend.setPetDragMode("direct")
+        backend.clearPetInteractionLocks()
+        backend.pet_habitat.set_presence("normal")
+        backend._habitat_status = backend.pet_habitat.status()
+        backend.habitatChanged.emit()
+        QApplication.processEvents()
+        pet_window.setProperty("geometryClampActive", True)
+        pet_window.setX(180)
+        pet_window.setY(80)
+        pet_window.setProperty("geometryClampActive", False)
+        backend.detachPetHabitat(180.0, 80.0)
+        QApplication.processEvents()
+        point_x, point_y = _character_point(pet_window)
+        release_hide_cursor_x = float(pet_window.x()) + point_x
+        release_hide_cursor_y = float(pet_window.y()) + point_y
+        backend.offscreen_cursor = {
+            "x": release_hide_cursor_x,
+            "y": release_hide_cursor_y,
+        }
+        release_hide_detaches_before = len(backend.detach_calls)
+        release_hide_saves_before = len(backend.offscreen_box_layout_saves)
+        pet_body.beginPointer(point_x, point_y)
+        backend.offscreen_cursor = {
+            "x": release_hide_cursor_x + 38.0,
+            "y": release_hide_cursor_y + 14.0,
+        }
+        pet_body.movePointer(point_x + 38.0, point_y + 14.0, True)
+        QApplication.processEvents()
+        pet_window.followPointerFrame()
+        QApplication.processEvents()
+        pet_body.endPointer()
+        # No event pump between release and suppression: callLater is still
+        # queued here, so dragFinalizePending is the authoritative proof that
+        # this is the narrow race rather than the ordinary hidden-mid-drag
+        # case covered earlier.
+        release_before_immediate_hide = {
+            "visible": bool(pet_window.isVisible()),
+            "manualDragActive": bool(
+                pet_window.property("manualDragActive")
+            ),
+            "finalizePending": bool(
+                pet_window.property("dragFinalizePending")
+            ),
+            "detachCalls": (
+                len(backend.detach_calls) - release_hide_detaches_before
+            ),
+            "persistenceWrites": (
+                len(backend.offscreen_box_layout_saves)
+                - release_hide_saves_before
+            ),
+            "position": [float(pet_window.x()), float(pet_window.y())],
+        }
+        backend.pet_habitat.set_presence("silent")
+        backend._habitat_status = backend.pet_habitat.status()
+        backend.habitatChanged.emit()
+        immediate_hide_before_event_turn = {
+            "visible": bool(pet_window.isVisible()),
+            "finalizePending": bool(
+                pet_window.property("dragFinalizePending")
+            ),
+            "detachCalls": (
+                len(backend.detach_calls) - release_hide_detaches_before
+            ),
+            "persistenceWrites": (
+                len(backend.offscreen_box_layout_saves)
+                - release_hide_saves_before
+            ),
+        }
+        QTest.qWait(420)
+        saved_after_hidden_release = dict(backend.boxLayout())
+        hidden_release_habitat = backend.pet_habitat.status()
+        queued_finalize_accepted = bool(
+            pet_window.finalizeMovedCharacterGesture()
+        )
+        after_hidden_event_turns = {
+            "detachCalls": (
+                len(backend.detach_calls) - release_hide_detaches_before
+            ),
+            "persistenceWrites": (
+                len(backend.offscreen_box_layout_saves)
+                - release_hide_saves_before
+            ),
+            "saved": [
+                float(saved_after_hidden_release.get("x", 0.0)),
+                float(saved_after_hidden_release.get("y", 0.0)),
+            ],
+            "habitat": [
+                float(hidden_release_habitat.get("x", 0.0)),
+                float(hidden_release_habitat.get("y", 0.0)),
+            ],
+            "queuedFinalizeAcceptedAgain": queued_finalize_accepted,
+        }
+        backend.pet_habitat.set_presence("normal")
+        backend._habitat_status = backend.pet_habitat.status()
+        backend.habitatChanged.emit()
+        QTest.qWait(80)
+        release_hide_position = release_before_immediate_hide["position"]
+        outcome["directReleaseHideRaceFinalizesExactlyOnce"] = {
+            "afterReleaseBeforeHide": release_before_immediate_hide,
+            "immediatelyAfterHide": immediate_hide_before_event_turn,
+            "afterQueuedTurns": after_hidden_event_turns,
+            "positionAfterRestore": [
+                float(pet_window.x()),
+                float(pet_window.y()),
+            ],
+            "passed": (
+                release_before_immediate_hide["visible"] is True
+                and release_before_immediate_hide["manualDragActive"] is False
+                and release_before_immediate_hide["finalizePending"] is True
+                and release_before_immediate_hide["detachCalls"] == 0
+                and release_before_immediate_hide["persistenceWrites"] == 0
+                and immediate_hide_before_event_turn["visible"] is False
+                and immediate_hide_before_event_turn["finalizePending"] is False
+                and immediate_hide_before_event_turn["detachCalls"] == 1
+                and immediate_hide_before_event_turn["persistenceWrites"] == 0
+                and after_hidden_event_turns["detachCalls"] == 1
+                and after_hidden_event_turns["persistenceWrites"] == 1
+                and not queued_finalize_accepted
+                and math.hypot(
+                    after_hidden_event_turns["saved"][0]
+                    - release_hide_position[0],
+                    after_hidden_event_turns["saved"][1]
+                    - release_hide_position[1],
+                ) <= 2.0
+                and math.hypot(
+                    after_hidden_event_turns["habitat"][0]
+                    - release_hide_position[0],
+                    after_hidden_event_turns["habitat"][1]
+                    - release_hide_position[1],
+                ) <= 2.0
+            ),
+        }
 
         # Drive the production avoidance pump with a synthetic cursor.  Two
         # named locks must aggregate; after the last unlock, the full 0.8 s

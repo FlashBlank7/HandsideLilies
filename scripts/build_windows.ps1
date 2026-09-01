@@ -4,10 +4,10 @@ $Python = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
 $DistRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot 'dist\LiliesInTheBox'))
 $CandidateExe = Join-Path $DistRoot 'LiliesInTheBox.exe'
 $ArtifactRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot 'artifacts'))
-$PackagedSelfTest = Join-Path $ArtifactRoot 'packaged-self-test-v0342.json'
-$PackagedCompactResource = Join-Path $ArtifactRoot 'packaged-compact-resource-v0342.json'
-$PackagedWindowsStartup = Join-Path $ArtifactRoot 'packaged-windows-startup-v0342.json'
-$PoseClickMask = Join-Path $ArtifactRoot 'pose-click-mask-v0342.json'
+$PackagedSelfTest = Join-Path $ArtifactRoot 'packaged-self-test-v0343.json'
+$PackagedCompactResource = Join-Path $ArtifactRoot 'packaged-compact-resource-v0343.json'
+$PackagedWindowsStartup = Join-Path $ArtifactRoot 'packaged-windows-startup-v0343.json'
+$PoseClickMask = Join-Path $ArtifactRoot 'pose-click-mask-v0343.json'
 if (-not (Test-Path -LiteralPath $Python)) {
     & (Join-Path $PSScriptRoot 'setup_windows.ps1')
 }
@@ -81,7 +81,7 @@ try {
     Pop-Location
 }
 
-# Generate the complete v0.3.42 evidence set in dependency order.  Removing
+# Generate the complete v0.3.43 evidence set in dependency order.  Removing
 # each fixed artifact first prevents a failed probe from leaving an older
 # successful report that a later validation could mistake for this build.
 foreach ($artifact in @(
@@ -148,4 +148,4 @@ if (-not (Test-Path -LiteralPath $PoseClickMask -PathType Leaf)) {
     throw "Pose click-mask report is missing: $PoseClickMask"
 }
 
-Write-Output 'Built Lilies v0.3.42 and generated packaged self-test, compact-resource, Windows startup and pose click-mask evidence.'
+Write-Output 'Built Lilies v0.3.43 and generated packaged self-test, compact-resource, Windows startup and pose click-mask evidence.'

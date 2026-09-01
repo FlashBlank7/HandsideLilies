@@ -149,6 +149,7 @@ def test_pointer_event_filter_preserves_event_time_global_position():
 
 def test_high_rate_native_pointer_stream_keeps_only_the_newest_sample():
     root = QObject()
+    root.setProperty("manualDragActive", True)
     event_filter = CompactPointerEventFilter(root)
 
     for index in range(1000):
@@ -160,7 +161,7 @@ def test_high_rate_native_pointer_stream_keeps_only_the_newest_sample():
             Qt.MouseButton.LeftButton,
             Qt.KeyboardModifier.NoModifier,
         )
-        assert event_filter.eventFilter(root, event) is False
+        assert event_filter.eventFilter(root, event) is True
 
     assert event_filter.takeLatestPointerEvent(0) == {
         "available": True,
@@ -168,6 +169,69 @@ def test_high_rate_native_pointer_stream_keeps_only_the_newest_sample():
         "x": 999.0,
         "y": 1009.0,
     }
+
+
+def test_active_manual_drag_consumes_only_moves_and_keeps_release_point():
+    root = QObject()
+    root.setProperty("manualDragActive", False)
+    event_filter = CompactPointerEventFilter(root)
+
+    press = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(40.0, 50.0),
+        QPointF(440.0, 550.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    assert event_filter.eventFilter(root, press) is False
+
+    # QML accepts the press and marks the gesture active after the event
+    # filter returns. Every subsequent raw move stays in the native coalescer
+    # instead of also traversing the QML MouseArea tree.
+    root.setProperty("manualDragActive", True)
+    move = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(48.0, 53.0),
+        QPointF(448.0, 553.0),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    assert event_filter.eventFilter(root, move) is True
+
+    release = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(52.0, 55.0),
+        QPointF(452.0, 555.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    assert event_filter.eventFilter(root, release) is False
+    assert event_filter.takeLatestPointerEvent(0) == {
+        "available": True,
+        "serial": 3,
+        "x": 452.0,
+        "y": 555.0,
+    }
+
+
+def test_manual_drag_does_not_consume_double_click_delivery():
+    root = QObject()
+    root.setProperty("manualDragActive", True)
+    event_filter = CompactPointerEventFilter(root)
+    double_click = QMouseEvent(
+        QEvent.Type.MouseButtonDblClick,
+        QPointF(25.0, 30.0),
+        QPointF(325.0, 430.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    assert event_filter.eventFilter(root, double_click) is False
+    assert event_filter.takeLatestPointerEvent(0)["serial"] == 1
 
 
 class _NativeMoveRoot(QObject):

@@ -19,7 +19,7 @@ def test_manifest_click_masks_drive_real_qml_hit_testing_and_mirroring(
     environment["QT_QPA_PLATFORM"] = "offscreen"
     environment["QSG_RHI_BACKEND"] = "software"
     environment["PYTHONUTF8"] = "1"
-    report_path = tmp_path / "pose-click-mask-v0342.json"
+    report_path = tmp_path / "pose-click-mask-v0343.json"
     completed = subprocess.run(
         [
             sys.executable,
@@ -44,7 +44,7 @@ def test_manifest_click_masks_drive_real_qml_hit_testing_and_mirroring(
     assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["schemaVersion"] == 1
-    assert report["applicationVersion"] == "0.3.42"
+    assert report["applicationVersion"] == "0.3.43"
     assert report["executableSha256"] == hashlib.sha256(
         Path(sys.executable).read_bytes()
     ).hexdigest().upper()

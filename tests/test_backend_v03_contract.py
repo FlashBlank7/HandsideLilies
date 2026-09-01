@@ -214,21 +214,41 @@ def test_backend_dock_launch_library_includes_pinned_and_unpinned_items(
         app.processEvents()
 
 
-def test_backend_direct_pet_drag_is_default_and_compatibility_mode_persists(
+def test_backend_system_pet_drag_is_default_and_explicit_direct_mode_persists(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
     app = QApplication.instance() or QApplication([])
     backend = Backend(smoke=True, force_compact=True)
     try:
-        assert backend.petDragMode == "direct"
-
-        backend.setPetDragMode("system")
         assert backend.petDragMode == "system"
-        assert backend.database.get_setting("pet_drag_mode", "") == "system"
+
+        backend.setPetDragMode("direct")
+        assert backend.petDragMode == "direct"
+        assert backend.database.get_setting("pet_drag_mode", "") == "direct"
 
         backend.setPetDragMode("not-a-mode")
-        assert backend.petDragMode == "system"
+        assert backend.petDragMode == "direct"
+    finally:
+        backend.shutdown()
+        app.processEvents()
+
+    restored = Backend(smoke=True, force_compact=True)
+    try:
+        assert restored.petDragMode == "direct"
+    finally:
+        restored.shutdown()
+        app.processEvents()
+
+
+def test_backend_invalid_persisted_drag_mode_repairs_to_system_default(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    try:
+        backend.database.set_setting("pet_drag_mode", "invalid-old-value")
     finally:
         backend.shutdown()
         app.processEvents()
@@ -236,8 +256,6 @@ def test_backend_direct_pet_drag_is_default_and_compatibility_mode_persists(
     restored = Backend(smoke=True, force_compact=True)
     try:
         assert restored.petDragMode == "system"
-        restored.setPetDragMode("direct")
-        assert restored.petDragMode == "direct"
     finally:
         restored.shutdown()
         app.processEvents()

@@ -1,6 +1,6 @@
 {
   "id": "first-encounter",
-  "version": "0.3.42",
+  "version": "0.3.43",
   "title": "初遇",
   "renderers": ["scene2d", "video"],
   "defaultRenderer": "scene2d",

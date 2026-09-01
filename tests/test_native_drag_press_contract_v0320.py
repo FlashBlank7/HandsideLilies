@@ -19,7 +19,7 @@ def test_native_system_move_is_requested_from_character_press() -> None:
     assert "petWindow.nativeSystemMoveStartPending = false" in press_handler
 
 
-def test_direct_event_time_drag_is_the_default_and_system_move_is_opt_in() -> None:
+def test_system_move_is_the_recommended_default_and_direct_is_compatibility_mode() -> None:
     source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
     start = source.index("function tryNativeSystemMove()")
     end = source.index("function finishCharacterGesture(", start)
@@ -29,9 +29,9 @@ def test_direct_event_time_drag_is_the_default_and_system_move_is_opt_in() -> No
     assert handler.index('backend.petDragMode !== "system"') < handler.index(
         "nativeMoveController.tryStartSystemMove("
     )
-    assert 'model: ["直接跟手（流畅）", "Windows 系统拖动"]' in source
-    assert 'currentIndex: backend.petDragMode === "system" ? 1 : 0' in source
-    assert '["direct", "system"][currentIndex]' in source
+    assert 'model: ["Windows 原生拖动（推荐）", "直接跟手（兼容）"]' in source
+    assert 'currentIndex: backend.petDragMode === "system" ? 0 : 1' in source
+    assert '["system", "direct"][currentIndex]' in source
 
 
 def test_qml_uses_boolean_preserving_python_system_move_bridge() -> None:

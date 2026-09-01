@@ -1783,7 +1783,7 @@ Window {
         property real capturedPointerGlobalX: 0
         property real capturedPointerGlobalY: 0
         property int capturedPointerEventSerial: 0
-        // Native events stay in Python until this window's 16 ms drag frame.
+        // Native events stay in Python until the scene graph's next frame.
         // Only the newest point matters; intermediate 500/1000 Hz samples are
         // deliberately discarded instead of becoming DWM geometry commits.
         property bool dragPointerEventPending: false
@@ -2004,10 +2004,9 @@ Window {
         }
 
         function tryNativeSystemMove() {
-            // Direct event-time dragging is the desktop-pet default. Pointer
-            // events are coalesced below so a high-polling-rate mouse can only
-            // submit one transparent-window move per display frame. Keep the
-            // compositor path available as an explicit compatibility choice.
+            // Windows' compositor-owned move is the default. Direct movement
+            // remains an explicit compatibility choice and is also the exact
+            // fallback when the platform refuses startSystemMove().
             if (backend.petDragMode !== "system")
                 return false
             if (nativeSystemMoveActive)
@@ -2310,12 +2309,10 @@ Window {
             followGlobalPointerSample(true)
         }
 
-        Timer {
-            // This timer only fills gaps after native system move was refused.
-            // One sample per display frame is enough; 8 ms polling caused
-            // redundant DWM moves with 500/1000 Hz mice.
-            interval: 16
-            repeat: true
+        FrameAnimation {
+            // Drive the compatibility fallback from the actual Qt Quick frame
+            // clock. A fixed 16 ms timer drifts against 60/120/144 Hz displays
+            // and can submit geometry just after DWM's composition deadline.
             running: petWindow.manualDragActive
                      && !petWindow.nativeSystemMoveActive
             onTriggered: petWindow.followPointerFrame()
@@ -2495,13 +2492,13 @@ Window {
 
         function safeActionX(desired, itemWidth) {
             return safeActionCoordinate(
-                desired, itemWidth, petWindow.x, width,
+                desired, itemWidth, petWindow.presentationWindowX, width,
                 Number(menuWorkArea.left), Number(menuWorkArea.right))
         }
 
         function safeActionY(desired, itemHeight) {
             return safeActionCoordinate(
-                desired, itemHeight, petWindow.y, height,
+                desired, itemHeight, petWindow.presentationWindowY, height,
                 Number(menuWorkArea.top), Number(menuWorkArea.bottom))
         }
 
@@ -3274,7 +3271,8 @@ Window {
                 id: desktopModeTab
                 objectName: "desktopPetDesktopModeTab"
                 readonly property bool placeRight: (
-                    petWindow.x + compactBox.x + compactBox.width
+                    petWindow.presentationWindowX
+                    + compactBox.x + compactBox.width
                     + width + 9 <= Number(compactWindow.menuWorkArea.right))
                 width: Math.max(58, Math.min(86, compactWindow.boxSize * 0.58))
                 height: Math.max(25, Math.min(34, compactWindow.boxSize * 0.23))
@@ -5598,17 +5596,17 @@ Window {
                                     Label { text: "拖动方式" }
                                     ComboBox {
                                         Layout.preferredWidth: 210
-                                        model: ["直接跟手（流畅）", "Windows 系统拖动"]
-                                        currentIndex: backend.petDragMode === "system" ? 1 : 0
+                                        model: ["Windows 原生拖动（推荐）", "直接跟手（兼容）"]
+                                        currentIndex: backend.petDragMode === "system" ? 0 : 1
                                         onActivated: backend.setPetDragMode(
-                                            ["direct", "system"][currentIndex])
+                                            ["system", "direct"][currentIndex])
                                     }
                                 }
                                 Label {
                                     Layout.fillWidth: true
                                     text: backend.petDragMode === "system"
-                                          ? "由 Windows 接管整窗拖动；系统拒绝时会自动回退到直接跟手。"
-                                          : "按显示帧合并高频鼠标事件，只移动到最新位置；不会触发窗口贴靠。"
+                                          ? "由 Windows 和桌面合成器直接接管，跟手最稳定；系统拒绝时自动回退。"
+                                          : "兼容模式按渲染帧合并鼠标事件；仅建议在原生拖动不可用时选择。"
                                     color: "#746f67"
                                     wrapMode: Text.Wrap
                                 }

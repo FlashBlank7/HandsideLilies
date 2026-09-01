@@ -319,8 +319,8 @@ class CompactPointerEventFilter(QObject):
         """Return the newest native pointer sample without waking QML per event.
 
         ``eventFilter`` only updates these Python fields. QML consumes the
-        newest point on its 16 ms drag frame, turning a 500/1000 Hz mouse into
-        at most one QWindow geometry submission per display frame.
+        newest point on the Qt Quick frame clock, turning a 500/1000 Hz mouse
+        into at most one QWindow geometry submission per display frame.
         """
 
         after = int(after_serial)
@@ -367,7 +367,16 @@ class CompactPointerEventFilter(QObject):
         self.serial += 1
         self._latest_global_x = float(point.x())
         self._latest_global_y = float(point.y())
-        return False
+        # Once QML has accepted the character press, native global positions
+        # are the sole direct-drag authority.  Consuming only MouseMove here
+        # prevents the same high-rate event stream from also traversing the
+        # large QML item tree and waking MouseArea handlers.  Press, release,
+        # and double-click must still reach QML so gesture ownership, final
+        # point consumption, clicks, and menu toggles keep their semantics.
+        return (
+            event.type() == QEvent.Type.MouseMove
+            and bool(self.root.property("manualDragActive"))
+        )
 
 
 class QuickWindowResourceLifecycle(QObject):
@@ -1366,7 +1375,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.42")
+    app.setApplicationVersion("0.3.43")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:

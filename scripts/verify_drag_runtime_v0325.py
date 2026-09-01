@@ -251,9 +251,15 @@ def main() -> int:
         compact_window.setProperty("expanded", False)
         QApplication.processEvents()
 
-        # Direct is the persisted default. The exact 4 px boundary remains a
-        # click; higher-rate samples are staged and the drag frame consumes
-        # only the newest point before moving the QWindow.
+        # A fresh/invalid setting uses the compositor-owned system move. Keep
+        # an explicitly persisted direct mode as the deterministic fallback
+        # probe: the exact 4 px boundary remains a click; higher-rate samples
+        # are staged and the scene-graph frame consumes only the newest point.
+        outcome["freshSystemDragDefault"] = {
+            "mode": str(backend.petDragMode),
+            "passed": str(backend.petDragMode) == "system",
+        }
+        backend.setPetDragMode("direct")
         point_x, point_y = _character_point(pet_window)
         start_x = float(pet_window.x())
         start_y = float(pet_window.y())

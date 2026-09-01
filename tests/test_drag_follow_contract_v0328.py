@@ -44,7 +44,12 @@ def test_high_rate_pointer_events_are_coalesced_to_one_move_per_drag_frame() -> 
     assert "dragPointerEventPending = true" in event_handler
     assert "followPointerAt(" not in event_handler
     assert "if (followPendingPointerEvent())" in frame_handler
-    assert "interval: 16" in source
+    frame_animation_start = source.index("FrameAnimation {", frame_end)
+    frame_animation_end = source.index("Timer {", frame_animation_start)
+    frame_animation = source[frame_animation_start:frame_animation_end]
+    assert "running: petWindow.manualDragActive" in frame_animation
+    assert "onTriggered: petWindow.followPointerFrame()" in frame_animation
+    assert "interval:" not in frame_animation
 
     app_source = (ROOT / "src" / "lilies" / "app.py").read_text("utf-8")
     event_filter_start = app_source.index("def eventFilter(", app_source.index("class CompactPointerEventFilter"))
@@ -53,6 +58,37 @@ def test_high_rate_pointer_events_are_coalesced_to_one_move_per_drag_frame() -> 
     assert "self._latest_global_x" in event_filter
     assert 'self.root.setProperty("capturedPointerGlobalX"' not in event_filter
     assert "def takeLatestPointerEvent(" in app_source
+
+
+def test_native_move_is_consumed_after_press_without_swallowing_release() -> None:
+    app_source = (ROOT / "src" / "lilies" / "app.py").read_text("utf-8")
+    event_filter_start = app_source.index(
+        "def eventFilter(", app_source.index("class CompactPointerEventFilter")
+    )
+    event_filter_end = app_source.index(
+        "class QuickWindowResourceLifecycle", event_filter_start
+    )
+    event_filter = app_source[event_filter_start:event_filter_end]
+
+    assert "event.type() == QEvent.Type.MouseMove" in event_filter
+    assert 'bool(self.root.property("manualDragActive"))' in event_filter
+    assert "MouseButtonRelease" not in event_filter.split("return (", 1)[1]
+
+
+def test_drag_freezes_action_and_desktop_tab_screen_placement_bindings() -> None:
+    source = _main_source()
+    safe_start = source.index("function safeActionX(")
+    safe_end = source.index("function actionGridColumn(", safe_start)
+    safe_helpers = source[safe_start:safe_end]
+    tab_start = source.index("id: desktopModeTab")
+    tab_end = source.index("MouseArea {", tab_start)
+    desktop_tab = source[tab_start:tab_end]
+
+    assert "petWindow.presentationWindowX" in safe_helpers
+    assert "petWindow.presentationWindowY" in safe_helpers
+    assert "petWindow.x" not in safe_helpers
+    assert "petWindow.y" not in safe_helpers
+    assert "petWindow.presentationWindowX" in desktop_tab
 
 
 def test_drag_reuses_work_area_and_pauses_unrelated_geometry_heartbeat() -> None:

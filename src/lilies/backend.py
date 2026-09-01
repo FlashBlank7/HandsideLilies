@@ -610,11 +610,16 @@ class Backend(QObject):
         )
         if self._pet_avoidance_mode not in {"off", "gentle", "lively"}:
             self._pet_avoidance_mode = "gentle"
+        # Let Windows' compositor own a fresh installation's drag gesture.
+        # It keeps the transparent top-level window on the native input path
+        # instead of round-tripping every pointer frame through Python/QML.
+        # An explicitly persisted ``direct`` value remains a supported
+        # compatibility choice for window managers that reject system moves.
         self._pet_drag_mode = str(
-            self.database.get_setting("pet_drag_mode", "direct")
+            self.database.get_setting("pet_drag_mode", "system")
         )
         if self._pet_drag_mode not in {"direct", "system"}:
-            self._pet_drag_mode = "direct"
+            self._pet_drag_mode = "system"
         self._pet_geometry: dict[str, Any] = {}
         self._pet_cursor_sample: tuple[float, float, float] | None = None
         self._pet_avoidance_cooldown_until = 0.0

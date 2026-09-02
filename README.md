@@ -1,5 +1,12 @@
 # Lilies in the box
 
+### v0.3.51 原生按下桥与拖动命中热路收口
+
+- Windows 原生 `raw press` 在人物轮廓命中后直接接管同一次按下，并延迟到下一个 Qt 事件轮次启动拖动，避免按下阶段同步穿越 Python/QML 控件树。
+- 人物命中优先读取空闲快照生成的纯缓存 alpha hit plane；缩放柄、盒子与功能按钮继续独立命中，不让透明区域或非人物控件误触人物拖动。
+- 鼠标在延迟启动前已经松开时走 `deferred release`：保留原本的静止点击并成对释放捕获，不把一次轻点变成丢失手势。
+- 版本资源、主题、安装器、构建与四份候选证据统一为 v0.3.51；`promote_v0351.ps1` 以 SHA-256 固定 v0.3.50 及更早历史包装器，并可通过 `promote_v0351.ps1 -ValidateOnly` 重放相同发布门禁。
+
 ### v0.3.50 对话组件工具与拖动诊断收口
 
 - ChatGPT/Codex 对话现在只动态公开 27 个经审核的本地组件工具，覆盖任务、专注、阅读、提醒、成长、衣柜与盒中世界，并保持在 32-function 上限内；Calendar、Slack、凭据、Shell 与任意注册表动作不进入该工具面。
@@ -389,19 +396,19 @@ cd "F:\code\Lilies in the box"
 
 这是一键发布证据构建：完成 PyInstaller 后会按依赖顺序重新生成并检查以下四份报告，任一步失败都会停止，旧报告会先被安全移除：
 
-1. `artifacts\packaged-self-test-v0350.json`
-2. `artifacts\packaged-compact-resource-v0350.json`
-3. `artifacts\packaged-windows-startup-v0350.json`
-4. `artifacts\pose-click-mask-v0350.json`
+1. `artifacts\packaged-self-test-v0351.json`
+2. `artifacts\packaged-compact-resource-v0351.json`
+3. `artifacts\packaged-windows-startup-v0351.json`
+4. `artifacts\pose-click-mask-v0351.json`
 
 需要逐步排查时，可用与一键脚本相同的顺序手动执行：
 
 ```powershell
-& .\dist\LiliesInTheBox\LiliesInTheBox.exe --self-test .\artifacts\packaged-self-test-v0350.json
+& .\dist\LiliesInTheBox\LiliesInTheBox.exe --self-test .\artifacts\packaged-self-test-v0351.json
 .\scripts\verify_packaged_compact_resources.ps1
 .\scripts\verify_packaged_windows_startup.ps1
 & .\.venv\Scripts\python.exe .\scripts\verify_pose_click_masks.py
-.\scripts\promote_v0350.ps1 -ValidateOnly
+.\scripts\promote_v0351.ps1 -ValidateOnly
 ```
 
 最后一条只验证、不复制：它与正式 promotion 使用同一套 EXE 版本、AdditionalFiles、三份打包报告、姿态点击报告与内容无关原生捕获探针门禁。只有全部通过后才运行不带 `-ValidateOnly` 的正式提升。

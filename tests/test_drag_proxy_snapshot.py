@@ -104,6 +104,34 @@ def test_alpha_bounds_rejects_an_empty_or_null_frame() -> None:
     assert alpha_bounds(QImage()).isEmpty()
 
 
+def test_idle_alpha_plane_supports_fast_logical_hits_and_tolerance() -> None:
+    parent = QObject()
+    item = _SizedItem(width=5, height=5)
+    cache = DragProxySnapshotCache(_Root(), item, parent)
+    image = QImage(10, 10, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(0)
+    image.setPixelColor(6, 4, QColor(255, 255, 255, 255))
+
+    assert cache.cached_alpha_contains(3.0, 2.0) is None
+    cache._cache_alpha_hit_plane(image, "pose-a", "geometry-a")
+
+    assert cache.cached_alpha_contains(
+        3.0,
+        2.0,
+        semantic_key="pose-a",
+        geometry_key="geometry-a",
+    ) is True
+    assert cache.cached_alpha_contains(
+        3.0,
+        2.0,
+        semantic_key="pose-b",
+        geometry_key="geometry-a",
+    ) is None
+    assert cache.cached_alpha_contains(2.0, 2.0) is False
+    assert cache.cached_alpha_contains(2.0, 2.0, tolerance=1.0) is True
+    assert cache.cached_alpha_contains(-1.0, 2.0) is False
+
+
 def test_exact_cache_key_prepares_tight_proxy_and_reports_physical_delta() -> None:
     parent = QObject()
     cache = DragProxySnapshotCache(_Root(), object(), parent)

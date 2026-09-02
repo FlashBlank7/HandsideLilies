@@ -8,23 +8,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_native_system_move_is_requested_from_character_press() -> None:
     source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
+    prepare_start = source.index("function prepareCharacterGestureAtGlobal(")
+    starter_start = source.index("function startPreparedCharacterGesture(")
+    native_start = source.index("function tryNativeSystemMove(")
+    prepare_handler = source[prepare_start:starter_start]
+    starter_handler = source[starter_start:native_start]
     press_start = source.index("onCharacterPressStarted:")
     move_start = source.index("onCharacterPointerMoved:", press_start)
     press_handler = source[press_start:move_start]
 
-    assert "petWindow.tryNativeSystemMove(" in press_handler
-    assert "petWindow.dragLatchedSnapshotKey" in press_handler
-    assert "petWindow.dragLatchedGeometryKey" in press_handler
-    assert press_handler.index("petWindow.dragStartCursorY = cursor.y") < press_handler.index(
-        "petWindow.tryNativeSystemMove("
-    )
-    assert press_handler.index("petWindow.dragLatchedSnapshotKey =") < press_handler.index(
-        "petWindow.tryNativeSystemMove("
-    )
-    assert press_handler.index("petWindow.dragLatchedGeometryKey =") < press_handler.index(
-        "petWindow.tryNativeSystemMove("
-    )
-    assert "petWindow.nativeSystemMoveStartPending = false" in press_handler
+    assert "petWindow.prepareCharacterGestureAtGlobal(" in press_handler
+    assert "petWindow.startPreparedCharacterGesture(serial)" in press_handler
+    assert "dragLatchedSnapshotKey = compactDragSnapshotKey" in prepare_handler
+    assert "dragLatchedGeometryKey = compactDragGeometryKey" in prepare_handler
+    assert "dragStartCursorY = cursorY" in prepare_handler
+    assert "tryNativeSystemMove(" in starter_handler
+    assert "dragLatchedSnapshotKey, dragLatchedGeometryKey" in starter_handler
+    assert 'backend.setPetInteractionLock("character", true)' in prepare_handler
+    assert "function beginNativeCharacterPress(" in starter_handler
+    assert "function startQueuedNativeCharacterPress(" in starter_handler
 
 
 def test_system_move_is_the_recommended_default_and_direct_is_compatibility_mode() -> None:
@@ -202,25 +204,23 @@ def test_drag_freezes_pose_and_defers_detach_until_after_release() -> None:
 
     assert "function recordNativeWindowMotion()" not in source
 
-    press_start = source.index("onCharacterPressStarted:")
-    press_end = source.index("onCharacterPointerMoved:", press_start)
-    press_handler = source[press_start:press_end]
-    assert "compactWindow.prepareForCharacterDrag()" in press_handler
-    assert "petWindow.dragLatchedSnapshotKey" in press_handler
-    assert "petWindow.dragLatchedGeometryKey" in press_handler
-    assert "var nativeStarted = petWindow.tryNativeSystemMove(" in press_handler
-    fallback_guard = press_handler.index(
-        "if (!nativeStarted || !petWindow.nativeSystemMoveUsesProxy)"
+    prepare_start = source.index("function prepareCharacterGestureAtGlobal(")
+    starter_start = source.index("function startPreparedCharacterGesture(")
+    native_start = source.index("function tryNativeSystemMove(")
+    prepare_handler = source[prepare_start:starter_start]
+    starter_handler = source[starter_start:native_start]
+    assert "compactWindow.prepareForCharacterDrag()" in prepare_handler
+    assert "dragLatchedSnapshotKey = compactDragSnapshotKey" in prepare_handler
+    assert "dragLatchedGeometryKey = compactDragGeometryKey" in prepare_handler
+    assert "var nativeStarted = tryNativeSystemMove(" in starter_handler
+    fallback_guard = starter_handler.index(
+        "if (!nativeStarted || !nativeSystemMoveUsesProxy)"
     )
-    interaction_snap = press_handler.index("compactLilith.interactionSnap = true")
+    interaction_snap = starter_handler.index("compactLilith.interactionSnap = true")
     assert fallback_guard < interaction_snap
-    assert press_handler.count("compactLilith.interactionSnap = true") == 1
-    assert "dragInteractionLockTimer.restart()" in press_handler
-    timer_start = source.index("id: dragInteractionLockTimer")
-    timer_end = source.index("id: dragProxySnapshotDebounce", timer_start)
-    interaction_timer = source[timer_start:timer_end]
-    assert "interval: 40" in interaction_timer
-    assert 'backend.setPetInteractionLock("character", true)' in interaction_timer
+    assert starter_handler.count("compactLilith.interactionSnap = true") == 1
+    assert 'backend.setPetInteractionLock("character", true)' in prepare_handler
+    assert "dragInteractionLockTimer" not in source
     assert "orbitProgressAnimation.stop()" in source
     assert "boxRotationAnimation.stop()" in source
     assert source.count("enabled: !petWindow.manualDragActive") >= 2

@@ -1960,7 +1960,6 @@ Window {
                 nativeSystemMoveUsesProxy = false
                 dragLatchedSnapshotKey = ""
                 dragLatchedGeometryKey = ""
-                dragInteractionLockTimer.stop()
                 dragFinalizePending = false
                 dragMoved = false
                 dragPointerEventPending = false
@@ -2059,6 +2058,103 @@ Window {
                 x + width / 2, y + height / 2)
         }
 
+        function prepareCharacterGestureAtGlobal(cursorX, cursorY) {
+            cursorX = Number(cursorX)
+            cursorY = Number(cursorY)
+            if (manualDragActive || resizeDragActive
+                    || !isFinite(cursorX) || !isFinite(cursorY))
+                return 0
+            manualDragActive = true
+            var heldWindow = cancelPositionAnimations()
+            nativeSystemMoveActive = false
+            nativeSystemMoveAttempted = false
+            nativeSystemMoveStartPending = false
+            nativeSystemMoveGestureCounter += 1
+            nativeSystemMoveGestureSerial = nativeSystemMoveGestureCounter
+            nativeSystemMoveCancelPending = false
+            dragMoved = false
+            dragFinalizePending = false
+            dragMenuWasExpanded = compactWindow.expanded
+            // Radial controls never travel with the held character.  A
+            // stationary release restores the correct toggle state; a real
+            // drag leaves them closed.
+            compactWindow.prepareForCharacterDrag()
+            // Freeze the semantic identity before any press side effect can
+            // revise the artwork.  The idle snapshot cache already owns this
+            // exact collapsed presentation.
+            dragLatchedGeometryKey = compactDragGeometryKey
+            dragLatchedSnapshotKey = compactDragSnapshotKey
+            dragWindowX = heldWindow.x
+            dragWindowY = heldWindow.y
+            dragPointerEventPending = false
+            dragWorkArea = desktop.workAreaAt(cursorX, cursorY)
+            dragWorkAreaValid = true
+            dragGrabOffsetX = cursorX - x
+            dragGrabOffsetY = cursorY - y
+            dragStartCursorX = cursorX
+            dragStartCursorY = cursorY
+            // Fence avoidance and proactive repositioning in this same Qt
+            // turn.  A delayed 40 ms lock lets the pet begin moving itself
+            // after the user has already taken hold of it.
+            backend.setPetInteractionLock("character", true)
+            return nativeSystemMoveGestureSerial
+        }
+
+        function startPreparedCharacterGesture(gestureSerial) {
+            var serial = Number(gestureSerial)
+            if (!manualDragActive || serial <= 0
+                    || serial !== nativeSystemMoveGestureSerial)
+                return false
+            // The native bridge may call this on the turn immediately after
+            // WM_LBUTTONDOWN.  The regular QML path calls it synchronously;
+            // both therefore share exactly one state transition.
+            var nativeStarted = tryNativeSystemMove(
+                dragLatchedSnapshotKey, dragLatchedGeometryKey)
+            if (!nativeStarted || !nativeSystemMoveUsesProxy) {
+                // Only the live-QQuickWindow compatibility path needs dozens
+                // of geometry bindings frozen.  A layered proxy is already
+                // the exact static presentation.
+                compactLilith.interactionSnap = true
+            }
+            return nativeStarted
+        }
+
+        // Called by CompactHitTestFilter before Qt Quick constructs a
+        // MouseArea delivery.  Returning a serial is the native filter's proof
+        // that it may consume this one client press.
+        function beginNativeCharacterPress(globalX, globalY) {
+            return prepareCharacterGestureAtGlobal(globalX, globalY)
+        }
+
+        function startQueuedNativeCharacterPress(gestureSerial) {
+            return startPreparedCharacterGesture(gestureSerial)
+        }
+
+        function finishQueuedNativeCharacterPress(gestureSerial) {
+            var serial = Number(gestureSerial)
+            if (!manualDragActive || serial <= 0)
+                return false
+            if (nativeSystemMoveGestureSerial > 0
+                    && nativeSystemMoveGestureSerial !== serial)
+                return false
+            // A proxy refusal clears nativeSystemMoveGestureSerial.  Passing
+            // zero then intentionally selects the established direct-release
+            // path while preserving stationary-click menu semantics.
+            var expected = nativeSystemMoveGestureSerial === serial ? serial : 0
+            return finishCharacterGesture(false, true, expected)
+        }
+
+        function cancelQueuedNativeCharacterPress(gestureSerial) {
+            var serial = Number(gestureSerial)
+            if (!manualDragActive || serial <= 0)
+                return false
+            if (nativeSystemMoveGestureSerial > 0
+                    && nativeSystemMoveGestureSerial !== serial)
+                return false
+            var expected = nativeSystemMoveGestureSerial === serial ? serial : 0
+            return finishCharacterGesture(false, false, expected)
+        }
+
         function tryNativeSystemMove(snapshotKey, geometryKey) {
             // Windows' compositor-owned move is the default. Direct movement
             // remains an explicit compatibility choice and is also the exact
@@ -2132,7 +2228,6 @@ Window {
                 return false
             if (expected > 0 && expected !== nativeSystemMoveGestureSerial)
                 return false
-            dragInteractionLockTimer.stop()
             if (!nativeSystemMoveActive) {
                 followPendingPointerEvent()
                 if (!followCapturedPointerEvent())
@@ -2430,18 +2525,6 @@ Window {
                      && !petWindow.nativeSystemMoveActive
                      && !petWindow.nativeSystemMoveStartPending
             onTriggered: petWindow.followPointerFrame()
-        }
-        Timer {
-            id: dragInteractionLockTimer
-            interval: 40
-            repeat: false
-            property int gestureSerial: 0
-            onTriggered: {
-                if (petWindow.manualDragActive
-                        && gestureSerial ===
-                           petWindow.nativeSystemMoveGestureCounter)
-                    backend.setPetInteractionLock("character", true)
-            }
         }
         Timer {
             id: dragProxySnapshotDebounce
@@ -2850,57 +2933,11 @@ Window {
                 }
                 z: 3
                 onCharacterPressStarted: function(pointerX, pointerY) {
-                    petWindow.manualDragActive = true
-                    var heldWindow = petWindow.cancelPositionAnimations()
-                    petWindow.nativeSystemMoveActive = false
-                    petWindow.nativeSystemMoveAttempted = false
-                    petWindow.nativeSystemMoveStartPending = false
-                    petWindow.nativeSystemMoveGestureCounter += 1
-                    petWindow.nativeSystemMoveGestureSerial =
-                        petWindow.nativeSystemMoveGestureCounter
-                    petWindow.nativeSystemMoveCancelPending = false
-                    petWindow.dragMoved = false
-                    petWindow.dragFinalizePending = false
-                    petWindow.dragMenuWasExpanded = compactWindow.expanded
-                    // Radial controls never travel with the held character.
-                    // A stationary release restores the correct toggle from
-                    // dragMenuWasExpanded; a real drag leaves them closed.
-                    compactWindow.prepareForCharacterDrag()
-                    // Lock the exact pre-side-effect presentation.  Companion
-                    // cancellation and artwork stabilization can both change
-                    // the semantic key; they must never turn a ready proxy
-                    // into a press-time stale-key fallback.
-                    petWindow.dragLatchedGeometryKey =
-                        petWindow.compactDragGeometryKey
-                    petWindow.dragLatchedSnapshotKey =
-                        petWindow.compactDragSnapshotKey
-                    petWindow.dragWindowX = heldWindow.x
-                    petWindow.dragWindowY = heldWindow.y
                     var cursor = petWindow.consumePointerEvent(pointerX, pointerY)
-                    petWindow.dragPointerEventPending = false
-                    petWindow.dragWorkArea = desktop.workAreaAt(cursor.x, cursor.y)
-                    petWindow.dragWorkAreaValid = true
-                    petWindow.dragGrabOffsetX = cursor.x - petWindow.x
-                    petWindow.dragGrabOffsetY = cursor.y - petWindow.y
-                    petWindow.dragStartCursorX = cursor.x
-                    petWindow.dragStartCursorY = cursor.y
-                    // QWindow::startSystemMove must be requested from the
-                    // originating mouse-press delivery.  Starting it only
-                    // after a drag threshold is crossed is too late on
-                    // Windows and forces the visibly laggier polling path.
-                    var nativeStarted = petWindow.tryNativeSystemMove(
-                        petWindow.dragLatchedSnapshotKey,
-                        petWindow.dragLatchedGeometryKey)
-                    if (!nativeStarted || !petWindow.nativeSystemMoveUsesProxy) {
-                        // Only the live-QQuickWindow compatibility path needs
-                        // dozens of geometry bindings frozen.  A layered proxy
-                        // already is the exact static presentation and keeps
-                        // this work completely out of the normal press path.
-                        compactLilith.interactionSnap = true
-                    }
-                    dragInteractionLockTimer.gestureSerial =
-                        petWindow.nativeSystemMoveGestureCounter
-                    dragInteractionLockTimer.restart()
+                    var serial = petWindow.prepareCharacterGestureAtGlobal(
+                        cursor.x, cursor.y)
+                    if (serial > 0)
+                        petWindow.startPreparedCharacterGesture(serial)
                 }
                 onCharacterPointerMoved: function(pointerX, pointerY) {
                     petWindow.followPointerEvent(pointerX, pointerY)

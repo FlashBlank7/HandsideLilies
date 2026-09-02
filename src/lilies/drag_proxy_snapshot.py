@@ -112,6 +112,17 @@ class DragProxySnapshotCache(QObject):
         self._last_failure = "cache-miss"
         self._last_failure_type = ""
         self._last_prepare_used_stale_visual = False
+        # A compact alpha plane from the same idle grab gives the Windows hit
+        # filter a C/Python-bytes lookup for the common visible-character case.
+        # It is never built on press and contains no screen or user content:
+        # only this app's already-rendered transparent pet surface.
+        self._alpha_hit_plane = b""
+        self._alpha_hit_width = 0
+        self._alpha_hit_height = 0
+        self._alpha_logical_width = 0.0
+        self._alpha_logical_height = 0.0
+        self._alpha_semantic_key = ""
+        self._alpha_geometry_key = ""
 
     @property
     def proxy_handle(self) -> int:
@@ -140,6 +151,106 @@ class DragProxySnapshotCache(QObject):
     @property
     def last_prepare_used_stale_visual(self) -> bool:
         return self._last_prepare_used_stale_visual
+
+    def cached_alpha_contains(
+        self,
+        logical_x: float,
+        logical_y: float,
+        *,
+        tolerance: float = 0.0,
+        threshold: int = 8,
+        semantic_key: str = "",
+        geometry_key: str = "",
+    ) -> bool | None:
+        """Return a positive/negative idle alpha hit, or ``None`` if absent."""
+
+        plane = self._alpha_hit_plane
+        width = self._alpha_hit_width
+        height = self._alpha_hit_height
+        logical_width = self._alpha_logical_width
+        logical_height = self._alpha_logical_height
+        expected_semantic = str(semantic_key or "")
+        expected_geometry = str(geometry_key or "")
+        x = float(logical_x)
+        y = float(logical_y)
+        if (
+            not plane
+            or width <= 0
+            or height <= 0
+            or logical_width <= 0.0
+            or logical_height <= 0.0
+            or not math.isfinite(x)
+            or not math.isfinite(y)
+            or (
+                bool(expected_semantic)
+                and expected_semantic != self._alpha_semantic_key
+            )
+            or (
+                bool(expected_geometry)
+                and expected_geometry != self._alpha_geometry_key
+            )
+        ):
+            return None
+        radius = max(0.0, min(12.0, float(tolerance)))
+        diagonal = radius * 0.70710678118
+        offsets = (
+            (0.0, 0.0),
+            (-radius, 0.0),
+            (radius, 0.0),
+            (0.0, -radius),
+            (0.0, radius),
+            (-diagonal, -diagonal),
+            (diagonal, -diagonal),
+            (-diagonal, diagonal),
+            (diagonal, diagonal),
+        )
+        alpha_threshold = max(1, min(255, int(threshold)))
+        for offset_x, offset_y in offsets:
+            sample_x = x + offset_x
+            sample_y = y + offset_y
+            if not (0.0 <= sample_x < logical_width):
+                continue
+            if not (0.0 <= sample_y < logical_height):
+                continue
+            pixel_x = min(width - 1, int(sample_x * width / logical_width))
+            pixel_y = min(height - 1, int(sample_y * height / logical_height))
+            if plane[pixel_y * width + pixel_x] >= alpha_threshold:
+                return True
+        return False
+
+    def _cache_alpha_hit_plane(
+        self,
+        image: QImage,
+        semantic_key: str,
+        geometry_key: str,
+    ) -> None:
+        if image.isNull() or image.width() <= 0 or image.height() <= 0:
+            return
+        try:
+            logical_width = float(self.item.width())
+            logical_height = float(self.item.height())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+        if logical_width <= 0.0 or logical_height <= 0.0:
+            return
+        raw = bytes(image.constBits())
+        width = image.width()
+        height = image.height()
+        stride = image.bytesPerLine()
+        alpha_offset = 3 if sys.byteorder == "little" else 0
+        plane = bytearray(width * height)
+        for row_index in range(height):
+            row_start = row_index * stride + alpha_offset
+            row = raw[row_start : row_start + width * 4 : 4]
+            start = row_index * width
+            plane[start : start + width] = row
+        self._alpha_hit_plane = bytes(plane)
+        self._alpha_hit_width = width
+        self._alpha_hit_height = height
+        self._alpha_logical_width = logical_width
+        self._alpha_logical_height = logical_height
+        self._alpha_semantic_key = str(semantic_key or "")
+        self._alpha_geometry_key = str(geometry_key or "")
 
     def _uniform_screen_dpr(self) -> bool:
         values = {
@@ -317,6 +428,11 @@ class DragProxySnapshotCache(QObject):
                 image = result.image()
                 converted = image.convertToFormat(
                     QImage.Format.Format_ARGB32_Premultiplied
+                )
+                self._cache_alpha_hit_plane(
+                    converted,
+                    captured_key,
+                    captured_geometry_key,
                 )
                 ready_bounds = alpha_bounds(
                     converted,
@@ -551,6 +667,13 @@ class DragProxySnapshotCache(QObject):
         proxy = self._proxy
         self._proxy = None
         self._metadata = None
+        self._alpha_hit_plane = b""
+        self._alpha_hit_width = 0
+        self._alpha_hit_height = 0
+        self._alpha_logical_width = 0.0
+        self._alpha_logical_height = 0.0
+        self._alpha_semantic_key = ""
+        self._alpha_geometry_key = ""
         if proxy is not None and proxy.handle is not None:
             try:
                 proxy.destroy()

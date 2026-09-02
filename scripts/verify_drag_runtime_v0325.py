@@ -1089,12 +1089,12 @@ def main() -> int:
                 and after_reentry["startPending"] is False
                 and after_reentry["cancelPending"] is True
                 and after_reentry["gestureSerial"] > 0
-                and after_reentry["lockReasons"] == []
+                and after_reentry["lockReasons"] == ["character"]
                 and wrong_serial_finish is False
                 and after_wrong_serial["manualDragActive"] is True
                 and after_wrong_serial["nativeMoveActive"] is True
                 and after_wrong_serial["gestureSerial"] == reentrant_serial
-                and after_wrong_serial["lockReasons"] == []
+                and after_wrong_serial["lockReasons"] == ["character"]
                 and correct_serial_finish is True
                 and after_correct_serial["manualDragActive"] is False
                 and after_correct_serial["nativeMoveActive"] is False

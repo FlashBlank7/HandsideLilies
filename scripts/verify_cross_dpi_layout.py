@@ -6,6 +6,7 @@ import math
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # This verifier constructs native QQuickWindow objects, so force Qt's headless
@@ -71,6 +72,40 @@ def _item_global_center(
         float(pet_window.x()) + float(center.x()),
         float(pet_window.y()) + float(center.y()),
     )
+
+
+def _wait_for_rendered_item_center(
+    item: QQuickItem,
+    pet_window: QQuickWindow,
+    app: QApplication,
+    expected_x: float,
+    expected_y: float,
+    *,
+    timeout_ms: int = 180,
+) -> tuple[float, float]:
+    """Wait for the offscreen animation driver to render a staged drag.
+
+    FrameAnimation is coupled to the real display clock in production.  Qt's
+    offscreen plugin can legally skip a requested tick, even when qWait() has
+    elapsed, so a fixed sleep occasionally observes the preceding rendered
+    sample.  Keep requesting actual Quick frames until the strict geometric
+    target is visible or the short deadline expires; a clamped or incorrect
+    target still returns with its full error and fails the caller's assertion.
+    """
+
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    center = _item_global_center(item, pet_window)
+    while (
+        abs(center[0] - expected_x) > 1.1
+        or abs(center[1] - expected_y) > 1.1
+    ) and time.monotonic() < deadline:
+        pet_window.requestUpdate()
+        QTest.qWait(8)
+        app.processEvents()
+        pet_window.grabWindow()
+        app.processEvents()
+        center = _item_global_center(item, pet_window)
+    return center
 
 
 def _reveal_resize_handle_from_character_hover(
@@ -655,6 +690,14 @@ def main() -> int:
     pet_window.setProperty("geometryClampActive", False)
     backend.detachPetHabitat(float(pet_window.x()), float(pet_window.y()))
     compact_window.setProperty("expanded", False)
+    # Start the accessory-follow probe away from the transparent window
+    # edges.  Its persisted default intentionally sits beside Lilith and the
+    # final +80/+40 sample can therefore reach the production boundary clamp
+    # while the preceding compact-size polish is still settling at 200% DPI.
+    # This probe measures PointerHandler follow, not boundary clamping, so
+    # give the same gesture enough unobstructed travel at every scale factor.
+    compact_window.setProperty("accessoryDx", 0.0)
+    compact_window.setProperty("accessoryDy", 0.0)
     app.processEvents()
 
     accessory_press_local = _item_center_in_window(accessory_box, pet_window).toPoint()
@@ -671,7 +714,9 @@ def main() -> int:
     )
     app.processEvents()
     accessory_samples: list[dict[str, object]] = []
-    for dx, dy in ((6, 3), (15, 8), (30, 16), (50, 25), (80, 40)):
+    for sample_index, (dx, dy) in enumerate(
+        ((6, 3), (15, 8), (30, 16), (50, 25), (80, 40))
+    ):
         target = QPoint(
             accessory_press_global.x() + dx,
             accessory_press_global.y() + dy,
@@ -679,13 +724,26 @@ def main() -> int:
         backend.offscreen_cursor = {"x": target.x(), "y": target.y()}
         QTest.mouseMove(pet_window, pet_window.mapFromGlobal(target), 2)
         # Production coalesces high-polling pointer packets onto the Qt Quick
-        # display clock. processEvents() alone does not guarantee a rendered
-        # frame in the offscreen plugin, so let one real frame elapse before
-        # measuring the visible control instead of expecting the pre-v0.3.48
-        # synchronous per-packet mutation.
+        # display clock.  The offscreen plugin may park that clock even after
+        # qWait(), so request and synchronously render one real Quick frame
+        # before measuring the visible control instead of expecting the
+        # pre-v0.3.48 synchronous per-packet mutation.
+        pet_window.requestUpdate()
         QTest.qWait(20)
         app.processEvents()
-        center = _item_global_center(accessory_box, pet_window)
+        pet_window.grabWindow()
+        app.processEvents()
+        center = (
+            _item_global_center(accessory_box, pet_window)
+            if sample_index == 0
+            else _wait_for_rendered_item_center(
+                accessory_box,
+                pet_window,
+                app,
+                accessory_start_center[0] + dx,
+                accessory_start_center[1] + dy,
+            )
+        )
         accessory_samples.append(
             {
                 "pointerDelta": [dx, dy],
@@ -741,7 +799,9 @@ def main() -> int:
     app.processEvents()
     resize_samples: list[dict[str, object]] = []
     saves_before_resize_release = len(backend.offscreen_box_layout_saves)
-    for dx, dy in ((6, 6), (15, 15), (35, 28), (80, 50), (140, 80)):
+    for sample_index, (dx, dy) in enumerate(
+        ((6, 6), (15, 15), (35, 28), (80, 50), (140, 80))
+    ):
         target = QPoint(
             resize_press_global.x() + dx,
             resize_press_global.y() + dy,
@@ -751,9 +811,22 @@ def main() -> int:
         # Exercise the FrameAnimation coalescer itself. This remains much
         # slower than a real 60/120 Hz event source only because the verifier
         # records every injected sample rather than just the latest one.
+        pet_window.requestUpdate()
         QTest.qWait(20)
         app.processEvents()
-        center = _item_global_center(resize_handle, pet_window)
+        pet_window.grabWindow()
+        app.processEvents()
+        center = (
+            _item_global_center(resize_handle, pet_window)
+            if sample_index == 0
+            else _wait_for_rendered_item_center(
+                resize_handle,
+                pet_window,
+                app,
+                resize_start_center[0] + dx,
+                resize_start_center[1] + dy,
+            )
+        )
         target_area = backend.screenWorkAreaAt(float(target.x()), float(target.y()))
         resize_samples.append(
             {

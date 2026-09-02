@@ -69,24 +69,28 @@ class _UnavailableCache:
 
 def test_character_press_hot_path_never_captures_a_new_proxy_frame() -> None:
     qml_source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
+    prepare_start = qml_source.index("function prepareCharacterGestureAtGlobal(")
+    starter_start = qml_source.index("function startPreparedCharacterGesture(")
+    native_start = qml_source.index("function tryNativeSystemMove(")
+    prepare_handler = qml_source[prepare_start:starter_start]
+    starter_handler = qml_source[starter_start:native_start]
     press_start = qml_source.index("onCharacterPressStarted:")
     press_end = qml_source.index("onCharacterPointerMoved:", press_start)
     press_handler = qml_source[press_start:press_end]
-    native_start = qml_source.index("function tryNativeSystemMove(")
     native_end = qml_source.index("function finishCharacterGesture(", native_start)
     native_handler = qml_source[native_start:native_end]
 
-    assert "petWindow.tryNativeSystemMove(" in press_handler
-    assert "petWindow.dragLatchedSnapshotKey" in press_handler
-    assert "petWindow.dragLatchedGeometryKey" in press_handler
-    assert press_handler.index("petWindow.dragLatchedSnapshotKey =") < press_handler.index(
-        "petWindow.tryNativeSystemMove("
-    )
-    assert press_handler.index("petWindow.dragLatchedGeometryKey =") < press_handler.index(
-        "petWindow.tryNativeSystemMove("
-    )
+    assert "petWindow.prepareCharacterGestureAtGlobal(" in press_handler
+    assert "petWindow.startPreparedCharacterGesture(serial)" in press_handler
+    assert "dragLatchedSnapshotKey = compactDragSnapshotKey" in prepare_handler
+    assert "dragLatchedGeometryKey = compactDragGeometryKey" in prepare_handler
+    assert "tryNativeSystemMove(" in starter_handler
     assert "grabToImage" not in press_handler
+    assert "grabToImage" not in prepare_handler
+    assert "grabToImage" not in starter_handler
     assert "requestDragProxySnapshot" not in press_handler
+    assert "requestDragProxySnapshot" not in prepare_handler
+    assert "requestDragProxySnapshot" not in starter_handler
     assert "grabToImage" not in native_handler
     assert "requestDragProxySnapshot" not in native_handler
 

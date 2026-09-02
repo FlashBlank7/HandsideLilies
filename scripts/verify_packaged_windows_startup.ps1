@@ -11,7 +11,7 @@ if ([string]::IsNullOrWhiteSpace($Executable)) {
     $Executable = Join-Path $ProjectRoot 'dist\LiliesInTheBox\LiliesInTheBox.exe'
 }
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
-    $ReportPath = Join-Path $ProjectRoot 'artifacts\packaged-windows-startup-v0350.json'
+    $ReportPath = Join-Path $ProjectRoot 'artifacts\packaged-windows-startup-v0351.json'
 }
 $Executable = [IO.Path]::GetFullPath($Executable)
 $ReportPath = [IO.Path]::GetFullPath($ReportPath)

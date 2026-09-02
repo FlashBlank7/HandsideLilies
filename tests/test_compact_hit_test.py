@@ -152,6 +152,227 @@ def test_native_filter_never_resolves_win_id_while_dispatching():
     assert root.win_id_calls == 0
 
 
+@pytest.mark.skipif(os.name != "nt", reason="exercises the Windows MSG bridge")
+def test_native_character_press_is_claimed_before_qml_mouse_delivery():
+    class _NativePressRoot(_Root):
+        def devicePixelRatio(self):
+            return 1.5
+
+        def x(self):
+            return -320.0
+
+        def y(self):
+            return 140.0
+
+    class _NativePressBackend(_Backend):
+        petDragMode = "system"
+
+    class _NativePressController:
+        def __init__(self):
+            self.queued = []
+            self.releases = 0
+
+        def cachedCharacterHit(
+            self,
+            px,
+            py,
+            tolerance,
+            _semantic_key,
+            _geometry_key,
+        ):
+            return 94 <= px <= 226 and 74 <= py <= 386
+
+        def queueNativeCharacterPress(self, global_x, global_y):
+            if self.queued:
+                return False
+            self.queued.append((float(global_x), float(global_y)))
+            return True
+
+        @property
+        def native_character_press_active(self):
+            return bool(self.queued)
+
+        def handleNativeCharacterRelease(self):
+            self.releases += 1
+            return True
+
+    root = _NativePressRoot()
+    controller = _NativePressController()
+    hit_test = CompactHitTestFilter(
+        root,
+        _NativePressBackend(),
+        native_window_id=4242,
+        native_move_controller=controller,
+    )
+
+    # Client coordinates arrive in physical pixels.  (240, 300) maps to the
+    # logical point (160, 200), so the queued global point is (-160, 340).
+    press = wintypes.MSG()
+    press.hWnd = 4242
+    press.message = CompactHitTestFilter.WM_LBUTTONDOWN
+    press.lParam = (300 << 16) | 240
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(press)
+    ) == (True, 0)
+    assert controller.queued == [(-160.0, 340.0)]
+
+    release = wintypes.MSG()
+    release.hWnd = 4242
+    release.message = CompactHitTestFilter.WM_LBUTTONUP
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(release)
+    ) == (True, 0)
+    assert controller.releases == 1
+
+    # Windows reports the second press of a double-click as DBLCLK, not DOWN.
+    # It must enter the same owner instead of falling back to a second QML
+    # gesture half way through the sequence.
+    press.message = CompactHitTestFilter.WM_LBUTTONDBLCLK
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(press)
+    ) == (True, 0)
+    assert controller.queued == [(-160.0, 340.0)]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="exercises the Windows MSG bridge")
+def test_native_character_press_does_not_claim_accessory_or_direct_mode():
+    class _NativePressRoot(_Root):
+        def devicePixelRatio(self):
+            return 1.0
+
+        def x(self):
+            return 0.0
+
+        def y(self):
+            return 0.0
+
+    class _NativePressBackend(_Backend):
+        petDragMode = "system"
+
+    class _NativePressController:
+        def __init__(self):
+            self.queued = []
+
+        def cachedCharacterHit(
+            self,
+            _px,
+            _py,
+            _tolerance,
+            _semantic_key,
+            _geometry_key,
+        ):
+            return True
+
+        def queueNativeCharacterPress(self, global_x, global_y):
+            self.queued.append((float(global_x), float(global_y)))
+            return True
+
+    root = _NativePressRoot()
+    # Force a real overlap: z ordering must leave the accessory in control.
+    root.values["compactAccessoryLeft"] = 130
+    root.values["compactAccessoryTop"] = 160
+    controller = _NativePressController()
+    backend = _NativePressBackend()
+    hit_test = CompactHitTestFilter(
+        root,
+        backend,
+        native_window_id=4242,
+        native_move_controller=controller,
+    )
+    message = wintypes.MSG()
+    message.hWnd = 4242
+    message.message = CompactHitTestFilter.WM_LBUTTONDOWN
+    message.lParam = (200 << 16) | 160
+
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(message)
+    ) == (False, 0)
+    assert controller.queued == []
+
+    root.values["compactAccessoryLeft"] = 260
+    root.values["compactAccessoryTop"] = 250
+    hit_test._refresh_native_hit_snapshot()
+    backend.petDragMode = "direct"
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(message)
+    ) == (False, 0)
+    assert controller.queued == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="exercises the Windows MSG bridge")
+def test_native_down_and_up_never_call_qml_before_user32_returns():
+    app = QCoreApplication.instance() or QCoreApplication([])
+
+    class _DeferredRoot(_QueuedNativePressRoot):
+        def __init__(self):
+            super().__init__()
+            self.native_values = {
+                "compactExpanded": False,
+                "compactActionsInteractive": False,
+                "compactCharacterLeft": 100,
+                "compactCharacterTop": 80,
+                "compactCharacterWidth": 120,
+                "compactCharacterHeight": 300,
+                "compactCharacterHitTolerance": 6,
+                "compactAccessoryLeft": 260,
+                "compactAccessoryTop": 250,
+                "compactAccessoryWidth": 80,
+                "compactDragSnapshotKey": "snapshot-a",
+                "compactDragGeometryKey": "geometry-a",
+            }
+
+        def property(self, key):
+            if key in self.native_values:
+                return self.native_values[key]
+            return super().property(key)
+
+        def x(self):
+            return 25.0
+
+        def y(self):
+            return 30.0
+
+    class _NativePressBackend(_Backend):
+        petDragMode = "system"
+
+    root = _DeferredRoot()
+    controller = CompactPointerEventFilter(root)
+    controller._left_button_is_down = lambda: False
+    controller._drag_proxy_cache = SimpleNamespace(
+        cached_alpha_contains=lambda *_args, **_kwargs: True
+    )
+    hit_test = CompactHitTestFilter(
+        root,
+        _NativePressBackend(),
+        native_window_id=4242,
+        native_move_controller=controller,
+    )
+    press = wintypes.MSG()
+    press.hWnd = 4242
+    press.message = CompactHitTestFilter.WM_LBUTTONDOWN
+    press.lParam = (200 << 16) | 160
+    release = wintypes.MSG()
+    release.hWnd = 4242
+    release.message = CompactHitTestFilter.WM_LBUTTONUP
+
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(press)
+    ) == (True, 0)
+    assert root.begin_calls == []
+    assert root.start_calls == []
+    assert root.finish_calls == []
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(release)
+    ) == (True, 0)
+    assert root.begin_calls == []
+    assert root.finish_calls == []
+
+    app.processEvents()
+    assert root.begin_calls == [(185.0, 230.0)]
+    assert root.start_calls == []
+    assert root.finish_calls == [91]
+
+
 class _VisualItem:
     def __init__(self, name="", children=None):
         self._name = name
@@ -342,6 +563,112 @@ class _NativeMoveRoot(QObject):
 
     def winId(self):
         return 4321
+
+
+class _QueuedNativePressRoot(QObject):
+    def __init__(self, *, start_result: bool = True) -> None:
+        super().__init__()
+        self.setProperty("manualDragActive", False)
+        self.start_result = bool(start_result)
+        self.begin_calls: list[tuple[float, float]] = []
+        self.start_calls: list[int] = []
+        self.finish_calls: list[int] = []
+        self.cancel_calls: list[int] = []
+
+    def devicePixelRatio(self) -> float:
+        return 1.0
+
+    def beginNativeCharacterPress(self, global_x: float, global_y: float) -> int:
+        self.begin_calls.append((float(global_x), float(global_y)))
+        self.setProperty("manualDragActive", True)
+        return 91
+
+    def startQueuedNativeCharacterPress(self, serial: int) -> bool:
+        self.start_calls.append(int(serial))
+        return self.start_result
+
+    def finishQueuedNativeCharacterPress(self, serial: int) -> bool:
+        self.finish_calls.append(int(serial))
+        self.setProperty("manualDragActive", False)
+        return True
+
+    def cancelQueuedNativeCharacterPress(self, serial: int) -> bool:
+        self.cancel_calls.append(int(serial))
+        self.setProperty("manualDragActive", False)
+        return True
+
+
+def test_native_press_queue_never_calls_qml_on_the_native_callback_turn() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _QueuedNativePressRoot()
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._left_button_is_down = lambda: True
+
+    assert event_filter.queueNativeCharacterPress(420.0, 315.0) is True
+    assert root.begin_calls == []
+    assert root.start_calls == []
+
+    app.processEvents()
+
+    assert root.begin_calls == [(420.0, 315.0)]
+    assert root.start_calls == [91]
+    assert event_filter._queued_native_character_request_id == 0
+
+
+def test_release_before_queued_start_is_preserved_as_stationary_click() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _QueuedNativePressRoot()
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._left_button_is_down = lambda: False
+
+    assert event_filter.queueNativeCharacterPress(120.0, 85.0) is True
+    assert event_filter.handleNativeCharacterRelease() is True
+    assert root.begin_calls == []
+    assert root.finish_calls == []
+    app.processEvents()
+
+    assert root.begin_calls == [(120.0, 85.0)]
+    assert root.start_calls == []
+    assert root.finish_calls == [91]
+    assert root.property("manualDragActive") is False
+
+
+def test_failed_native_start_release_watchdog_cannot_strand_gesture() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _QueuedNativePressRoot(start_result=False)
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._left_button_is_down = lambda: True
+
+    assert event_filter.queueNativeCharacterPress(120.0, 85.0) is True
+    app.processEvents()
+    assert root.property("manualDragActive") is True
+    assert event_filter.native_character_press_active is True
+
+    event_filter._left_button_is_down = lambda: False
+    event_filter._poll_queued_native_character_release()
+    assert root.finish_calls == []
+    app.processEvents()
+
+    assert root.finish_calls == [91]
+    assert root.property("manualDragActive") is False
+    assert event_filter.native_character_press_active is False
+
+
+def test_capture_loss_cancels_queued_native_character_gesture() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _QueuedNativePressRoot(start_result=False)
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._left_button_is_down = lambda: True
+
+    assert event_filter.queueNativeCharacterPress(120.0, 85.0) is True
+    app.processEvents()
+    assert event_filter.cancelNativeCharacterPress() is True
+    assert root.cancel_calls == []
+    app.processEvents()
+
+    assert root.cancel_calls == [91]
+    assert root.property("manualDragActive") is False
+    assert event_filter.native_character_press_active is False
 
 
 class _ProxyMoveRoot(_NativeMoveRoot):

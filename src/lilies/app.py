@@ -62,6 +62,11 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
     """Let clicks pass through the invisible part of the compact tool window."""
 
     WM_NCHITTEST = 0x0084
+    WM_LBUTTONDOWN = 0x0201
+    WM_LBUTTONUP = 0x0202
+    WM_LBUTTONDBLCLK = 0x0203
+    WM_CANCELMODE = 0x001F
+    WM_CAPTURECHANGED = 0x0215
     WM_ENTERSIZEMOVE = 0x0231
     WM_EXITSIZEMOVE = 0x0232
     WM_MOVING = 0x0216
@@ -89,6 +94,264 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         self.native_dispatch_count = 0
         self.native_hit_test_count = 0
         self._native_move_motion_latched = False
+        self._fixed_native_controls: tuple[QQuickItem, ...] = ()
+        self._accessory_native_control: QQuickItem | None = None
+        self._native_character_bounds = (0.0, 0.0, 0.0, 0.0)
+        self._native_accessory_bounds = (0.0, 0.0, 0.0, 0.0)
+        self._native_control_bounds: tuple[
+            tuple[float, float, float, float], ...
+        ] = ()
+        self._native_actions_interactive = False
+        self._native_character_tolerance = 0.0
+        self._native_snapshot_key = ""
+        self._native_geometry_key = ""
+        self._native_device_pixel_ratio = 1.0
+        self._native_window_origin = (0.0, 0.0)
+        self._native_snapshot_ready = False
+        find_child = getattr(root, "findChild", None)
+        if callable(find_child):
+            controls: list[QQuickItem] = []
+            for object_name in (
+                "desktopPetResizeHandle",
+                "desktopPetDesktopModeTab",
+                "desktopPetCompanionUnreadCue",
+            ):
+                try:
+                    item = find_child(QQuickItem, object_name)
+                except (RuntimeError, TypeError):
+                    item = None
+                if item is not None:
+                    controls.append(item)
+            self._fixed_native_controls = tuple(controls)
+            try:
+                self._accessory_native_control = find_child(
+                    QQuickItem,
+                    "compactAccessoryBox",
+                )
+            except (RuntimeError, TypeError):
+                self._accessory_native_control = None
+
+        for signal_name in (
+            "compactActionsInteractiveChanged",
+            "compactCharacterLeftChanged",
+            "compactCharacterTopChanged",
+            "compactCharacterWidthChanged",
+            "compactCharacterHeightChanged",
+            "compactAccessoryLeftChanged",
+            "compactAccessoryTopChanged",
+            "compactAccessoryWidthChanged",
+            "compactDragSnapshotKeyChanged",
+            "compactDragGeometryKeyChanged",
+            "screenChanged",
+        ):
+            signal = getattr(root, signal_name, None)
+            if signal is None:
+                continue
+            try:
+                signal.connect(self._refresh_native_hit_snapshot)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+        for item in (
+            *self._fixed_native_controls,
+            self._accessory_native_control,
+        ):
+            if item is None:
+                continue
+            for signal_name in (
+                "visibleChanged",
+                "opacityChanged",
+                "xChanged",
+                "yChanged",
+                "widthChanged",
+                "heightChanged",
+                "rotationChanged",
+                "scaleChanged",
+            ):
+                signal = getattr(item, signal_name, None)
+                if signal is None:
+                    continue
+                try:
+                    signal.connect(self._refresh_native_hit_snapshot)
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+
+        # Never enter the QML object graph from User32's callback stack.  A
+        # low-rate idle snapshot owns all dynamic geometry and keys; the
+        # native event filter below reads only immutable Python scalars and
+        # the cached alpha bytes held by DragProxySnapshotCache.
+        self._native_hit_refresh_timer: QTimer | None = None
+        self._refresh_native_hit_snapshot()
+        if isinstance(root, QObject):
+            timer = QTimer(root)
+            timer.setInterval(120)
+            timer.timeout.connect(self._refresh_native_hit_snapshot)
+            timer.start()
+            self._native_hit_refresh_timer = timer
+            for signal_name in ("xChanged", "yChanged"):
+                signal = getattr(root, signal_name, None)
+                if signal is None:
+                    continue
+                try:
+                    signal.connect(self._refresh_native_window_origin)
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+
+    @staticmethod
+    def _finite_property(root: object, name: str, default: float = 0.0) -> float:
+        try:
+            value = float(root.property(name) or 0.0)
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+            return float(default)
+        return value if math.isfinite(value) else float(default)
+
+    def _refresh_native_window_origin(self, *_args: object) -> None:
+        try:
+            x = float(self.root.x())
+            y = float(self.root.y())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+        if math.isfinite(x) and math.isfinite(y):
+            self._native_window_origin = (x, y)
+
+    @staticmethod
+    def _item_rect_in_parent(
+        item: QQuickItem,
+        parent_item: QQuickItem,
+    ) -> tuple[float, float, float, float] | None:
+        try:
+            if (
+                not item.isVisible()
+                or item.opacity() <= 0.05
+                or item.width() <= 0
+                or item.height() <= 0
+            ):
+                return None
+            item_width = float(item.width())
+            item_height = float(item.height())
+            corners = (
+                item.mapToItem(parent_item, QPointF(0.0, 0.0)),
+                item.mapToItem(parent_item, QPointF(item_width, 0.0)),
+                item.mapToItem(parent_item, QPointF(0.0, item_height)),
+                item.mapToItem(
+                    parent_item,
+                    QPointF(item_width, item_height),
+                ),
+            )
+            xs = [float(point.x()) for point in corners]
+            ys = [float(point.y()) for point in corners]
+            left = min(xs)
+            top = min(ys)
+            width = max(xs) - left
+            height = max(ys) - top
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+        if not all(math.isfinite(value) for value in (left, top, width, height)):
+            return None
+        if width <= 0.0 or height <= 0.0:
+            return None
+        return left, top, width, height
+
+    def _refresh_native_hit_snapshot(self) -> None:
+        controller = self.native_move_controller
+        if bool(
+            controller is not None
+            and getattr(controller, "native_system_move_active", False)
+        ):
+            return
+        root = self.root
+        tolerance = min(
+            12.0,
+            max(
+                0.0,
+                self._finite_property(root, "compactCharacterHitTolerance"),
+            ),
+        )
+        left = self._finite_property(root, "compactCharacterLeft")
+        top = self._finite_property(root, "compactCharacterTop")
+        width = self._finite_property(root, "compactCharacterWidth")
+        height = self._finite_property(root, "compactCharacterHeight")
+        accessory = (
+            self._finite_property(root, "compactAccessoryLeft"),
+            self._finite_property(root, "compactAccessoryTop"),
+            self._finite_property(root, "compactAccessoryWidth"),
+            self._finite_property(root, "compactAccessoryWidth"),
+        )
+        try:
+            dpr = float(root.devicePixelRatio() or 1.0)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            dpr = 1.0
+        if not math.isfinite(dpr) or dpr <= 0.0:
+            dpr = 1.0
+
+        controls: list[tuple[float, float, float, float]] = []
+        try:
+            actions_interactive = bool(
+                root.property("compactActionsInteractive")
+            )
+        except (AttributeError, KeyError, RuntimeError, TypeError):
+            actions_interactive = False
+        content_item = getattr(root, "contentItem", None)
+        try:
+            parent_item = content_item() if callable(content_item) else None
+        except (RuntimeError, TypeError):
+            parent_item = None
+        if parent_item is not None:
+            accessory_item = self._accessory_native_control
+            if accessory_item is not None:
+                item_rect = self._item_rect_in_parent(
+                    accessory_item,
+                    parent_item,
+                )
+                if item_rect is not None:
+                    accessory = item_rect
+            for item in self._fixed_native_controls:
+                item_rect = self._item_rect_in_parent(item, parent_item)
+                if item_rect is not None:
+                    controls.append(item_rect)
+            if actions_interactive:
+                try:
+                    descendants = self._visual_descendants(parent_item)
+                except (AttributeError, RuntimeError, TypeError):
+                    descendants = []
+                for item in descendants:
+                    try:
+                        is_action = item.objectName().startswith(
+                            "desktopPetAction_"
+                        )
+                    except (AttributeError, RuntimeError, TypeError):
+                        is_action = False
+                    if not is_action:
+                        continue
+                    item_rect = self._item_rect_in_parent(item, parent_item)
+                    if item_rect is not None:
+                        controls.append(item_rect)
+
+        try:
+            snapshot_key = str(root.property("compactDragSnapshotKey") or "")
+            geometry_key = str(root.property("compactDragGeometryKey") or "")
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+            snapshot_key = ""
+            geometry_key = ""
+        self._native_character_bounds = (
+            left - tolerance,
+            top - tolerance,
+            max(0.0, width) + tolerance * 2.0,
+            max(0.0, height) + tolerance * 2.0,
+        )
+        self._native_accessory_bounds = accessory
+        self._native_control_bounds = tuple(controls)
+        self._native_actions_interactive = actions_interactive
+        self._native_character_tolerance = tolerance
+        self._native_snapshot_key = snapshot_key
+        self._native_geometry_key = geometry_key
+        self._native_device_pixel_ratio = dpr
+        self._refresh_native_window_origin()
+        self._native_snapshot_ready = width > 0.0 and height > 0.0
+        timer = self._native_hit_refresh_timer
+        if timer is not None:
+            target_interval = 16 if actions_interactive else 120
+            if timer.interval() != target_interval:
+                timer.setInterval(target_interval)
 
     @staticmethod
     def _inside(px: float, py: float, left: float, top: float, width: float, height: float) -> bool:
@@ -99,6 +362,16 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         """Convert the physical WM_NCHITTEST point into QML logical coordinates."""
         scale = device_pixel_ratio if device_pixel_ratio > 0 else 1.0
         return px / scale, py / scale
+
+    def _window_dpr_from_hwnd(self, window_id: int) -> float:
+        if os.name == "nt":
+            try:
+                dpi = int(ctypes.windll.user32.GetDpiForWindow(int(window_id)))
+            except (AttributeError, OSError, TypeError, ValueError):
+                dpi = 0
+            if dpi > 0:
+                return max(0.25, min(8.0, dpi / 96.0))
+        return self._native_device_pixel_ratio
 
     @staticmethod
     def _visual_descendants(root: QQuickItem) -> list[QQuickItem]:
@@ -118,7 +391,7 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             pending.extend(item.childItems())
         return descendants
 
-    def accepts_point(self, px: float, py: float) -> bool:
+    def _character_accepts_point(self, px: float, py: float) -> bool:
         try:
             character_hit_tolerance = float(
                 self.root.property("compactCharacterHitTolerance") or 0
@@ -138,16 +411,23 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             float(self.root.property("compactCharacterHeight") or 0)
             + character_hit_tolerance * 2.0,
         )
-        box_left = float(self.root.property("compactAccessoryLeft") or 0)
-        box_top = float(self.root.property("compactAccessoryTop") or 0)
-        box_width = float(self.root.property("compactAccessoryWidth") or 0)
-
         # The character and box are by far the common press targets. Resolve
         # their cheap bounds/mask first so an ordinary grab never traverses
         # the complete QQuickItem tree. If the point lies in the character's
         # rectangular frame but outside its silhouette we deliberately keep
         # going: a visible pill may overlap that transparent corner.
         if self._inside(px, py, *character):
+            cached_hit = getattr(
+                self.native_move_controller,
+                "cachedCharacterHit",
+                None,
+            )
+            if callable(cached_hit):
+                try:
+                    if cached_hit(px, py, character_hit_tolerance) is True:
+                        return True
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
             mask = getattr(self.root, "characterContains", None)
             if callable(mask):
                 try:
@@ -159,6 +439,128 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
                     return True
             else:
                 return True
+
+        return False
+
+    def _point_hits_non_character_control(self, px: float, py: float) -> bool:
+        """Keep native character grabs behind the visible local controls.
+
+        The character and accessory can overlap.  The QML scene resolves that
+        overlap by z order, so a native press fast path must first exclude the
+        box, resize handle, unread cue and radial actions.  This tree walk runs
+        only once on button down; ordinary WM_NCHITTEST keeps the cheaper path.
+        """
+
+        box_left = float(self.root.property("compactAccessoryLeft") or 0)
+        box_top = float(self.root.property("compactAccessoryTop") or 0)
+        box_width = float(self.root.property("compactAccessoryWidth") or 0)
+        cx, cy = box_left + box_width / 2, box_top + box_width / 2
+        if (
+            box_width > 0
+            and (px - cx) ** 2 + (py - cy) ** 2 <= (box_width / 2) ** 2
+        ):
+            return True
+
+        actions_interactive = bool(
+            self.root.property("compactActionsInteractive")
+        )
+        content_item = getattr(self.root, "contentItem", None)
+        try:
+            parent_item = content_item() if callable(content_item) else None
+            if parent_item is not None:
+                for item in self._fixed_native_controls:
+                    if (
+                        not item.isVisible()
+                        or item.opacity() <= 0.05
+                        or item.width() <= 0
+                        or item.height() <= 0
+                    ):
+                        continue
+                    local_point = item.mapFromItem(parent_item, QPointF(px, py))
+                    if item.contains(local_point):
+                        return True
+            if not actions_interactive or parent_item is None:
+                return False
+            # Repeater delegates are discovered only while the radial menu is
+            # actually open.  A collapsed character grab therefore performs
+            # no full QQuickItem-tree traversal in the native callback.
+            for item in self._visual_descendants(parent_item):
+                if not item.objectName().startswith("desktopPetAction_"):
+                    continue
+                if (
+                    not item.isVisible()
+                    or item.opacity() <= 0.05
+                    or item.width() <= 0
+                    or item.height() <= 0
+                ):
+                    continue
+                local_point = item.mapFromItem(parent_item, QPointF(px, py))
+                if item.contains(local_point):
+                    return True
+        except (AttributeError, RuntimeError, TypeError):
+            return False
+        return False
+
+    def _native_character_accepts_point(
+        self,
+        px: float,
+        py: float,
+    ) -> bool | None:
+        """Resolve a character hit without entering the QML object graph.
+
+        ``None`` means the exact alpha cache is not ready.  WM_NCHITTEST may
+        then route the bounded region to Qt, but the raw native press shortcut
+        must stand down and let QML perform its authoritative live mask test.
+        """
+
+        if not self._native_snapshot_ready:
+            return False
+        if not self._inside(px, py, *self._native_character_bounds):
+            return False
+        cached_hit = getattr(
+            self.native_move_controller,
+            "cachedCharacterHit",
+            None,
+        )
+        if callable(cached_hit):
+            try:
+                result = cached_hit(
+                    px,
+                    py,
+                    self._native_character_tolerance,
+                    self._native_snapshot_key,
+                    self._native_geometry_key,
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                result = None
+            if result is not None:
+                return result is True
+        return None
+
+    def _native_point_hits_control(self, px: float, py: float) -> bool:
+        if self._inside(px, py, *self._native_accessory_bounds):
+            return True
+        return any(
+            self._inside(px, py, *bounds)
+            for bounds in self._native_control_bounds
+        )
+
+    def _native_accepts_point(self, px: float, py: float) -> bool:
+        if self._native_point_hits_control(px, py):
+            return True
+        character_hit = self._native_character_accepts_point(px, py)
+        # A bounded unknown remains a client hit so Qt gets the opportunity to
+        # apply the live QML silhouette.  It is never enough to claim the raw
+        # native drag path below.
+        return character_hit is not False
+
+    def accepts_point(self, px: float, py: float) -> bool:
+        if self._character_accepts_point(px, py):
+            return True
+
+        box_left = float(self.root.property("compactAccessoryLeft") or 0)
+        box_top = float(self.root.property("compactAccessoryTop") or 0)
+        box_width = float(self.root.property("compactAccessoryWidth") or 0)
 
         cx, cy = box_left + box_width / 2, box_top + box_width / 2
         if box_width > 0 and (px - cx) ** 2 + (py - cy) ** 2 <= (box_width / 2) ** 2:
@@ -196,6 +598,18 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         return False
 
     def nativeEventFilter(self, event_type: bytes, message: int) -> tuple[bool, int]:
+        # Never let Python unwind across the Qt/User32 callback boundary.
+        # Failing open keeps the ordinary Qt input path available.
+        try:
+            return self._native_event_filter(event_type, message)
+        except Exception:
+            return False, 0
+
+    def _native_event_filter(
+        self,
+        event_type: bytes,
+        message: int,
+    ) -> tuple[bool, int]:
         if os.name != "nt":
             return False, 0
         try:
@@ -253,6 +667,92 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
                 controller.queueSystemMoveFinished()
             self._native_move_motion_latched = False
             return False, 0
+        if msg.message in {self.WM_CANCELMODE, self.WM_CAPTURECHANGED}:
+            controller = self.native_move_controller
+            if controller is not None:
+                try:
+                    controller.cancelNativeCharacterPress()
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+            return False, 0
+        if msg.message in {
+            self.WM_LBUTTONDOWN,
+            self.WM_LBUTTONUP,
+            self.WM_LBUTTONDBLCLK,
+        }:
+            controller = self.native_move_controller
+            if controller is None:
+                return False, 0
+            if msg.message == self.WM_LBUTTONUP:
+                try:
+                    handled = bool(controller.handleNativeCharacterRelease())
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    handled = False
+                if handled:
+                    return True, 0
+                return False, 0
+
+            try:
+                drag_mode = str(self.backend.petDragMode)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                drag_mode = ""
+            if drag_mode != "system":
+                return False, 0
+            # While radial controls are visible, their animated z-order owns
+            # the entire press decision.  The native character shortcut stays
+            # idle so a 120 ms geometry snapshot can never steal a moving
+            # button from QML.
+            if self._native_actions_interactive:
+                return False, 0
+            packed = int(msg.lParam)
+            physical_x = ctypes.c_short(packed & 0xFFFF).value
+            physical_y = ctypes.c_short((packed >> 16) & 0xFFFF).value
+            logical_x, logical_y = self._logical_point(
+                physical_x,
+                physical_y,
+                self._window_dpr_from_hwnd(int(msg.hWnd)),
+            )
+            if self._native_point_hits_control(logical_x, logical_y):
+                return False, 0
+            if self._native_character_accepts_point(
+                logical_x,
+                logical_y,
+            ) is not True:
+                return False, 0
+            try:
+                origin_x, origin_y = self._native_window_origin
+                global_x = origin_x + logical_x
+                global_y = origin_y + logical_y
+                queued = bool(
+                    controller.queueNativeCharacterPress(global_x, global_y)
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                queued = False
+            if not queued:
+                # A double-click can be dequeued before the zero-delay start
+                # and terminal turns of its first click.  Keep that second
+                # DOWN inside the already-claimed native owner instead of
+                # handing half of one sequence to QML.  The following UP will
+                # finish the pending stationary gesture once.
+                if bool(
+                    getattr(
+                        controller,
+                        "native_character_press_active",
+                        False,
+                    )
+                ):
+                    return True, 0
+                return False, 0
+            try:
+                ctypes.windll.user32.SetCapture(wintypes.HWND(int(msg.hWnd)))
+            except (AttributeError, OSError, TypeError, ValueError):
+                pass
+            # The queued bridge starts the already-warm layered proxy on the
+            # next Qt turn, outside this native callback.  Consuming the client
+            # press prevents the large QML MouseArea tree from becoming a
+            # second drag owner while preserving its ordinary fallback when
+            # the native route cannot be armed.
+            return True, 0
         if msg.message != self.WM_NCHITTEST:
             return False, 0
         self.native_hit_test_count += 1
@@ -260,13 +760,10 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         drag_active = bool(
             controller is not None and controller.native_system_move_active
         )
-        if not drag_active:
-            try:
-                drag_active = bool(self.root.property("manualDragActive")) or bool(
-                    self.root.property("nativeSystemMoveActive")
-                )
-            except (AttributeError, KeyError, RuntimeError, TypeError):
-                drag_active = False
+        if not drag_active and controller is not None:
+            drag_active = bool(
+                getattr(controller, "native_character_press_active", False)
+            )
         if drag_active:
             # The press already proved that this gesture began on an
             # interactive island. Re-walking the full QQuickItem tree for
@@ -282,13 +779,12 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         # WM_NCHITTEST supplies physical screen pixels, while QML item geometry is
         # expressed in device-independent pixels.  Without this conversion a
         # 125%/150% high-DPI desktop makes the visible character click-through.
-        device_pixel_ratio = float(self.root.devicePixelRatio() or 1.0)
         logical_x, logical_y = self._logical_point(
             screen_x - rect.left,
             screen_y - rect.top,
-            device_pixel_ratio,
+            self._window_dpr_from_hwnd(int(msg.hWnd)),
         )
-        if self.accepts_point(logical_x, logical_y):
+        if self._native_accepts_point(logical_x, logical_y):
             # Do not ask the layered tool window's default procedure to infer
             # the result again. A visible interaction island is explicitly a
             # client target, which keeps real hardware input routing aligned
@@ -740,6 +1236,32 @@ class CompactPointerEventFilter(QObject):
         self._local_gesture_depths: dict[str, int] = {}
         self._local_gesture_states: dict[str, dict[str, object]] = {}
         self._local_gesture_total_depth = 0
+        # Windows sees the button before Qt Quick constructs its MouseArea
+        # delivery.  A one-turn queue lets the native filter consume that raw
+        # press, return safely, and only then remove itself while the already
+        # warm layered proxy takes capture.  This is the primary Windows path;
+        # QML remains the compatibility path on unsupported platforms.
+        self._native_character_request_counter = 0
+        self._queued_native_character_request_id = 0
+        self._queued_native_character_serial = 0
+        self._queued_native_character_global = (0.0, 0.0)
+        self._queued_native_character_released = False
+        self._queued_native_character_cancelled = False
+        self._native_character_start_timer = QTimer(self)
+        self._native_character_start_timer.setSingleShot(True)
+        self._native_character_start_timer.timeout.connect(
+            self._start_queued_native_character_press
+        )
+        self._native_character_release_watchdog = QTimer(self)
+        self._native_character_release_watchdog.setInterval(48)
+        self._native_character_release_watchdog.timeout.connect(
+            self._poll_queued_native_character_release
+        )
+        self._native_character_terminal_timer = QTimer(self)
+        self._native_character_terminal_timer.setSingleShot(True)
+        self._native_character_terminal_timer.timeout.connect(
+            self._dispatch_queued_native_character_terminal
+        )
         self._drag_proxy_cache: DragProxySnapshotCache | None = None
         self._proxy_move_active = False
         self._proxy_root_origin_physical: WindowRect | None = None
@@ -811,6 +1333,15 @@ class CompactPointerEventFilter(QObject):
         """Whether Windows currently owns the pointer/window move pair."""
 
         return self._active_system_move_serial > 0
+
+    @property
+    def native_character_press_active(self) -> bool:
+        """Whether the raw character press is queued or system-owned."""
+
+        return (
+            self._queued_native_character_request_id > 0
+            or self._active_system_move_serial > 0
+        )
 
     def _publish_drag_proxy_runtime_state(
         self,
@@ -1506,6 +2037,31 @@ class CompactPointerEventFilter(QObject):
     def dragProxyActive(self) -> bool:
         return bool(self._proxy_move_active)
 
+    def cachedCharacterHit(
+        self,
+        logical_x: float,
+        logical_y: float,
+        tolerance: float = 0.0,
+        semantic_key: str = "",
+        geometry_key: str = "",
+    ) -> bool | None:
+        """Read the idle proxy's alpha plane without entering the QML tree."""
+
+        cache = self._drag_proxy_cache
+        lookup = getattr(cache, "cached_alpha_contains", None)
+        if not callable(lookup):
+            return None
+        try:
+            return lookup(
+                float(logical_x),
+                float(logical_y),
+                tolerance=float(tolerance),
+                semantic_key=str(semantic_key or ""),
+                geometry_key=str(geometry_key or ""),
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+
     @Slot()
     def endDragProxyGesture(self) -> None:
         """Release the snapshot fence for a QML hide/cancel terminal path."""
@@ -1955,6 +2511,236 @@ class CompactPointerEventFilter(QObject):
             return
         self._diagnostic_phase = str(state or "unknown")
 
+    @Slot(float, float, result=bool)
+    def queueNativeCharacterPress(
+        self,
+        global_x: float,
+        global_y: float,
+    ) -> bool:
+        """Arm the Windows character press without traversing QML input.
+
+        The application native filter calls this from WM_LBUTTONDOWN and then
+        consumes that one message.  Starting the proxy is deliberately queued:
+        ``tryStartSystemMove`` removes the native filter for the held gesture,
+        which must happen only after the current native callback has returned.
+        """
+
+        if (
+            self._closing_drag_bridge
+            or self._queued_native_character_request_id > 0
+            or self._active_system_move_serial > 0
+            or self._local_gesture_total_depth > 0
+            or not math.isfinite(float(global_x))
+            or not math.isfinite(float(global_y))
+        ):
+            return False
+        # Do not call QML while QAbstractNativeEventFilter is on User32's
+        # dispatch stack.  Store only two finite coordinates and a local token;
+        # the next Qt turn owns all declarative state changes and proxy work.
+        self._native_character_request_counter = (
+            self._native_character_request_counter % 1_000_000_000
+        ) + 1
+        self._queued_native_character_request_id = (
+            self._native_character_request_counter
+        )
+        self._queued_native_character_serial = 0
+        self._queued_native_character_global = (
+            float(global_x),
+            float(global_y),
+        )
+        self._queued_native_character_released = False
+        self._queued_native_character_cancelled = False
+        self._native_character_start_timer.start(0)
+        self._native_character_release_watchdog.start()
+        return True
+
+    def _release_native_character_capture(self) -> None:
+        if os.name != "nt":
+            return
+        try:
+            ctypes.windll.user32.ReleaseCapture()
+        except (AttributeError, OSError):
+            pass
+
+    def _finish_queued_native_character_press(self, serial: int) -> bool:
+        expected = int(serial)
+        if (
+            self._queued_native_character_request_id <= 0
+            or expected <= 0
+            or expected != self._queued_native_character_serial
+        ):
+            return False
+        self._native_character_start_timer.stop()
+        self._native_character_release_watchdog.stop()
+        self._native_character_terminal_timer.stop()
+        self._queued_native_character_request_id = 0
+        self._queued_native_character_serial = 0
+        self._queued_native_character_global = (0.0, 0.0)
+        self._queued_native_character_released = False
+        self._queued_native_character_cancelled = False
+        self._release_native_character_capture()
+        callback = getattr(self.root, "finishQueuedNativeCharacterPress", None)
+        if not callable(callback):
+            return False
+        try:
+            return bool(callback(expected))
+        except (RuntimeError, TypeError, ValueError):
+            return False
+
+    def _start_queued_native_character_press(self) -> None:
+        request_id = self._queued_native_character_request_id
+        if request_id <= 0 or self._closing_drag_bridge:
+            return
+        if self._queued_native_character_cancelled:
+            self._native_character_terminal_timer.start(0)
+            return
+        global_x, global_y = self._queued_native_character_global
+        begin_callback = getattr(self.root, "beginNativeCharacterPress", None)
+        if not callable(begin_callback):
+            self._queued_native_character_request_id = 0
+            self._queued_native_character_cancelled = False
+            self._native_character_release_watchdog.stop()
+            self._native_character_terminal_timer.stop()
+            self._release_native_character_capture()
+            return
+        self._reset_drag_diagnostics()
+        try:
+            serial = int(begin_callback(global_x, global_y) or 0)
+        except (RuntimeError, TypeError, ValueError):
+            serial = 0
+        if (
+            serial <= 0
+            or request_id != self._queued_native_character_request_id
+        ):
+            self._queued_native_character_request_id = 0
+            self._queued_native_character_serial = 0
+            self._queued_native_character_global = (0.0, 0.0)
+            self._queued_native_character_released = False
+            self._queued_native_character_cancelled = False
+            self._native_character_release_watchdog.stop()
+            self._native_character_terminal_timer.stop()
+            self._release_native_character_capture()
+            return
+        self._queued_native_character_serial = serial
+        released = self._queued_native_character_released
+        if not released:
+            try:
+                released = not self._left_button_is_down()
+            except (AttributeError, OSError, TypeError, ValueError):
+                # The WM_LBUTTONDOWN itself is authoritative.  If the optional
+                # aggregate-state probe is unavailable, still make one native
+                # start attempt instead of manufacturing a lost click.
+                released = False
+        if released:
+            self._finish_queued_native_character_press(serial)
+            return
+        callback = getattr(self.root, "startQueuedNativeCharacterPress", None)
+        if not callable(callback):
+            self._finish_queued_native_character_press(serial)
+            return
+        try:
+            started = bool(callback(serial))
+        except (RuntimeError, TypeError, ValueError):
+            started = False
+        if started:
+            self._queued_native_character_request_id = 0
+            self._queued_native_character_serial = 0
+            self._queued_native_character_global = (0.0, 0.0)
+            self._queued_native_character_released = False
+            self._queued_native_character_cancelled = False
+            self._native_character_release_watchdog.stop()
+            self._native_character_terminal_timer.stop()
+            return
+        # A refused native move keeps the existing direct compatibility path
+        # alive.  SetCapture from WM_LBUTTONDOWN ensures its release still
+        # returns here even when the pointer has left the transparent window.
+        try:
+            manual_active = bool(self.root.property("manualDragActive"))
+        except (AttributeError, KeyError, RuntimeError, TypeError):
+            manual_active = False
+        if not manual_active:
+            self._finish_queued_native_character_press(serial)
+
+    def _poll_queued_native_character_release(self) -> None:
+        if self._queued_native_character_request_id <= 0:
+            self._native_character_release_watchdog.stop()
+            return
+        try:
+            still_down = self._left_button_is_down()
+        except (AttributeError, OSError, TypeError, ValueError):
+            return
+        if not still_down:
+            self.handleNativeCharacterRelease()
+
+    @Slot(result=bool)
+    def cancelNativeCharacterPress(self) -> bool:
+        """Queue cancellation after capture loss, hide, or cancel mode.
+
+        This method is safe on a native-event callback stack: it only flips
+        Python scalars and arms a zero-delay Qt timer.  The timer owns QML and
+        ReleaseCapture work after User32 has returned.
+        """
+
+        if self._queued_native_character_request_id <= 0:
+            return False
+        self._queued_native_character_cancelled = True
+        self._native_character_terminal_timer.start(0)
+        return True
+
+    @Slot(result=bool)
+    def handleNativeCharacterRelease(self) -> bool:
+        """Queue release for the raw press without calling QML in User32."""
+
+        if self._queued_native_character_request_id <= 0:
+            return False
+        self._queued_native_character_released = True
+        self._native_character_terminal_timer.start(0)
+        return True
+
+    def _dispatch_queued_native_character_terminal(self) -> None:
+        if self._queued_native_character_request_id <= 0:
+            return
+        if self._queued_native_character_cancelled:
+            serial = self._queued_native_character_serial
+            self._native_character_start_timer.stop()
+            self._native_character_release_watchdog.stop()
+            self._queued_native_character_request_id = 0
+            self._queued_native_character_serial = 0
+            self._queued_native_character_global = (0.0, 0.0)
+            self._queued_native_character_released = False
+            self._queued_native_character_cancelled = False
+            self._release_native_character_capture()
+            callback = getattr(
+                self.root,
+                "cancelQueuedNativeCharacterPress",
+                None,
+            )
+            if serial > 0 and callable(callback):
+                try:
+                    callback(int(serial))
+                except (RuntimeError, TypeError, ValueError):
+                    pass
+            return
+        if not self._queued_native_character_released:
+            return
+        if self._native_character_start_timer.isActive():
+            # The registered start turn will see the release flag and finish
+            # the stationary click after it has created the QML gesture.
+            return
+        serial = self._queued_native_character_serial
+        if serial > 0:
+            self._finish_queued_native_character_press(serial)
+            return
+        # No gesture was created (for example, the root vanished between the
+        # raw press and its queued start).  Retire capture without inventing a
+        # QML click.
+        self._native_character_release_watchdog.stop()
+        self._queued_native_character_request_id = 0
+        self._queued_native_character_global = (0.0, 0.0)
+        self._queued_native_character_released = False
+        self._queued_native_character_cancelled = False
+        self._release_native_character_capture()
+
     @Slot(int, result=bool)
     @Slot(int, str, str, result=bool)
     def tryStartSystemMove(
@@ -2319,6 +3105,15 @@ class CompactPointerEventFilter(QObject):
         self._local_gesture_states.clear()
         self._local_gesture_depths.clear()
         self._local_gesture_total_depth = 0
+        self._native_character_start_timer.stop()
+        self._native_character_release_watchdog.stop()
+        self._native_character_terminal_timer.stop()
+        self._queued_native_character_request_id = 0
+        self._queued_native_character_serial = 0
+        self._queued_native_character_global = (0.0, 0.0)
+        self._queued_native_character_released = False
+        self._queued_native_character_cancelled = False
+        self._release_native_character_capture()
         if self._proxy_move_active:
             self._request_proxy_native_cancel()
             self._commit_proxy_geometry()
@@ -2582,6 +3377,12 @@ class CompactPointerEventFilter(QObject):
         self._end_drag_proxy_gesture()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.root and event.type() in {
+            QEvent.Type.Hide,
+            QEvent.Type.Close,
+        }:
+            self.cancelNativeCharacterPress()
+            return False
         if watched is self.root and event.type() == QEvent.Type.WinIdChange:
             # Window flag/float-mode changes may recreate the platform HWND.
             # Refresh the cached id on this ordinary Qt event, never from the
@@ -3695,7 +4496,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.50")
+    app.setApplicationVersion("0.3.51")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:

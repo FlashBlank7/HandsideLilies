@@ -24,7 +24,7 @@ from urllib.parse import SplitResult, urlsplit
 
 
 _WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-_USER_AGENT = "lilies-in-the-box/0.3.50"
+_USER_AGENT = "lilies-in-the-box/0.3.51"
 _HEADER_TOKEN_CHARS = frozenset(
     "!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 )

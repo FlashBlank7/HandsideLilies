@@ -236,6 +236,140 @@ def test_chat_submission_freezes_terra_provider_until_worker_commit(
     chat.shutdown()
 
 
+def test_terra_chat_exposes_and_dispatches_reviewed_box_components(tmp_path) -> None:
+    database = Database(tmp_path / "terra-component-tools.db")
+    registry = ComponentRegistry(database, PermissionBroker(database))
+    handler_calls: list[tuple[str, dict[str, Any]]] = []
+    registry.register(
+        ComponentAction(
+            component_id="tasks",
+            action_id="list",
+            title="任务列表",
+            description="读取任务",
+            risk=Risk.READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200}
+                },
+                "additionalProperties": False,
+            },
+            handler=lambda payload: handler_calls.append(("list", dict(payload)))
+            or [{"id": "task-1", "title": "读论文"}],
+        )
+    )
+    registry.register(
+        ComponentAction(
+            component_id="tasks",
+            action_id="create",
+            title="创建任务",
+            description="创建本地任务",
+            risk=Risk.MUTATE,
+            parameters={
+                "type": "object",
+                "required": ["title"],
+                "properties": {"title": {"type": "string", "minLength": 1}},
+                "additionalProperties": False,
+            },
+            handler=lambda payload: handler_calls.append(("create", dict(payload)))
+            or {"id": "task-2", "title": payload["title"]},
+        )
+    )
+
+    class FakeGpt:
+        ready = True
+        running = False
+        plan_type = "pro"
+        input_modalities: tuple[str, ...] = ()
+
+        def __init__(self) -> None:
+            self.namespaces: list[str] = []
+            self.tool_results: list[dict[str, Any]] = []
+
+        def complete(
+            self,
+            _prompt,
+            timeout,
+            on_delta,
+            dynamic_tools,
+            tool_handler,
+        ):
+            del timeout
+            self.namespaces = [str(value.get("name", "")) for value in dynamic_tools]
+            self.tool_results.append(
+                tool_handler(
+                    "tasks__list",
+                    {"limit": 5},
+                    {"namespace": "box"},
+                )
+            )
+            self.tool_results.append(
+                tool_handler(
+                    "tasks__create",
+                    {"title": "整理今天的论文笔记"},
+                    {"namespace": "box"},
+                )
+            )
+            on_delta("已经记下，也把现有任务看过了。")
+            return "已经记下，也把现有任务看过了。"
+
+        def abort(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    chat = ChatService(database)
+    chat.bind_registry(registry)
+    fake_gpt = FakeGpt()
+    chat._gpt = fake_gpt
+    confirmations: list[dict[str, Any]] = []
+    invoked: list[tuple[str, str]] = []
+    finished: list[str] = []
+    chat.confirmationRequested.connect(
+        lambda request: (
+            confirmations.append(dict(request)),
+            chat.resolve_confirmation(True),
+        )
+    )
+    chat.componentInvoked.connect(
+        lambda component, action, _result: invoked.append((component, action))
+    )
+    chat.responseFinished.connect(finished.append)
+
+    chat._chat_worker(
+        "请查看我的任务，并新建一个整理今天论文笔记的任务",
+        None,
+        None,
+        GPT_MODEL_NAME,
+    )
+
+    assert fake_gpt.namespaces == ["memory", "box"]
+    assert handler_calls == [
+        ("list", {"limit": 5}),
+        ("create", {"title": "整理今天的论文笔记"}),
+    ]
+    assert [result["result"] for result in fake_gpt.tool_results] == [
+        [{"id": "task-1", "title": "读论文"}],
+        {"id": "task-2", "title": "整理今天的论文笔记"},
+    ]
+    assert len(confirmations) == 1
+    assert confirmations[0]["componentId"] == "tasks"
+    assert confirmations[0]["actionId"] == "create"
+    assert invoked == [("tasks", "list"), ("tasks", "create")]
+    assert finished == ["已经记下，也把现有任务看过了。"]
+    with database.connect() as connection:
+        decisions = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT decision FROM audit_log ORDER BY created_at"
+            )
+        ]
+    assert decisions.count("confirm") == 1
+    assert decisions.count("allow") == 2
+    chat.shutdown()
+
+
 def test_cancel_wins_before_deterministic_reply_commit_and_suppresses_publication(
     tmp_path,
 ) -> None:

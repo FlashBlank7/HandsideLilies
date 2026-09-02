@@ -86,7 +86,7 @@ def _registered_action(
 ) -> ComponentAction | None:
     try:
         action = registry.by_tool_name(binding.tool_name)
-    except KeyError:
+    except (AttributeError, KeyError):
         return None
     if (
         action.component_id != binding.component_id
@@ -201,4 +201,3 @@ class ComponentToolBridge:
         # boundary locally because protocol input is always untrusted.
         validate_payload(schema, arguments)
         return invoke(binding.component_id, binding.action_id, dict(arguments))
-

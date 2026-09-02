@@ -8,6 +8,8 @@ from PySide6.QtWidgets import QApplication
 from lilies.core.win_event import EVENT_SYSTEM_FOREGROUND, WinEvent, WinEventKind
 from lilies.core.window_icons import WindowIconCache
 from lilies.core.window_catalog import (
+    NativeWindowProvider,
+    WindowCatalogRefreshCancelled,
     WindowCatalogService,
     WindowRecord,
     WindowRect,
@@ -264,6 +266,72 @@ def test_refresh_does_not_clear_activation_that_arrived_during_enumeration() -> 
     service.refresh(now=3.0)
     assert service.status()["dirty"] is False
     assert service.list_windows()[0]["handle"] == 2
+
+
+def test_native_interruptible_enumeration_discards_partial_handle_snapshot(
+    monkeypatch,
+) -> None:
+    provider = NativeWindowProvider()
+    cancellation = threading.Event()
+    observed_probes: list[object] = []
+
+    monkeypatch.setattr(
+        NativeWindowProvider,
+        "available",
+        property(lambda _self: True),
+    )
+    monkeypatch.setattr(
+        "lilies.core.window_catalog.windows.foreground_window",
+        lambda: 0,
+    )
+
+    def interrupted_handles(*_args, should_cancel=None, **_kwargs):
+        observed_probes.append(should_cancel)
+        cancellation.set()
+        # Simulate EnumWindows returning the prefix gathered before its
+        # callback noticed the cancellation request.
+        return [101]
+
+    monkeypatch.setattr(
+        "lilies.core.window_catalog.windows.enumerate_manageable_window_handles",
+        interrupted_handles,
+    )
+
+    try:
+        provider.enumerate_windows_interruptibly(cancellation.is_set)
+    except WindowCatalogRefreshCancelled:
+        pass
+    else:  # pragma: no cover - the cancellation contract is asserted here
+        raise AssertionError("partial native enumeration was published")
+
+    assert observed_probes == [cancellation.is_set]
+
+
+def test_cancelled_refresh_keeps_safety_obligation_due() -> None:
+    clock = Clock(20.0)
+
+    class InterruptibleProvider(FakeProvider):
+        def enumerate_windows_interruptibly(self, should_cancel):
+            assert should_cancel() is True
+            raise WindowCatalogRefreshCancelled
+
+    service = WindowCatalogService(
+        InterruptibleProvider([record(1, "Paper", r"C:\Apps\Reader.exe")]),
+        safety_refresh_seconds=10.0,
+        clock=clock,
+    )
+
+    try:
+        service.refresh(now=20.0, should_cancel=lambda: True)
+    except WindowCatalogRefreshCancelled:
+        pass
+    else:  # pragma: no cover - asserted above
+        raise AssertionError("cancelled refresh did not propagate")
+
+    # Cancellation is unlike a provider failure: it must not advance the
+    # safety clock and hide the refresh obligation after drag release.
+    assert service.tick(now=20.0, refresh=False) is True
+    assert service.status()["lastError"] == ""
 
 
 def test_window_icon_worker_uses_cache_only_and_never_creates_qt_provider(

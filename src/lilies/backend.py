@@ -301,6 +301,9 @@ class Backend(QObject):
         activation_socket: Any | None = None,
     ) -> None:
         super().__init__()
+        self._shutdown_complete = False
+        self._shutdown_in_progress = False
+        self._database_session: Any | None = None
         self._preview_mode = smoke
         self._status = "盒子已连接 · 本地"
         self.data_directory = data_root()
@@ -337,6 +340,8 @@ class Backend(QObject):
         self._window_catalog_thread: threading.Thread | None = None
         self._window_catalog_shutting_down = False
         self._window_catalog_pending_payload: dict[str, Any] | None = None
+        self._window_catalog_refresh_queued = False
+        self._window_catalog_cancel_event: threading.Event | None = None
         # Presence decisions normally arrive with EVENT_SYSTEM_FOREGROUND.
         # Keep the HWND/fingerprint that produced the last successful decision
         # so WindowCatalog can reconcile same-window full-screen transitions
@@ -413,6 +418,7 @@ class Backend(QObject):
             unified_event_hub=self.win_event_hub,
             model_broker=self.model_task_broker,
         )
+        self._companion_interaction_suspended = False
         self.growth = GrowthEngine(self.database)
         self.tasks = TaskService(self.database, growth=self.growth)
         self.focus = FocusService(self.database, growth=self.growth)
@@ -630,6 +636,7 @@ class Backend(QObject):
         self._pet_avoidance_cooldown_until = 0.0
         self._pet_interaction_lock_reasons: set[str] = set()
         self._pet_interaction_locked = False
+        self._pet_pointer_critical_locked = False
         self._pet_interaction_grace_until = 0.0
         self.pet_habitat.set_floating_mode(self._pet_float_mode)
         initial_box = self.boxLayout()
@@ -722,6 +729,14 @@ class Backend(QObject):
                 legacy_data_root(),
                 self._migration_session,
             )
+        # The GUI thread reads several independent productivity projections on
+        # every one-second tick.  Reopening the F:-backed SQLite database for
+        # each projection produced 10--30 ms event-loop stalls even though the
+        # queries themselves take well under a millisecond.  Keep exactly one
+        # explicit, thread-owned connection for Backend's lifetime; worker
+        # threads continue to receive their own short-lived connections.
+        self._database_session = self.database.connection_session()
+        self._database_session.__enter__()
         # Construction itself can legitimately exceed the stale threshold
         # before QApplication starts dispatching timers. Record completion on
         # this same Qt thread so the first post-construction snapshot is fresh.
@@ -1357,15 +1372,51 @@ class Backend(QObject):
 
     def _publish_pet_interaction_lock(self) -> None:
         value = bool(self._pet_interaction_lock_reasons)
-        if value == self._pet_interaction_locked:
+        pointer_critical = any(
+            reason not in {"menu", "companion-unread", "desktop-mode-tab"}
+            for reason in self._pet_interaction_lock_reasons
+        )
+        if value != self._pet_interaction_locked:
+            self._pet_interaction_locked = value
+            self._pet_cursor_sample = None
+            if value:
+                self._pet_interaction_grace_until = 0.0
+            else:
+                self._pet_interaction_grace_until = time.monotonic() + 0.8
+            self.selection.set_interaction_suspended(value)
+
+        if pointer_critical == self._pet_pointer_critical_locked:
             return
-        self._pet_interaction_locked = value
-        self._pet_cursor_sample = None
-        if value:
-            self._pet_interaction_grace_until = 0.0
+        self._pet_pointer_critical_locked = pointer_critical
+        if pointer_critical:
+            self.companion.set_interaction_suspended(True)
+            self._companion_interaction_suspended = True
+            # A native catalogue walk consists of many short ctypes calls and
+            # Python EnumWindows callbacks.  It is already off the GUI thread,
+            # but those callbacks can still briefly acquire the GIL.  Ask the
+            # current snapshot to stop cooperatively and retain one refresh
+            # obligation for after the drag release grace period.
+            if self._window_catalog_refresh_running:
+                self._window_catalog_refresh_queued = True
+                cancel_event = self._window_catalog_cancel_event
+                if cancel_event is not None:
+                    cancel_event.set()
         else:
-            self._pet_interaction_grace_until = time.monotonic() + 0.8
-        self.selection.set_interaction_suspended(value)
+            # Recurring Companion timers restart at their full intervals, so
+            # releasing the pointer-critical edge cannot immediately wake
+            # low-priority work.  Resume here instead of waiting for the
+            # general interaction grace: a stationary character click leaves
+            # the radial menu lock active, and an explicit Companion action
+            # from that menu must not reject itself as "suspended".
+            self._resume_companion_after_pet_interaction()
+
+    def _resume_companion_after_pet_interaction(self) -> None:
+        """Resume companionship after the pointer-critical owner releases."""
+
+        if not self._companion_interaction_suspended:
+            return
+        self.companion.set_interaction_suspended(False)
+        self._companion_interaction_suspended = False
 
     @Slot(str, bool)
     def setPetInteractionLock(self, reason: str, locked: bool) -> None:
@@ -1553,20 +1604,43 @@ class Backend(QObject):
 
     @Slot()
     def refreshWindows(self) -> None:
-        self._request_window_catalog_refresh()
+        # User-initiated refreshes are durable. If a worker is already inside
+        # EnumWindows, coalesce any number of clicks into exactly one fresh
+        # snapshot after it completes rather than silently dropping them.
+        self._request_window_catalog_refresh(queue_if_busy=True)
 
-    def _request_window_catalog_refresh(self, now: float | None = None) -> None:
+    def _request_window_catalog_refresh(
+        self,
+        now: float | None = None,
+        *,
+        queue_if_busy: bool = False,
+    ) -> bool:
         """Enumerate DWM/process state without blocking Qt's GUI thread.
 
         Cache misses intentionally keep the Dock's text fallback until a GUI
         startup pass can populate them.  QFileIconProvider/QPixmap must never
-        be constructed in this worker.
+        be constructed in this worker. Runtime GUI-thread icon hydration is
+        intentionally not attempted: one synchronous shell icon lookup has no
+        reliable latency bound and could begin immediately before a drag.
         """
 
-        if self._window_catalog_shutting_down or self._window_catalog_refresh_running:
-            return
+        if self._window_catalog_shutting_down:
+            return False
+        interaction_busy = (
+            self._pet_interaction_locked
+            or time.monotonic() < self._pet_interaction_grace_until
+        )
+        if self._window_catalog_refresh_running or interaction_busy:
+            if queue_if_busy:
+                self._window_catalog_refresh_queued = True
+            return False
+        durable_request = bool(
+            queue_if_busy or self._window_catalog_refresh_queued
+        )
         self._window_catalog_refresh_running = True
         requested_at = time.monotonic() if now is None else float(now)
+        cancel_event = threading.Event()
+        self._window_catalog_cancel_event = cancel_event
 
         def refresh_in_background() -> None:
             try:
@@ -1574,6 +1648,7 @@ class Backend(QObject):
                     requested_at,
                     notify=False,
                     icon_resolver=self.window_icon_cache.lookup,
+                    should_cancel=cancel_event.is_set,
                 )
                 payload: dict[str, Any] = {
                     "ok": True,
@@ -1605,11 +1680,18 @@ class Backend(QObject):
         except RuntimeError:
             self._window_catalog_thread = None
             self._window_catalog_refresh_running = False
+            self._window_catalog_cancel_event = None
+            if durable_request:
+                self._window_catalog_refresh_queued = True
+            return False
+        self._window_catalog_refresh_queued = False
+        return True
 
     @Slot(object)
     def _apply_window_catalog_refresh(self, payload: object) -> None:
         self._window_catalog_refresh_running = False
         self._window_catalog_thread = None
+        self._window_catalog_cancel_event = None
         if self._window_catalog_shutting_down:
             return
         result = payload if isinstance(payload, dict) else {}
@@ -1624,6 +1706,8 @@ class Backend(QObject):
             self._window_catalog_pending_payload = dict(result)
             return
         self._commit_window_catalog_refresh(result)
+        if self._window_catalog_refresh_queued:
+            self._request_window_catalog_refresh(queue_if_busy=True)
 
     def _commit_window_catalog_refresh(self, result: dict[str, Any]) -> None:
         if not bool(result.get("ok")):
@@ -2040,11 +2124,18 @@ class Backend(QObject):
             and now >= self._pet_interaction_grace_until
         )
         if catalog_quiet:
+            self._resume_companion_after_pet_interaction()
             pending_catalog = self._window_catalog_pending_payload
+            committed_pending_catalog = pending_catalog is not None
             if pending_catalog is not None:
                 self._window_catalog_pending_payload = None
                 self._commit_window_catalog_refresh(pending_catalog)
-            elif catalog_due:
+            if self._window_catalog_refresh_queued:
+                self._request_window_catalog_refresh(
+                    now,
+                    queue_if_busy=True,
+                )
+            elif catalog_due and not committed_pending_catalog:
                 self._request_window_catalog_refresh(now)
         # Keep the 75 ms timer out of the render-critical gesture. Foreground
         # privacy transitions arrive through their event callbacks; the next
@@ -4152,8 +4243,29 @@ class Backend(QObject):
         self.shellModeChanged.emit()
 
     def shutdown(self) -> None:
+        if self._shutdown_complete or self._shutdown_in_progress:
+            return
+        self._shutdown_in_progress = True
+        try:
+            try:
+                self._shutdown_services()
+            finally:
+                database_session = self._database_session
+                if database_session is not None:
+                    database_session.close()
+                    self._database_session = None
+        finally:
+            self._shutdown_in_progress = False
+        self.database.close()
+        self._shutdown_complete = True
+
+    def _shutdown_services(self) -> None:
         self._window_catalog_shutting_down = True
         self._window_catalog_pending_payload = None
+        self._window_catalog_refresh_queued = False
+        catalog_cancel_event = self._window_catalog_cancel_event
+        if catalog_cancel_event is not None:
+            catalog_cancel_event.set()
         self._runtime_heartbeat_timer.stop()
         self._shell_monitor.stop()
         self._v03_timer.stop()

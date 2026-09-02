@@ -580,6 +580,11 @@ class CompanionController(QObject):
         self._modality_retry_due_at = 0.0
         self._archive_busy = False
         self._source_busy = False
+        self._archive_cancel_event: threading.Event | None = None
+        # A source worker may finish after native pointer movement begins.
+        # Keep its result off the Qt GUI thread until Backend releases the
+        # post-drag grace barrier; the successful refresh itself is not lost.
+        self._deferred_source_payload: object | None = None
         self._source_index = 0
         self._requested_category: ContentCategory | None = None
         self._category_smooth_scores: dict[ContentCategory, int] = {
@@ -603,6 +608,16 @@ class CompanionController(QObject):
             self._screen_memory_mode = "significant"
         self._preferences_state = self._compose_preferences_snapshot()
         self._active = bool(active)
+        # Native pet movement is a latency-critical interaction.  The backend
+        # temporarily raises this barrier while a drag/resize owns the pointer
+        # so low-priority companionship cannot copy pixels, start a model, or
+        # wake network/database maintenance on the GUI hot path.  Explicit
+        # Companion generation is rejected (never replayed against a stale
+        # foreground); an already-running bubble reply is intentionally not
+        # represented by ``_active_generation_token`` and is left alone.
+        self._interaction_suspended = False
+        self._interaction_timer_state: dict[str, int | bool] = {}
+        self._resume_modality_probe_after_interaction = False
         # The native QML surface is the final presentation authority.  A
         # production controller starts fail-closed until CompanionBubble has
         # synchronised its current ``suppressed`` value.  Standalone/offscreen
@@ -612,9 +627,11 @@ class CompanionController(QObject):
         self._presentation_epoch = 0
         self._generation_serial = 0
         self._active_generation_token = 0
+        self._active_generation_user_requested = False
         self._generation_attempt_not_before = -float("inf")
         self._legacy_dismiss_serial = 0
         self._last_foreground_reconcile_at = -float("inf")
+        self._last_consider_notification_signature: tuple[object, ...] | None = None
         self._generationReady.connect(self._accept_generation)
         self._replyReady.connect(self._accept_reply)
         self._modalitiesReady.connect(self._accept_modalities)
@@ -665,6 +682,98 @@ class CompanionController(QObject):
                     pass
         if self._active and self._smart_observation:
             self._probe_modalities()
+
+    @Slot(bool)
+    def set_interaction_suspended(self, suspended: bool) -> None:
+        """Fence low-priority companion work during native pointer movement.
+
+        User-requested Companion generations are cancelled/rejected rather
+        than queued: their foreground and optional screenshot would be stale
+        after a drag.  This controller-local barrier does not touch ChatService,
+        SelectionService, connectors, or an in-flight bubble reply.
+        """
+
+        requested = bool(suspended)
+        if requested == self._interaction_suspended:
+            return
+        if requested:
+            self._interaction_timer_state = {
+                "activity": self._timer.isActive(),
+                "archive": self._archive_timer.isActive(),
+                "content": self._content_timer.isActive(),
+                "modality": self._modality_retry_timer.isActive(),
+                "modalityRemainingMs": self._modality_retry_timer.remainingTime(),
+            }
+            self._interaction_suspended = True
+            self._resume_modality_probe_after_interaction = bool(self._probe_busy)
+            self._timer.stop()
+            self._archive_timer.stop()
+            self._content_timer.stop()
+            self._modality_retry_timer.stop()
+            archive_cancel_event = self._archive_cancel_event
+            if archive_cancel_event is not None:
+                archive_cancel_event.set()
+            cancelled_generation = False
+            cancelled_user_request = bool(
+                self._active_generation_token
+                and self._active_generation_user_requested
+            )
+            if (
+                self._active_generation_token
+                or self._generation_cancel_event is not None
+                or self._inflight_capture is not None
+            ):
+                cancelled_generation = self._cancel_active_generation(
+                    "interaction-suspended",
+                    capture_reason="presentation-suppressed",
+                )
+            if cancelled_user_request:
+                self._set_request_feedback(
+                    "移动开始时已取消本次陪伴请求；没有保留旧截图，请松开后重试",
+                    "quiet",
+                )
+            if cancelled_generation:
+                self.changed.emit()
+            return
+
+        timer_state = dict(self._interaction_timer_state)
+        self._interaction_timer_state = {}
+        self._interaction_suspended = False
+        deferred_source_payload = self._deferred_source_payload
+        self._deferred_source_payload = None
+        if self._active:
+            # Recurring timers restart at their full intervals.  In
+            # particular, the activity heartbeat cannot immediately reuse the
+            # pre-drag foreground/idle decision.
+            if bool(timer_state.get("activity")) and self._activity_enabled:
+                self._timer.start()
+            if bool(timer_state.get("archive")):
+                self._archive_timer.start()
+            if bool(timer_state.get("content")) and self._online_content:
+                self._content_timer.start()
+            resume_probe = bool(timer_state.get("modality")) or bool(
+                self._resume_modality_probe_after_interaction
+            )
+            if (
+                resume_probe
+                and self._smart_observation
+                and not self._probe_busy
+            ):
+                try:
+                    previous_remaining = int(
+                        timer_state.get("modalityRemainingMs", -1)
+                    )
+                except (TypeError, ValueError):
+                    previous_remaining = -1
+                # Never launch model capability discovery on the release
+                # event itself.  Give native composition and hit testing a
+                # quiet frame window first.
+                self._modality_retry_timer.start(
+                    max(1500, previous_remaining if previous_remaining > 0 else 0)
+                )
+                self._resume_modality_probe_after_interaction = False
+        if deferred_source_payload is not None:
+            self._publish_source_result(deferred_source_payload)
 
     def _load_frequency_preferences(
         self,
@@ -1859,7 +1968,7 @@ class CompanionController(QObject):
         return value
 
     def _consider(self) -> None:
-        if self._closing:
+        if self._closing or self._interaction_suspended:
             return
         self._expire_bubble()
         # Missing history, an exhausted redelivery budget or an expired
@@ -1884,14 +1993,33 @@ class CompanionController(QObject):
                 try:
                     self.updateForegroundContext(self.reader(current_hwnd))
                 except (OSError, RuntimeError, TypeError, ValueError):
-                    self.changed.emit()
                     return
                 context = self.activity.current_context
         decision = self.activity.consider_observation()
         if context is not None:
             label = self._scene_label(context)
             self.momentum.observe(label, 1.0, time.monotonic())
-        self.changed.emit()
+        # ``activityStatus`` contains high-resolution stable/idle counters,
+        # but repainting every QML consumer for those internal clock ticks was
+        # costing an entire GUI frame.  Notify only when a user-visible state
+        # boundary changes; the generation and bubble branches below already
+        # emit their own concrete mutations.
+        notification_signature = (
+            str(decision.reason),
+            str(decision.policy.value),
+            bool(decision.can_capture),
+            bool(decision.can_bubble),
+            str(self.activity.context_identity),
+            str(self._delivery_record.get("state", "")),
+            bool(self._delivery_record.get("unread")),
+            bool(self._busy),
+            bool(self._activity_enabled),
+            bool(self.activity.paused),
+            bool(self._presentation_suppressed),
+        )
+        if notification_signature != self._last_consider_notification_signature:
+            self._last_consider_notification_signature = notification_signature
+            self.changed.emit()
         if (
             str(self._delivery_record.get("state", "")) == "unread"
             and bool(self._delivery_record.get("unread"))
@@ -2275,6 +2403,7 @@ class CompanionController(QObject):
         if had_active:
             self._generation_serial += 1
             self._active_generation_token = 0
+            self._active_generation_user_requested = False
         had_capture = bool(
             self._active_generation_has_capture or self._inflight_capture is not None
         )
@@ -2408,6 +2537,14 @@ class CompanionController(QObject):
         duplicate_retry: int = 0,
         manual_capture: bool = False,
     ) -> bool:
+        if self._interaction_suspended:
+            if force:
+                self._set_request_feedback(
+                    "正在移动莉莉丝；这次请求没有排队，请松开后再试一次",
+                    "quiet",
+                )
+                self.changed.emit()
+            return False
         if not force and time.monotonic() < self._generation_attempt_not_before:
             return False
         self._prune_unread_delivery()
@@ -2454,6 +2591,7 @@ class CompanionController(QObject):
         capture_requested = False
         capture_attempt_failed = False
         capture_fallback_requested = False
+        legacy_capture_requested = False
         # The ordinary explicit “生成一条场景陪伴” action remains text-only.
         # ``manual_capture`` belongs to a separate, plainly labelled one-shot
         # consent action and must still cross every automatic privacy guard.
@@ -2586,52 +2724,23 @@ class CompanionController(QObject):
                     return False
                 generation_context = verified_context
                 scene_label = self._scene_label(generation_context)
-                try:
-                    # ImageGrab performs only the native HWND pixel copy on
-                    # the Qt thread.  Validation, scaling and PNG encoding are
-                    # intentionally deferred to the worker below.
-                    captured_image = capture_window_image(verified_context.hwnd)
-                except (OSError, RuntimeError, ValueError):
-                    captured_image = None
-                    capture_fallback_requested = bool(
-                        verified_context.process_id
-                        and native_capture_helper_available()
-                    )
-                    capture_attempt_failed = not capture_fallback_requested
-                    capture_requested = capture_fallback_requested
-                    record_capture("failed", "native-grab-failed")
-                if captured_image is None and not capture_attempt_failed:
-                    if not capture_fallback_requested:
-                        capture_fallback_requested = bool(
-                            verified_context.process_id
-                            and native_capture_helper_available()
-                        )
-                        capture_attempt_failed = not capture_fallback_requested
-                        capture_requested = capture_fallback_requested
-                        record_capture("failed", "native-grab-failed")
-                if captured_image is not None:
-                    try:
-                        after_hwnd = int(self._foreground_provider() or 0)
-                        after_context = self.reader(after_hwnd) if after_hwnd else None
-                    except (OSError, RuntimeError, TypeError, ValueError):
-                        after_context = None
-                        after_hwnd = 0
-                    after_safe = (
-                        after_context is not None
-                        and after_hwnd == after_context.hwnd
-                        and self._same_capture_identity(verified_context, after_context)
-                        and self._capture_policy(after_context)[0]
-                    )
-                    if not after_safe:
-                        captured_image.close()
-                        captured_image = None
-                        record_capture("discarded", "foreground-changed")
-                        if after_context is not None:
-                            self.updateForegroundContext(after_context)
-                        return False
+                helper_available = bool(
+                    verified_context.process_id
+                    and native_capture_helper_available()
+                )
+                if helper_available:
+                    # The packaged native helper owns HWND acquisition,
+                    # validation and PNG staging on the tracked worker.  A
+                    # synchronous ImageGrab here would copy a full window on
+                    # Qt's GUI thread exactly when pointer movement needs it.
+                    capture_fallback_requested = True
                     capture_requested = True
-                    generation_context = after_context
-                    self.updateForegroundContext(after_context)
+                else:
+                    # Development/source runs retain the ImageGrab-compatible
+                    # path, but it is a worker plan too.  No pixel copy is
+                    # ever performed by this Qt-thread method.
+                    legacy_capture_requested = True
+                    capture_requested = True
             elif verified_context is not None:
                 self.updateForegroundContext(verified_context)
                 if manual_capture:
@@ -2660,6 +2769,7 @@ class CompanionController(QObject):
         self._generation_serial += 1
         generation_token = self._generation_serial
         self._active_generation_token = generation_token
+        self._active_generation_user_requested = bool(force)
         self._active_generation_has_capture = capture_requested
         self._active_generation_capture_diagnostic_token = (
             capture_diagnostic_token if capture_requested else 0
@@ -2713,6 +2823,88 @@ class CompanionController(QObject):
                 local_cancel=generation_cancel_event,
             )
             try:
+                if legacy_capture_requested:
+                    if generation_cancel_event.is_set():
+                        record_capture("cancelled", "request-cancelled")
+                        self._generationReady.emit(
+                            {
+                                "cancelled": True,
+                                "capture": None,
+                                "force": force,
+                                "generationToken": generation_token,
+                            }
+                        )
+                        return
+                    try:
+                        legacy_hwnd = int(self._foreground_provider() or 0)
+                        legacy_context = (
+                            self.reader(legacy_hwnd) if legacy_hwnd else None
+                        )
+                    except (OSError, RuntimeError, TypeError, ValueError):
+                        legacy_context = None
+                        legacy_hwnd = 0
+                    legacy_safe = bool(
+                        legacy_context is not None
+                        and legacy_hwnd == legacy_context.hwnd
+                        and self._same_capture_identity(
+                            generation_context, legacy_context
+                        )
+                        and self._capture_policy(legacy_context)[0]
+                    )
+                    if not legacy_safe:
+                        record_capture("discarded", "foreground-changed")
+                        self._generationReady.emit(
+                            {
+                                "cancelled": True,
+                                "capture": None,
+                                "force": force,
+                                "generationToken": generation_token,
+                                "foregroundContext": legacy_context,
+                            }
+                        )
+                        return
+                    try:
+                        captured_image = capture_window_image(
+                            generation_context.hwnd
+                        )
+                    except (OSError, RuntimeError, ValueError):
+                        captured_image = None
+                        capture_attempt_failed = True
+                        record_capture("failed", "native-grab-failed")
+                    if captured_image is None and not capture_attempt_failed:
+                        capture_attempt_failed = True
+                        record_capture("failed", "native-grab-failed")
+                    if captured_image is not None:
+                        try:
+                            after_hwnd = int(self._foreground_provider() or 0)
+                            after_context = (
+                                self.reader(after_hwnd) if after_hwnd else None
+                            )
+                        except (OSError, RuntimeError, TypeError, ValueError):
+                            after_context = None
+                            after_hwnd = 0
+                        after_safe = bool(
+                            after_context is not None
+                            and after_hwnd == after_context.hwnd
+                            and self._same_capture_identity(
+                                generation_context, after_context
+                            )
+                            and self._capture_policy(after_context)[0]
+                        )
+                        if not after_safe:
+                            captured_image.close()
+                            captured_image = None
+                            record_capture("discarded", "foreground-changed")
+                            self._generationReady.emit(
+                                {
+                                    "cancelled": True,
+                                    "capture": None,
+                                    "force": force,
+                                    "generationToken": generation_token,
+                                    "foregroundContext": after_context,
+                                }
+                            )
+                            return
                 if captured_image is not None:
                     raw_capture = captured_image
                     captured_image = None
@@ -3151,6 +3343,7 @@ class CompanionController(QObject):
         self._busy = False
         if self._active_generation_token == generation_token:
             self._active_generation_token = 0
+            self._active_generation_user_requested = False
         if self._generation_cancel_event is generation_cancel_event:
             self._generation_cancel_event = None
         if self._active_generation_model_id == model_id:
@@ -3215,6 +3408,23 @@ class CompanionController(QObject):
                 capture.release()
                 record_presentation("quiet", "dismissed-before-presentation")
             return
+        if self._interaction_suspended:
+            # A worker may already have queued its Qt signal when native
+            # movement raises the barrier.  Never allocate/publish a bubble
+            # surface from that stale result; release any retained image now.
+            if isinstance(capture, StagedCapture):
+                capture.release()
+                record_presentation("quiet", "presentation-suppressed")
+            if generation_token and generation_token == self._active_generation_token:
+                self._active_generation_token = 0
+                self._active_generation_user_requested = False
+                self._generation_cancel_event = None
+                self._active_generation_model_id = ""
+                self._active_generation_has_capture = False
+                self._active_generation_capture_diagnostic_token = 0
+                self._busy = False
+            self.changed.emit()
+            return
         if generation_token and generation_token != self._active_generation_token:
             # A presentation suppression invalidates the worker token.  Its
             # eventual signal is intentionally silent and must not clear a
@@ -3222,6 +3432,16 @@ class CompanionController(QObject):
             if isinstance(capture, StagedCapture):
                 capture.release()
             return
+        reported_context = value.get("foregroundContext")
+        if isinstance(reported_context, ForegroundContext):
+            self.updateForegroundContext(reported_context)
+            if (
+                generation_token
+                and generation_token != self._active_generation_token
+            ):
+                if isinstance(capture, StagedCapture):
+                    capture.release()
+                return
         self._active_generation_has_capture = False
         self._active_generation_capture_diagnostic_token = 0
         browser_capture_revoked = bool(
@@ -3853,6 +4073,13 @@ class CompanionController(QObject):
         return current, bool(decision.can_bubble), str(decision.reason)
 
     def _start_manual_generation(self) -> bool:
+        if self._interaction_suspended:
+            self._set_request_feedback(
+                "正在移动莉莉丝；这次请求没有排队，请松开后再试一次",
+                "quiet",
+            )
+            self.changed.emit()
+            return False
         context, reconciled, reconcile_reason = self._reconcile_foreground_for_bubble()
         if not reconciled:
             label = self._request_reason_label(reconcile_reason)
@@ -4233,6 +4460,13 @@ class CompanionController(QObject):
         failed capture never degrades into generic scene prose.
         """
 
+        if self._interaction_suspended:
+            self._set_request_feedback(
+                "正在移动莉莉丝；本次截图请求没有排队，请松开后重新选择当前窗口",
+                "quiet",
+            )
+            self.changed.emit()
+            return False
         if self._closing or self._busy:
             self._set_request_feedback("上一句话还在整理，请稍等一下", "busy")
             self.changed.emit()
@@ -4504,7 +4738,10 @@ class CompanionController(QObject):
         self.database.set_setting("activity_context_enabled", self._activity_enabled)
         if self._active and self._activity_enabled:
             self.activity.start()
-            self._timer.start()
+            if not self._interaction_suspended:
+                self._timer.start()
+            else:
+                self._interaction_timer_state["activity"] = True
             try:
                 current = self._foreground_provider()
                 if current:
@@ -4583,7 +4820,10 @@ class CompanionController(QObject):
             self._modality_retry_attempt = 0
             self._modality_retry_due_at = 0.0
             self._modality_retry_timer.stop()
-            self._probe_modalities()
+            if self._interaction_suspended:
+                self._resume_modality_probe_after_interaction = True
+            else:
+                self._probe_modalities()
         else:
             self._modality_retry_timer.stop()
             self._modality_retry_due_at = 0.0
@@ -4625,7 +4865,12 @@ class CompanionController(QObject):
         self.changed.emit()
 
     def _probe_modalities(self) -> None:
-        if self._closing or self._probe_busy or not self._smart_observation:
+        if (
+            self._closing
+            or self._interaction_suspended
+            or self._probe_busy
+            or not self._smart_observation
+        ):
             return
         if self._busy or self._active_generation_token:
             # The modality probe shares the subscription bridge. Never start
@@ -4665,6 +4910,19 @@ class CompanionController(QObject):
         modality = dict(self.runtime.modality_status)
         image_model = str(modality.get("imageModel", "") or "")
         probe_error = bool(str(modality.get("error", "") or "").strip())
+        if self._interaction_suspended:
+            self._modality_retry_timer.stop()
+            if image_model:
+                self._modality_retry_attempt = 0
+                self._modality_retry_due_at = 0.0
+                self._resume_modality_probe_after_interaction = False
+            else:
+                self._resume_modality_probe_after_interaction = bool(
+                    self._smart_observation and probe_error
+                )
+            self.changed.emit()
+            return
+        self._resume_modality_probe_after_interaction = False
         if image_model:
             self._modality_retry_attempt = 0
             self._modality_retry_due_at = 0.0
@@ -4690,6 +4948,7 @@ class CompanionController(QObject):
     def retrySmartObservationProbe(self) -> bool:
         if (
             self._closing
+            or self._interaction_suspended
             or not self._smart_observation
             or self._probe_busy
             or self._busy
@@ -4709,11 +4968,15 @@ class CompanionController(QObject):
         self._online_content = bool(enabled)
         self.database.set_setting("online_content_authorized", self._online_content)
         self.content.fetcher = UrllibFetcher() if self._online_content else None
-        if self._active and self._online_content:
+        if self._active and self._online_content and not self._interaction_suspended:
             self._content_timer.start()
             QTimer.singleShot(0, self._refresh_next_source)
         else:
             self._content_timer.stop()
+            if self._interaction_suspended:
+                self._interaction_timer_state["content"] = bool(
+                    self._active and self._online_content
+                )
         self.sourcesChanged.emit()
         self.changed.emit()
 
@@ -4875,7 +5138,12 @@ class CompanionController(QObject):
 
     @Slot(str)
     def refreshSource(self, provider_id: str) -> None:
-        if self._closing or not provider_id or self._source_busy:
+        if (
+            self._closing
+            or self._interaction_suspended
+            or not provider_id
+            or self._source_busy
+        ):
             return
         self._source_busy = True
         query = "science technology" if provider_id == "gdelt" else ""
@@ -4892,7 +5160,13 @@ class CompanionController(QObject):
             self._source_busy = False
 
     def _refresh_next_source(self) -> None:
-        if self._closing or not self._active or not self._online_content or self._source_busy:
+        if (
+            self._closing
+            or self._interaction_suspended
+            or not self._active
+            or not self._online_content
+            or self._source_busy
+        ):
             return
         # GDELT remains a manual opt-in source.  Local interests are never sent
         # to any provider; they are used only for on-device ranking.
@@ -4934,6 +5208,13 @@ class CompanionController(QObject):
         self.sourcesChanged.emit()
 
     def refresh_source_component(self, provider_id: str, query: str, limit: int) -> dict[str, Any]:
+        if self._interaction_suspended:
+            return {
+                "providerId": str(provider_id),
+                "state": "suspended",
+                "items": [],
+                "error": "interaction-suspended",
+            }
         result = self.content.refresh(
             provider_id,
             query,
@@ -4956,6 +5237,14 @@ class CompanionController(QObject):
         if self._closing:
             return
         self._source_busy = False
+        if self._interaction_suspended:
+            self._deferred_source_payload = payload
+            return
+        self._publish_source_result(payload)
+
+    def _publish_source_result(self, payload: object) -> None:
+        if self._closing:
+            return
         value = dict(payload) if isinstance(payload, dict) else {}
         if value.get("error"):
             self.status_sink(f"内容源刷新失败：{value['error']}")
@@ -4999,7 +5288,7 @@ class CompanionController(QObject):
         self._clear_bubble(reason="move-to-box", mark_read=True)
 
     def _consider_archival(self) -> None:
-        if self._closing or self._archive_busy:
+        if self._closing or self._interaction_suspended or self._archive_busy:
             return
         try:
             idle_seconds = float(self.activity.idle_provider.idle_seconds())
@@ -5008,6 +5297,8 @@ class CompanionController(QObject):
         if idle_seconds < 30.0:
             return
         self._archive_busy = True
+        archive_cancel_event = threading.Event()
+        self._archive_cancel_event = archive_cancel_event
         broker_task_id = self._submit_model_task(
             LUNA_MODEL,
             ModelTaskKind.MEMORY_ARCHIVE,
@@ -5022,6 +5313,7 @@ class CompanionController(QObject):
                 broker_task_id or None,
                 LUNA_MODEL,
                 abort=lambda: self.runtime.abort_model(LUNA_MODEL),
+                local_cancel=archive_cancel_event,
             )
             try:
                 if not lease.acquire():
@@ -5040,9 +5332,13 @@ class CompanionController(QObject):
             finally:
                 lease.close(result={"completed": not lease.cancelled})
                 self._forget_model_task(broker_task_id)
+                if self._archive_cancel_event is archive_cancel_event:
+                    self._archive_cancel_event = None
                 self._archive_busy = False
 
         if not self._start_worker(worker, name="lilies-memory-archive"):
+            if self._archive_cancel_event is archive_cancel_event:
+                self._archive_cancel_event = None
             self._archive_busy = False
             self._abandon_model_task(broker_task_id, "worker-start-failed")
 
@@ -5080,6 +5376,9 @@ class CompanionController(QObject):
         self._cancel_active_generation(
             "companion-shutdown", capture_reason="companion-shutdown"
         )
+        archive_cancel_event = self._archive_cancel_event
+        if archive_cancel_event is not None:
+            archive_cancel_event.set()
         self._release_capture()
         self.runtime.shutdown()
         self._join_workers()
@@ -5087,6 +5386,8 @@ class CompanionController(QObject):
         self._probe_busy = False
         self._archive_busy = False
         self._source_busy = False
+        self._archive_cancel_event = None
+        self._deferred_source_payload = None
 
 
 __all__ = ["CompanionController"]

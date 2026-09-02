@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -46,7 +47,8 @@ def test_application_configures_resource_lifecycle_after_qml_load() -> None:
     assert "app._lilies_quick_window_lifecycle" in app_source
     assert "configure_quick_window_resource_lifecycle(" in app_source
     assert "root_window" in app_source
-    assert "QEvent.Type.Hide" in app_source
+    assert "window.visibleChanged.connect(slot)" in app_source
+    assert "window.installEventFilter(self)" not in app_source
     assert "_RELEASE_QUIET_MS = 420" in app_source
     assert "_pet_interaction_active()" in app_source
     assert "window.releaseResources()" in app_source
@@ -75,7 +77,9 @@ def test_hidden_window_release_waits_for_quiet_and_show_cancels(
         assert releases == []
 
         child.hide()
-        QTest.qWait(45)
+        deadline = time.monotonic() + 1.0
+        while not releases and time.monotonic() < deadline:
+            QTest.qWait(10)
         assert releases == ["released"]
     finally:
         child.close()

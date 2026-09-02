@@ -370,6 +370,10 @@ class WindowProvider(Protocol):
     def activate(self, handle: int) -> bool: ...
 
 
+class WindowCatalogRefreshCancelled(RuntimeError):
+    """A cooperative refresh stop requested by an input-critical gesture."""
+
+
 class NativeWindowProvider:
     """Read-only Win32 provider; all methods fail closed off Windows."""
 
@@ -378,13 +382,51 @@ class NativeWindowProvider:
         return os.name == "nt" and windows.user32 is not None
 
     def enumerate_windows(self) -> list[WindowRecord]:
+        return self._enumerate_windows()
+
+    def enumerate_windows_interruptibly(
+        self,
+        should_cancel: Callable[[], bool],
+    ) -> list[WindowRecord]:
+        """Enumerate while allowing a native pet drag to stop the worker.
+
+        The catalogue discards the whole snapshot on cancellation; a partial
+        taskbar model is never published.
+        """
+
+        return self._enumerate_windows(should_cancel)
+
+    def _enumerate_windows(
+        self,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> list[WindowRecord]:
         if not self.available:
             return []
+
+        def check_cancelled() -> None:
+            if should_cancel is None:
+                return
+            try:
+                cancelled = bool(should_cancel())
+            except Exception as exc:
+                raise WindowCatalogRefreshCancelled from exc
+            if cancelled:
+                raise WindowCatalogRefreshCancelled
+
+        check_cancelled()
         foreground = windows.foreground_window()
         values: list[WindowRecord] = []
+        handles = windows.enumerate_manageable_window_handles(
+            should_cancel=should_cancel
+        )
+        # EnumWindows may have returned a deliberately partial handle list
+        # after its callback observed cancellation.  Never turn that into a
+        # transiently incomplete Dock.
+        check_cancelled()
         desktop_query = _VirtualDesktopQuery()
         try:
-            for handle in windows.enumerate_manageable_window_handles():
+            for handle in handles:
+                check_cancelled()
                 title = windows.window_title(handle).strip()
                 if not title or title == "Lilies in the box":
                     continue
@@ -392,6 +434,7 @@ class NativeWindowProvider:
                 process_id = int(identity.get("processId") or 0)
                 process_name = str(identity.get("processName") or "")
                 executable_path, aumid = self._process_application(process_id, handle)
+                check_cancelled()
                 rect = self._frame_rect(handle)
                 title_bar_height = self._title_bar_height(handle, rect)
                 monitor_id, monitor_rect, work_area = self._monitor(handle)
@@ -429,6 +472,7 @@ class NativeWindowProvider:
                         work_area=work_area,
                     ).normalized()
                 )
+                check_cancelled()
         finally:
             desktop_query.close()
         return values
@@ -699,18 +743,48 @@ class WindowCatalogService:
         *,
         notify: bool = True,
         icon_resolver: IconResolver | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> list[dict[str, object]]:
         current = self.clock() if now is None else float(now)
         resolver = self.icon_resolver if icon_resolver is None else icon_resolver
         with self._lock:
             refresh_generation = self._dirty_generation
+
+        def check_cancelled() -> None:
+            if should_cancel is None:
+                return
+            try:
+                cancelled = bool(should_cancel())
+            except Exception as exc:
+                raise WindowCatalogRefreshCancelled from exc
+            if cancelled:
+                raise WindowCatalogRefreshCancelled
+
         try:
-            discovered = [
-                self._with_icon(item.normalized(), resolver)
-                for item in self.provider.enumerate_windows()
-                if int(item.handle) > 0 and item.visible and item.title.strip()
-            ]
+            interruptible = getattr(
+                self.provider,
+                "enumerate_windows_interruptibly",
+                None,
+            )
+            if should_cancel is not None and callable(interruptible):
+                source_records = interruptible(should_cancel)
+            else:
+                check_cancelled()
+                source_records = self.provider.enumerate_windows()
+                check_cancelled()
+            discovered: list[WindowRecord] = []
+            for item in source_records:
+                check_cancelled()
+                if int(item.handle) <= 0 or not item.visible or not item.title.strip():
+                    continue
+                discovered.append(self._with_icon(item.normalized(), resolver))
+                check_cancelled()
             error = ""
+        except WindowCatalogRefreshCancelled:
+            # Do not advance the safety-refresh clock or clear the dirty
+            # generation.  Once the gesture releases, the same obligation is
+            # still due and the backend can run one fresh snapshot.
+            raise
         except Exception as exc:
             # Preserve the last known catalogue during a transient COM/User32
             # failure instead of flashing an empty Dock.
@@ -840,6 +914,7 @@ class WindowCatalogService:
 
 __all__ = [
     "NativeWindowProvider",
+    "WindowCatalogRefreshCancelled",
     "WindowCatalogService",
     "WindowGroup",
     "WindowProvider",

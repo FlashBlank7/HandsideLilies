@@ -1612,6 +1612,11 @@ def main() -> int:
             and not result["busy"]
         )
         outcome["radialCompanionAction"] = result
+        # A legitimate request failure opens the Companion chat page as its
+        # product fallback.  Preserve that failure in the result above, then
+        # clear the fixture-owned chat state so the later habitat transition
+        # cannot be misreported as an artwork regression as well.
+        backend.setChatOpen(False)
         # Keep the three selected optional actions alive through the real
         # radial click above; only reset the fixture after that route has been
         # exercised. Clearing them in the settings phase made this verifier
@@ -1940,7 +1945,14 @@ def main() -> int:
             "work": work_panel.isVisible(),
             "world": box_world_scene.isVisible(),
             "connector": connector_setup.isVisible(),
-            "question": selection_question.isVisible(),
+            # Pointer-critical movement deliberately removes auxiliary Quick
+            # windows from the compositor.  The drafted follow-up survives
+            # that temporary hide, while the privacy transition below owns
+            # the later cancellation.
+            "questionHiddenByDrag": not selection_question.isVisible(),
+            "questionRequestPreserved": bool(
+                selection_question.property("requested")
+            ),
             "menu": bool(compact_window.property("expanded")),
             "drag": bool(pet_window.property("manualDragActive")),
             "interactionLocked": bool(backend._pet_interaction_locked),

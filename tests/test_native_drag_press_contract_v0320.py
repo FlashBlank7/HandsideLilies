@@ -32,6 +32,25 @@ def test_system_move_is_the_recommended_default_and_direct_is_compatibility_mode
     assert 'model: ["Windows 原生拖动（推荐）", "直接跟手（兼容）"]' in source
     assert 'currentIndex: backend.petDragMode === "system" ? 0 : 1' in source
     assert '["system", "direct"][currentIndex]' in source
+    assert "Qt.NoDropShadowWindowHint" in source
+
+
+def test_drag_hides_auxiliary_animated_quick_windows_without_cancelling_them() -> None:
+    main_source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
+    bubble_source = (ROOT / "qml" / "CompanionBubble.qml").read_text("utf-8")
+    focus_source = (ROOT / "qml" / "FocusDiversionBubble.qml").read_text("utf-8")
+
+    assert "property bool interactionHidden: false" in bubble_source
+    assert "&& !interactionHidden" in bubble_source
+    assert (
+        "running: bubbleWindow.visible\n"
+        "                                 && bubbleWindow.effectiveBusy"
+    ) in bubble_source
+    assert "else if (!interactionHidden)" in bubble_source
+    assert "property bool interactionHidden: false" in focus_source
+    assert "interactionHidden: petWindow.manualDragActive" in main_source
+    assert "&& !petWindow.manualDragActive" in main_source
+    assert "running: selectionBubble.visible" in main_source
 
 
 def test_qml_uses_boolean_preserving_python_system_move_bridge() -> None:

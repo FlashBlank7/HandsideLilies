@@ -371,8 +371,57 @@ _PRODUCTIVITY_SCHEMA: tuple[str, ...] = (
 )
 
 
+class _ConnectionSessionState:
+    """One reusable SQLite connection owned by exactly one Python thread."""
+
+    def __init__(
+        self, owner_thread: threading.Thread, connection: sqlite3.Connection
+    ) -> None:
+        self.owner_thread = owner_thread
+        self.connection = connection
+        self.tokens: list[object] = []
+        self.operation_depth = 0
+        self.savepoint_sequence = 0
+
+
+class _ConnectionSession:
+    """Explicit context manager controlling a thread-local connection lifetime."""
+
+    def __init__(self, database: "Database") -> None:
+        self._database = database
+        self._owner_thread: threading.Thread | None = None
+        self._token = object()
+        self._entered = False
+
+    def __enter__(self) -> "_ConnectionSession":
+        if self._entered:
+            raise RuntimeError("database connection session is already active")
+        owner_thread = threading.current_thread()
+        self._database._enter_connection_session(owner_thread, self._token)
+        self._owner_thread = owner_thread
+        self._entered = True
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if not self._entered or self._owner_thread is None:
+            raise RuntimeError("database connection session is not active")
+        if threading.current_thread() is not self._owner_thread:
+            # Leave the handle active so its owner can still close it safely.
+            raise RuntimeError(
+                "database connection session must be closed by its owner thread"
+            )
+        self._database._exit_connection_session(self._owner_thread, self._token)
+        self._entered = False
+        self._owner_thread = None
+
+    def close(self) -> None:
+        """Deterministically end a manually-entered session on its owner thread."""
+
+        self.__exit__(None, None, None)
+
+
 class Database:
-    """Small SQLite store. Every operation owns its connection for thread safety."""
+    """Small SQLite store with opt-in, thread-owned reusable connections."""
 
     def __init__(self, path: Path | str) -> None:
         raw_path = str(path)
@@ -393,22 +442,147 @@ class Database:
         else:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._migration_lock = threading.Lock()
+        self._session_lock = threading.RLock()
+        self._connection_sessions: dict[
+            threading.Thread, _ConnectionSessionState
+        ] = {}
         self._migrate()
 
-    @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
+    def _open_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._dsn, timeout=10, uri=self._uri)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         if not self._memory_database:
             connection.execute("PRAGMA journal_mode=WAL")
+        return connection
+
+    def connection_session(self) -> _ConnectionSession:
+        """Return an opt-in reusable connection scope for the calling thread.
+
+        Existing ``connect()`` calls made on the same thread borrow the session
+        connection. Each of those operation scopes still commits on success and
+        rolls back on failure. Nested sessions reuse the same connection and
+        must be exited in LIFO order.
+        """
+
+        return _ConnectionSession(self)
+
+    def _enter_connection_session(
+        self, owner_thread: threading.Thread, token: object
+    ) -> None:
+        if threading.current_thread() is not owner_thread:
+            raise RuntimeError("database connection session owner changed during entry")
+        with self._session_lock:
+            state = self._connection_sessions.get(owner_thread)
+            if state is not None:
+                if state.owner_thread is not owner_thread:
+                    raise RuntimeError(
+                        "database connection session crossed thread ownership"
+                    )
+                state.tokens.append(token)
+                return
+
+        # Opening a database on F: can take tens of milliseconds. Do not hold
+        # the registry lock and stall an already-established GUI session while
+        # another thread creates its own connection.
+        connection = self._open_connection()
+        with self._session_lock:
+            state = self._connection_sessions.get(owner_thread)
+            if state is not None:
+                connection.close()
+                if state.owner_thread is not owner_thread:
+                    raise RuntimeError(
+                        "database connection session crossed thread ownership"
+                    )
+            else:
+                state = _ConnectionSessionState(owner_thread, connection)
+                self._connection_sessions[owner_thread] = state
+            if state.owner_thread is not owner_thread:
+                raise RuntimeError("database connection session crossed thread ownership")
+            state.tokens.append(token)
+
+    def _exit_connection_session(
+        self, owner_thread: threading.Thread, token: object
+    ) -> None:
+        if threading.current_thread() is not owner_thread:
+            raise RuntimeError(
+                "database connection session must be closed by its owner thread"
+            )
+        with self._session_lock:
+            state = self._connection_sessions.get(owner_thread)
+            if state is None or not state.tokens:
+                raise RuntimeError("database connection session is not active")
+            if state.tokens[-1] is not token:
+                raise RuntimeError(
+                    "nested database connection sessions must close in LIFO order"
+                )
+            if len(state.tokens) == 1 and state.operation_depth:
+                raise RuntimeError(
+                    "database connection session cannot close during an active operation"
+                )
+            state.tokens.pop()
+            if state.tokens:
+                return
+            del self._connection_sessions[owner_thread]
+            connection = state.connection
         try:
-            yield connection
-            connection.commit()
+            if connection.in_transaction:
+                connection.rollback()
         finally:
             connection.close()
 
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        owner_thread = threading.current_thread()
+        with self._session_lock:
+            state = self._connection_sessions.get(owner_thread)
+            connection = state.connection if state is not None else None
+            savepoint = ""
+            if state is not None:
+                state.operation_depth += 1
+                if state.operation_depth > 1:
+                    state.savepoint_sequence += 1
+                    savepoint = f"lilies_operation_{state.savepoint_sequence}"
+        owns_connection = connection is None
+        if connection is None:
+            connection = self._open_connection()
+        savepoint_open = False
+        try:
+            if savepoint:
+                connection.execute(f"SAVEPOINT {savepoint}")
+                savepoint_open = True
+            yield connection
+            if savepoint:
+                connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+                savepoint_open = False
+            else:
+                connection.commit()
+        except BaseException:
+            if savepoint_open:
+                connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            elif not savepoint:
+                connection.rollback()
+            raise
+        finally:
+            if owns_connection:
+                connection.close()
+            elif state is not None:
+                with self._session_lock:
+                    state.operation_depth = max(0, state.operation_depth - 1)
+
     def close(self) -> None:
+        with self._session_lock:
+            if self._connection_sessions:
+                current_thread = threading.current_thread()
+                qualifier = (
+                    " on the current thread"
+                    if current_thread in self._connection_sessions
+                    else " on another thread"
+                )
+                raise RuntimeError(
+                    f"cannot close database while a connection session is active{qualifier}"
+                )
         anchor = self._anchor
         self._anchor = None
         if anchor is not None:

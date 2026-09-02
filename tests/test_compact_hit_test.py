@@ -542,6 +542,31 @@ def test_drag_diagnostics_are_content_free_and_persist_after_release(tmp_path):
     event_filter.close_drag_diagnostics_writer()
 
 
+def test_stationary_native_press_still_persists_path_diagnostics(tmp_path):
+    """A rejected/no-motion installed path must not be indistinguishable from no use."""
+
+    QCoreApplication.instance() or QCoreApplication([])
+    root = _NativeMoveRoot()
+    report_path = tmp_path / "runtime" / "pet-drag-latest.json"
+    event_filter = CompactPointerEventFilter(
+        root,
+        diagnostics_path=report_path,
+    )
+
+    event_filter._reset_drag_diagnostics()
+    assert event_filter.tryStartSystemMove(82) is True
+    event_filter.acknowledgeSystemMoveFinished(82)
+    assert event_filter.wait_for_drag_diagnostics_write(1.0) is True
+
+    report = json.loads(report_path.read_text("utf-8"))
+    assert report["gestureSerial"] == 82
+    assert report["mode"] == "native"
+    assert report["moved"] is False
+    assert report["systemMoveStartReturned"] is True
+    assert report["completionQueuedBy"] == "qml-acknowledge"
+    event_filter.close_drag_diagnostics_writer()
+
+
 def test_drag_diagnostics_writer_is_background_single_writer_and_latest_only(
     tmp_path,
 ):

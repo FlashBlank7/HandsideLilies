@@ -18,6 +18,11 @@ Window {
     property color hairlineColor: "#d4c6b3"
     property color cordColor: "#9f3129"
     property bool suppressed: false
+    // Pointer-critical pet movement temporarily removes this auxiliary
+    // QQuickWindow without changing delivery state or cancelling a reply.
+    // A second visible animated Quick window can change Qt's frame driver on
+    // Windows even though the pet scene itself is frozen.
+    property bool interactionHidden: false
     property real anchorX: Screen.virtualX + Screen.width - 200
     property real anchorY: Screen.virtualY + Screen.height - 280
     // Optional subject bounds let Main keep the bubble clear of the whole
@@ -92,7 +97,7 @@ Window {
     y: Math.max(Screen.virtualY + screenMargin,
                 Math.min(subjectCenterY - height / 2,
                          Screen.virtualY + Screen.height - height - screenMargin))
-    visible: Boolean(bubbleData.visible) && !suppressed
+    visible: Boolean(bubbleData.visible) && !suppressed && !interactionHidden
     color: "transparent"
     title: "莉莉丝"
     flags: Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
@@ -153,7 +158,7 @@ Window {
     onVisibleChanged: {
         if (visible) {
             presentWithoutFocus()
-        } else {
+        } else if (!interactionHidden) {
             resetBubbleUi()
         }
     }
@@ -294,7 +299,8 @@ Window {
                     color: bubbleWindow.effectiveBusy ? "#dffdf8" : cordColor
                     opacity: 0.78
                     SequentialAnimation on opacity {
-                        running: bubbleWindow.effectiveBusy
+                        running: bubbleWindow.visible
+                                 && bubbleWindow.effectiveBusy
                         loops: Animation.Infinite
                         NumberAnimation { from: 0.28; to: 1.0; duration: 720 }
                         NumberAnimation { from: 1.0; to: 0.28; duration: 720 }

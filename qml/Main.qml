@@ -1749,7 +1749,12 @@ Window {
                                     Screen.virtualY + Screen.height - height - 30)
         visible: !diagnosticWindowProbe && !desktop.petPresenceSuppressed
         color: "transparent"
+        // This surface supplies its own soft ground shadow.  Asking DWM to
+        // maintain a second non-client shadow around the entire transparent
+        // tool-window rectangle adds composition work while that rectangle is
+        // moving and can leave a faint square halo on some GPU drivers.
         flags: Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus
+               | Qt.NoDropShadowWindowHint
                | (backend.petFloatMode === "always" ? Qt.WindowStaysOnTopHint : 0)
         property bool compactExpanded: compactWindow.expanded
         property bool compactActionsInteractive: compactWindow.actionsInteractive
@@ -3430,6 +3435,8 @@ Window {
         id: proactiveBubble
         controller: backend.companionService
         suppressed: backend.companionSuppressed
+        interactionHidden: petWindow.manualDragActive
+                           || petWindow.resizeDragActive
         paperColor: desktop.paperLightColor
         inkColor: desktop.inkColor
         mutedColor: desktop.mutedColor
@@ -3447,6 +3454,8 @@ Window {
         id: focusDiversionBubble
         appBackend: backend
         suppressed: backend.dockSuppressed
+        interactionHidden: petWindow.manualDragActive
+                           || petWindow.resizeDragActive
         anchorX: petWindow.presentationWindowX + compactLilith.figureLeft
                  + compactLilith.figureWidth * 0.35
         anchorY: petWindow.presentationWindowY + compactLilith.figureTop
@@ -3487,7 +3496,10 @@ Window {
                 return Math.max(Screen.virtualY + 12, below)
             return Math.max(Screen.virtualY + 12, Number(selectionBubble.bubbleData.y || 0) - height - 18)
         }
-        visible: Boolean(selectionBubble.bubbleData.visible) && !backend.dockSuppressed
+        visible: Boolean(selectionBubble.bubbleData.visible)
+                 && !backend.dockSuppressed
+                 && !petWindow.manualDragActive
+                 && !petWindow.resizeDragActive
         color: "transparent"
         flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus
         onVisibleChanged: { if (visible) raise() }
@@ -3528,7 +3540,8 @@ Window {
                         radius: 4
                         color: selectionBubble.bubbleData.busy ? "#b4423a" : "#9c9488"
                         SequentialAnimation on opacity {
-                            running: Boolean(selectionBubble.bubbleData.busy)
+                            running: selectionBubble.visible
+                                     && Boolean(selectionBubble.bubbleData.busy)
                             loops: Animation.Infinite
                             NumberAnimation { to: 0.25; duration: 720; easing.type: Easing.InOutSine }
                             NumberAnimation { to: 1.0; duration: 720; easing.type: Easing.InOutSine }
@@ -3689,6 +3702,8 @@ Window {
         objectName: "selectionQuestion"
         transientParent: null
         property bool requested: false
+        readonly property bool selectionAvailable:
+            Boolean(selectionBubble.bubbleData.visible)
         width: Math.min(440, Screen.width - 24)
         height: 126
         x: Math.max(Screen.virtualX + 12,
@@ -3701,10 +3716,28 @@ Window {
         color: "transparent"
         flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
 
+        function cancelQuestion() {
+            requested = false
+            selectionQuestionInput.clear()
+        }
+
+        onSelectionAvailableChanged: {
+            // A drag only hides the native helper window; it does not dismiss
+            // the underlying selection.  A real bubble dismissal can happen
+            // while that helper is already hidden, so observe the data edge
+            // directly instead of relying solely on another visibleChanged.
+            if (!selectionAvailable)
+                cancelQuestion()
+        }
+
         onVisibleChanged: {
-            if (!visible) {
-                requested = false
-                selectionQuestionInput.clear()
+            // Hiding auxiliary Quick windows is part of the pointer-critical
+            // drag barrier.  Preserve an in-progress follow-up while the pet
+            // moves; only a genuine dismissal should discard the user's text.
+            if (!visible
+                    && !petWindow.manualDragActive
+                    && !petWindow.resizeDragActive) {
+                cancelQuestion()
             }
         }
 

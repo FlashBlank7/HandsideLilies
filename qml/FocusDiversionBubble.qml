@@ -9,6 +9,7 @@ Window {
     transientParent: null
     required property var appBackend
     property bool suppressed: false
+    property bool interactionHidden: false
     property string uiFontFamily: "Microsoft YaHei UI"
     property real anchorX: Screen.virtualX + Screen.width - 220
     property real anchorY: Screen.virtualY + Screen.height - 300
@@ -44,7 +45,7 @@ Window {
     y: Math.max(Screen.virtualY + screenMargin,
                 Math.min(subjectCenterY - height / 2,
                          Screen.virtualY + Screen.height - height - screenMargin))
-    visible: Boolean(bubbleData.visible) && !suppressed
+    visible: Boolean(bubbleData.visible) && !suppressed && !interactionHidden
     color: "transparent"
     title: "莉莉丝 · 专注"
     flags: Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -80,7 +81,7 @@ def _fail_primary_grab(_hwnd: int):
     raise OSError("synthetic primary capture failure")
 
 
-def test_primary_grab_failure_uses_helper_image_runtime_and_has_capture(
+def test_packaged_helper_bypasses_gui_grab_and_runs_capture_on_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = QCoreApplication.instance() or QCoreApplication([])
@@ -93,8 +94,14 @@ def test_primary_grab_failure_uses_helper_image_runtime_and_has_capture(
     )
     controller = _controller(tmp_path, monkeypatch, context)
     helper_calls: list[tuple[int, int]] = []
+    helper_threads: list[int] = []
+    qt_thread = threading.get_ident()
+
+    def primary_must_not_run(_hwnd: int):
+        raise AssertionError("packaged capture must not run ImageGrab on Qt")
+
     monkeypatch.setattr(
-        companion_controller_module, "capture_window_image", _fail_primary_grab
+        companion_controller_module, "capture_window_image", primary_must_not_run
     )
     monkeypatch.setattr(
         companion_controller_module, "native_capture_helper_available", lambda: True
@@ -103,6 +110,7 @@ def test_primary_grab_failure_uses_helper_image_runtime_and_has_capture(
     def helper(staging, hwnd, process_id, *, cancelled):
         assert not cancelled()
         helper_calls.append((int(hwnd), int(process_id)))
+        helper_threads.append(threading.get_ident())
         path = staging.root / ("capture-" + "b" * 32 + ".png")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"synthetic bounded PNG")
@@ -115,6 +123,7 @@ def test_primary_grab_failure_uses_helper_image_runtime_and_has_capture(
         assert controller._start_generation(context, force=False) is True
         assert _wait_for(app, lambda: bool(controller.bubble) and not controller.busy)
         assert helper_calls == [(42, 8)]
+        assert helper_threads and helper_threads[0] != qt_thread
         assert len(controller.runtime.calls) == 1
         assert controller.runtime.calls[0]["image_path"] is not None
         assert controller.bubble["hasCapture"] is True
@@ -179,13 +188,20 @@ def test_protected_black_frame_never_tries_alternate_capture(
         title="Synthetic protected document",
     )
     controller = _controller(tmp_path, monkeypatch, context)
+    qt_thread = threading.get_ident()
+    capture_threads: list[int] = []
+
+    def legacy_capture(_hwnd: int):
+        capture_threads.append(threading.get_ident())
+        return Image.new("RGB", (64, 48), "black")
+
     monkeypatch.setattr(
         companion_controller_module,
         "capture_window_image",
-        lambda _hwnd: Image.new("RGB", (64, 48), "black"),
+        legacy_capture,
     )
     monkeypatch.setattr(
-        companion_controller_module, "native_capture_helper_available", lambda: True
+        companion_controller_module, "native_capture_helper_available", lambda: False
     )
 
     def protected(*_args, **_kwargs):
@@ -206,6 +222,7 @@ def test_protected_black_frame_never_tries_alternate_capture(
         assert controller.runtime.calls == []
         assert controller.bubble == {}
         assert controller.activityStatus["lastCaptureReason"] == "protected-black"
+        assert capture_threads and capture_threads[0] != qt_thread
     finally:
         controller.shutdown()
 

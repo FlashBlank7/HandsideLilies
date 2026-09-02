@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from ctypes import wintypes
 from pathlib import Path
@@ -892,11 +893,13 @@ class CompactPointerEventFilter(QObject):
         return dict(self._last_drag_diagnostics)
 
     def _schedule_drag_diagnostics_write(self) -> None:
-        if (
-            self._diagnostics_path is None
-            or not bool(self._last_drag_diagnostics.get("moved"))
-        ):
+        if self._diagnostics_path is None or not self._last_drag_diagnostics:
             return
+        # Persist stationary presses too.  A real machine on which the native
+        # move request is rejected would otherwise leave no evidence at all,
+        # making a fallback-path performance failure indistinguishable from a
+        # build that was never exercised.  The write still happens only after
+        # release and on the dedicated writer thread.
         # Collapse release/WM_EXITSIZEMOVE updates into one tiny write after
         # the interaction-critical turn.  The diagnostic must never compete
         # with menu presentation or the first post-drag render frame.
@@ -944,6 +947,21 @@ class CompactPointerEventFilter(QObject):
         """Make a later queued native completion a no-op after QML release."""
 
         if int(gesture_serial) == self._active_system_move_serial:
+            if not self._last_drag_diagnostics:
+                # QWindow::startSystemMove can synchronously release QML's
+                # pointer grab.  If that re-entrant cancellation acknowledges
+                # the native request before the ordinary release callback, keep
+                # a content-free record instead of silently losing the only
+                # clue about which path the installed machine took.
+                self._sample_system_window_position()
+                if not self._completion_queued_by:
+                    self._completion_queued_by = "qml-acknowledge"
+                self.completeGestureDiagnostics(
+                    int(gesture_serial),
+                    self.systemMoveHadMotion(int(gesture_serial)),
+                    bool(self._system_move_start_returned),
+                    True,
+                )
             self._active_system_move_serial = 0
             self._system_move_watchdog_started_at = 0.0
             self._system_move_release_timer.stop()
@@ -1137,6 +1155,7 @@ class QuickWindowResourceLifecycle(QObject):
             window for window in self.windows if window is not self._pet_window
         )
         self._release_timers: dict[QQuickWindow, QTimer] = {}
+        self._visibility_slots: dict[QQuickWindow, Callable[[bool], None]] = {}
         for window in self.windows:
             self._configure(window)
             # The compact pet is intentionally resident and receives a very
@@ -1145,7 +1164,17 @@ class QuickWindowResourceLifecycle(QObject):
             # after the dedicated drag filter had been removed.
             if window is self._pet_window:
                 continue
-            window.installEventFilter(self)
+            # Visibility is the only event this lifecycle owns. A generic
+            # QObject event filter crossed C++ -> Python for every mouse,
+            # resize and paint event in the desktop, Dock and panels merely
+            # to discard it. A typed signal keeps the same release semantics
+            # and removes that cost from all interactive surfaces.
+            slot = (
+                lambda _visible, target=window:
+                    self._on_window_visibility_changed(target)
+            )
+            self._visibility_slots[window] = slot
+            window.visibleChanged.connect(slot)
             if not window.isVisible():
                 self._schedule_release(window)
 
@@ -1169,6 +1198,17 @@ class QuickWindowResourceLifecycle(QObject):
         timer = self._release_timers.get(window)
         if timer is not None:
             timer.stop()
+
+    def _on_window_visibility_changed(self, window: QQuickWindow) -> None:
+        try:
+            visible = bool(window.isVisible())
+        except RuntimeError:
+            return
+        if visible:
+            self._cancel_release(window)
+            self._configure(window)
+        else:
+            self._schedule_release(window)
 
     def _pet_interaction_active(self) -> bool:
         pet = self._pet_window
@@ -1210,16 +1250,6 @@ class QuickWindowResourceLifecycle(QObject):
             # The QML engine may destroy a transient window before this queued
             # callback runs.  There is then nothing left to release.
             return
-
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if isinstance(watched, QQuickWindow):
-            if event.type() == QEvent.Type.Show:
-                self._cancel_release(watched)
-                self._configure(watched)
-            elif event.type() == QEvent.Type.Hide:
-                self._schedule_release(watched)
-        return False
-
 
 class CompanionBubblePresentationProbe(QObject):
     """Bridge a QML presentation request to native ``QWindow`` evidence.
@@ -2166,7 +2196,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.45")
+    app.setApplicationVersion("0.3.46")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:

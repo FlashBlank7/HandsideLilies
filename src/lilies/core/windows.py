@@ -6,7 +6,7 @@ import os
 import uuid
 from ctypes import wintypes
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 
@@ -390,9 +390,34 @@ class _VirtualDesktopProbe:
             return False
 
 
-def enumerate_manageable_window_handles(exclude_process_ids: set[int] | None = None) -> list[int]:
-    """Enumerate task-like windows on the current public virtual desktop."""
+def enumerate_manageable_window_handles(
+    exclude_process_ids: set[int] | None = None,
+    *,
+    should_cancel: Callable[[], bool] | None = None,
+) -> list[int]:
+    """Enumerate task-like windows on the current public virtual desktop.
+
+    ``EnumWindows`` invokes a Python callback for every top-level window.  A
+    catalogue refresh normally runs on a worker, but that callback still has
+    to acquire the GIL.  The optional cooperative cancellation probe lets a
+    pointer-critical pet gesture stop the enumeration at the next callback
+    instead of competing with the GUI for the remainder of the desktop.
+    Existing callers retain the complete, non-cancellable enumeration.
+    """
     if user32 is None:
+        return []
+
+    def cancelled() -> bool:
+        if should_cancel is None:
+            return False
+        try:
+            return bool(should_cancel())
+        except Exception:
+            # A broken cancellation source must not leave an input-critical
+            # worker running indefinitely.
+            return True
+
+    if cancelled():
         return []
     excluded = set(exclude_process_ids or ())
     excluded.add(os.getpid())
@@ -401,6 +426,8 @@ def enumerate_manageable_window_handles(exclude_process_ids: set[int] | None = N
     with _VirtualDesktopProbe() as virtual_desktop:
 
         def callback(hwnd: int, _lparam: int) -> bool:
+            if cancelled():
+                return False
             handle = int(hwnd)
             if not user32.IsWindowVisible(hwnd):
                 return True

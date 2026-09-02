@@ -232,8 +232,8 @@ def test_smart_capture_rechecks_same_hwnd_after_capture(tmp_path, monkeypatch) -
     try:
         # Automatic generation has already passed the timing gate in
         # ``_consider``; this test isolates the post-capture identity recheck.
-        assert controller._start_generation(initial, force=False) is False
-        app.processEvents()
+        assert controller._start_generation(initial, force=False) is True
+        assert _wait_for(app, lambda: not controller.busy)
         assert stage_calls == []
         assert generated == []
         assert controller.busy is False
@@ -1424,16 +1424,16 @@ def test_queued_screen_observation_rechecks_live_title_before_model_call(
         title=replacement_title,
     )
     live_context = [initial]
-    reader_calls = 0
     encoded_context_read = threading.Event()
 
     def read_context(_hwnd: int) -> ForegroundContext:
-        nonlocal reader_calls
         # Capture the return value before waking the test so changing the
         # mutable reader source cannot affect the completed encoding check.
         current = live_context[0]
-        reader_calls += 1
-        if reader_calls == 3:
+        # Capture acquisition now runs in the worker and therefore adds its
+        # own before/after identity reads.  Wake only on the post-encoding
+        # fence: the staged file already exists at that point.
+        if staged_path.is_file():
             encoded_context_read.set()
         return current
 
@@ -1461,7 +1461,7 @@ def test_queued_screen_observation_rechecks_live_title_before_model_call(
     try:
         assert controller._start_generation(initial, force=False) is True
         assert encoded_context_read.wait(1.0)
-        assert staged_path.is_file()
+        assert _wait_for(app, staged_path.is_file)
         assert controller.activityStatus["lastCaptureOutcome"] == "staged"
         assert controller.activityStatus["captureAttempted"] is True
         assert controller.activityStatus["imageSubmitted"] is False

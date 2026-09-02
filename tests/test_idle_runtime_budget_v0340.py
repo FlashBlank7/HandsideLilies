@@ -5,11 +5,13 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
 
 from lilies.backend import Backend
 from lilies.core.focus_diversion import FocusDiversionMonitor
+from lilies.core.window_catalog import WindowCatalogRefreshCancelled
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -156,6 +158,132 @@ def test_75ms_projection_work_is_suspended_during_pet_drag(
         app.processEvents()
 
 
+def test_only_pointer_critical_pet_interactions_suspend_companion(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    transitions: list[bool] = []
+    try:
+        backend._v03_timer.stop()
+        monkeypatch.setattr(
+            backend.companion,
+            "set_interaction_suspended",
+            lambda value: transitions.append(bool(value)),
+        )
+        monkeypatch.setattr(
+            backend.window_catalog,
+            "pump",
+            lambda *_args, **_kwargs: False,
+        )
+
+        # Opening the radial menu is still a general UI interaction lock, but
+        # it must not suspend the Companion action hosted by that same menu.
+        backend.setPetInteractionLock("menu", True)
+        assert transitions == []
+        assert backend._pet_interaction_locked is True
+        assert backend._pet_pointer_critical_locked is False
+
+        backend.setPetInteractionLock("character", True)
+        backend.setPetInteractionLock("resize", True)
+        backend.setPetInteractionLock("character", False)
+
+        assert transitions == [True]
+        assert backend._companion_interaction_suspended is True
+        assert backend._pet_pointer_critical_locked is True
+        assert backend._pet_interaction_locked is True
+
+        backend.setPetInteractionLock("resize", False)
+        assert transitions == [True, False]
+        assert backend._companion_interaction_suspended is False
+        assert backend._pet_pointer_critical_locked is False
+        # The menu still owns the broader selection/avoidance lock; changing
+        # critical ownership must therefore be independent of the aggregate
+        # boolean edge.
+        assert backend._pet_interaction_locked is True
+
+        backend.setPetInteractionLock("menu", False)
+        assert backend._pet_interaction_locked is False
+        assert backend._pet_interaction_grace_until > time.monotonic()
+    finally:
+        backend.clearPetInteractionLocks()
+        backend.shutdown()
+        app.processEvents()
+
+
+def test_backend_gui_database_session_avoids_recurring_connection_churn(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    opened = 0
+    original_open = backend.database._open_connection
+
+    def counted_open():
+        nonlocal opened
+        opened += 1
+        return original_open()
+
+    monkeypatch.setattr(backend.database, "_open_connection", counted_open)
+    try:
+        owner = threading.current_thread()
+        assert owner in backend.database._connection_sessions
+        connection = backend.database._connection_sessions[owner].connection
+
+        # These are the same independent reads exercised by the one-second
+        # productivity scheduler. They must borrow one already-open GUI
+        # connection instead of reopening the F: database for every service.
+        backend.focus.status()
+        backend.reading_sessions.status()
+        backend.reminders.list()
+        backend.event_outbox.pending(limit=10)
+        backend.narrative.pending(limit=1)
+
+        assert opened == 0
+        assert backend.database._connection_sessions[owner].connection is connection
+    finally:
+        backend.shutdown()
+        # exitAndRestore calls shutdown before QApplication.aboutToQuit does;
+        # a second call must remain a safe no-op after the session is closed.
+        backend.shutdown()
+        assert backend.database._connection_sessions == {}
+        app.processEvents()
+
+
+def test_backend_shutdown_failure_closes_gui_session_and_can_retry(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    original_shutdown = backend.companion.shutdown
+    attempts = 0
+
+    def fail_once() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("synthetic companion shutdown failure")
+        original_shutdown()
+
+    monkeypatch.setattr(backend.companion, "shutdown", fail_once)
+
+    with pytest.raises(RuntimeError, match="synthetic companion"):
+        backend.shutdown()
+    assert backend._shutdown_complete is False
+    assert backend._shutdown_in_progress is False
+    assert backend._database_session is None
+    assert backend.database._connection_sessions == {}
+
+    backend.shutdown()
+    assert attempts == 2
+    assert backend._shutdown_complete is True
+    backend.shutdown()
+    app.processEvents()
+
+
 def test_slow_window_catalog_enumeration_never_blocks_gui_pump_and_coalesces(
     tmp_path, monkeypatch
 ) -> None:
@@ -193,6 +321,109 @@ def test_slow_window_catalog_enumeration_never_blocks_gui_pump_and_coalesces(
         assert len(worker_threads) == 1
     finally:
         release.set()
+        backend.shutdown()
+        app.processEvents()
+
+
+def test_explicit_window_refresh_while_worker_is_busy_runs_one_fresh_snapshot(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    first_started = threading.Event()
+    release_first = threading.Event()
+    worker_threads: list[int] = []
+    try:
+        backend._v03_timer.stop()
+
+        def controlled_refresh(*_args, **_kwargs):
+            worker_threads.append(threading.get_ident())
+            if len(worker_threads) == 1:
+                first_started.set()
+                assert release_first.wait(1.0)
+            return []
+
+        monkeypatch.setattr(backend.window_catalog, "refresh", controlled_refresh)
+        assert backend._request_window_catalog_refresh() is True
+        assert first_started.wait(0.5)
+
+        # Several explicit clicks while one native snapshot is in flight are
+        # durable but coalesced. They must result in exactly one newer pass.
+        backend.refreshWindows()
+        backend.refreshWindows()
+        backend.refreshWindows()
+        assert backend._window_catalog_refresh_queued is True
+
+        release_first.set()
+        deadline = time.monotonic() + 1.5
+        while (
+            backend._window_catalog_refresh_running or len(worker_threads) < 2
+        ) and time.monotonic() < deadline:
+            QTest.qWait(10)
+
+        assert len(worker_threads) == 2
+        assert all(thread_id != threading.get_ident() for thread_id in worker_threads)
+        assert backend._window_catalog_refresh_running is False
+        assert backend._window_catalog_refresh_queued is False
+    finally:
+        release_first.set()
+        backend.shutdown()
+        app.processEvents()
+
+
+def test_drag_cancels_inflight_catalogue_and_retries_only_after_release(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    first_started = threading.Event()
+    first_cancelled = threading.Event()
+    calls: list[int] = []
+    try:
+        backend._v03_timer.stop()
+
+        def cooperative_refresh(*_args, **kwargs):
+            calls.append(threading.get_ident())
+            if len(calls) > 1:
+                return []
+            should_cancel = kwargs["should_cancel"]
+            first_started.set()
+            deadline = time.monotonic() + 1.0
+            while not should_cancel() and time.monotonic() < deadline:
+                time.sleep(0.002)
+            assert should_cancel() is True
+            first_cancelled.set()
+            raise WindowCatalogRefreshCancelled
+
+        monkeypatch.setattr(backend.window_catalog, "refresh", cooperative_refresh)
+        assert backend._request_window_catalog_refresh() is True
+        assert first_started.wait(0.5)
+
+        backend.setPetInteractionLock("drag", True)
+        assert first_cancelled.wait(0.5)
+        assert backend._window_catalog_refresh_queued is True
+
+        # Let the queued Qt signal record the cancelled result. No replacement
+        # worker may start while the pointer-critical lock is held.
+        QTest.qWait(30)
+        assert len(calls) == 1
+
+        backend.setPetInteractionLock("drag", False)
+        backend._pet_interaction_grace_until = 0.0
+        backend._pump_v03()
+        deadline = time.monotonic() + 1.0
+        while (
+            backend._window_catalog_refresh_running or len(calls) < 2
+        ) and time.monotonic() < deadline:
+            QTest.qWait(10)
+
+        assert len(calls) == 2
+        assert backend._window_catalog_refresh_running is False
+        assert backend._window_catalog_refresh_queued is False
+    finally:
+        backend.clearPetInteractionLocks()
         backend.shutdown()
         app.processEvents()
 

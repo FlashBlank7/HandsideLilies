@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import math
 import os
 import threading
 from ctypes import wintypes
@@ -14,6 +15,7 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QPointF,
+    QRect,
     QSize,
     Qt,
     Signal,
@@ -170,6 +172,7 @@ def test_native_character_press_is_claimed_before_qml_mouse_delivery():
     class _NativePressController:
         def __init__(self):
             self.queued = []
+            self.pointer_packets = 0
             self.releases = 0
 
         def cachedCharacterHit(
@@ -182,15 +185,32 @@ def test_native_character_press_is_claimed_before_qml_mouse_delivery():
         ):
             return 94 <= px <= 226 and 74 <= py <= 386
 
-        def queueNativeCharacterPress(self, global_x, global_y):
+        def queueNativeCharacterPress(
+            self, global_x, global_y, physical_x, physical_y
+        ):
             if self.queued:
                 return False
-            self.queued.append((float(global_x), float(global_y)))
+            self.queued.append(
+                (
+                    float(global_x),
+                    float(global_y),
+                    float(physical_x),
+                    float(physical_y),
+                )
+            )
+            return True
+
+        def recordQueuedNativeCharacterPointer(self, _physical_x, _physical_y):
+            self.pointer_packets += 1
             return True
 
         @property
         def native_character_press_active(self):
             return bool(self.queued)
+
+        @property
+        def native_character_prestart_active(self):
+            return bool(self.queued) and self.releases == 0
 
         def handleNativeCharacterRelease(self):
             self.releases += 1
@@ -211,18 +231,42 @@ def test_native_character_press_is_claimed_before_qml_mouse_delivery():
     press.hWnd = 4242
     press.message = CompactHitTestFilter.WM_LBUTTONDOWN
     press.lParam = (300 << 16) | 240
+    press.pt.x = -80
+    press.pt.y = 440
     assert hit_test.nativeEventFilter(
         b"windows_generic_MSG", ctypes.addressof(press)
     ) == (True, 0)
-    assert controller.queued == [(-160.0, 340.0)]
+    assert controller.queued == [(-160.0, 340.0, -80.0, 440.0)]
+
+    move = wintypes.MSG()
+    move.hWnd = 4242
+    move.message = CompactHitTestFilter.WM_MOUSEMOVE
+    move.lParam = (330 << 16) | 270
+    move.pt.x = -50
+    move.pt.y = 470
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(move)
+    ) == (True, 0)
+    assert controller.pointer_packets == 1
 
     release = wintypes.MSG()
     release.hWnd = 4242
     release.message = CompactHitTestFilter.WM_LBUTTONUP
+    release.lParam = move.lParam
+    release.pt.x = move.pt.x
+    release.pt.y = move.pt.y
     assert hit_test.nativeEventFilter(
         b"windows_generic_MSG", ctypes.addressof(release)
     ) == (True, 0)
     assert controller.releases == 1
+    assert controller.pointer_packets == 2
+
+    move.pt.x = 900
+    move.pt.y = 900
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(move)
+    ) == (False, 0)
+    assert controller.pointer_packets == 2
 
     # Windows reports the second press of a double-click as DBLCLK, not DOWN.
     # It must enter the same owner instead of falling back to a second QML
@@ -231,7 +275,33 @@ def test_native_character_press_is_claimed_before_qml_mouse_delivery():
     assert hit_test.nativeEventFilter(
         b"windows_generic_MSG", ctypes.addressof(press)
     ) == (True, 0)
-    assert controller.queued == [(-160.0, 340.0)]
+    assert controller.queued == [(-160.0, 340.0, -80.0, 440.0)]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="exercises the Windows MSG bridge")
+def test_native_hover_skips_prestart_coordinate_mapping() -> None:
+    hit_test = CompactHitTestFilter(
+        _Root(), _Backend(), native_window_id=4242
+    )
+
+    class _IdleController:
+        native_character_prestart_active = False
+
+        def recordQueuedNativeCharacterPointer(self, _x, _y):
+            raise AssertionError("idle hover must not enter the recorder")
+
+    hit_test.native_move_controller = _IdleController()
+    hit_test._native_client_global_point = lambda _message: (_ for _ in ()).throw(
+        AssertionError("idle hover must not map coordinates")
+    )
+    move = wintypes.MSG()
+    move.hWnd = 4242
+    move.message = CompactHitTestFilter.WM_MOUSEMOVE
+    move.lParam = (330 << 16) | 270
+
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(move)
+    ) == (False, 0)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="exercises the Windows MSG bridge")
@@ -263,8 +333,12 @@ def test_native_character_press_does_not_claim_accessory_or_direct_mode():
         ):
             return True
 
-        def queueNativeCharacterPress(self, global_x, global_y):
-            self.queued.append((float(global_x), float(global_y)))
+        def queueNativeCharacterPress(
+            self, global_x, global_y, physical_x, physical_y
+        ):
+            self.queued.append(
+                (global_x, global_y, physical_x, physical_y)
+            )
             return True
 
     root = _NativePressRoot()
@@ -591,6 +665,8 @@ class _QueuedNativePressRoot(QObject):
         self.setProperty("manualDragActive", False)
         self.start_result = bool(start_result)
         self.begin_calls: list[tuple[float, float]] = []
+        self.prime_calls: list[int] = []
+        self.latch_calls: list[int] = []
         self.start_calls: list[int] = []
         self.finish_calls: list[int] = []
         self.cancel_calls: list[int] = []
@@ -606,6 +682,14 @@ class _QueuedNativePressRoot(QObject):
     def startQueuedNativeCharacterPress(self, serial: int) -> bool:
         self.start_calls.append(int(serial))
         return self.start_result
+
+    def primeQueuedNativeCharacterPress(self, serial: int) -> bool:
+        self.prime_calls.append(int(serial))
+        return True
+
+    def latchQueuedNativeCharacterMotion(self, serial: int) -> bool:
+        self.latch_calls.append(int(serial))
+        return True
 
     def finishQueuedNativeCharacterPress(self, serial: int) -> bool:
         self.finish_calls.append(int(serial))
@@ -651,6 +735,123 @@ def test_release_before_queued_start_is_preserved_as_stationary_click() -> None:
     assert root.start_calls == []
     assert root.finish_calls == [91]
     assert root.property("manualDragActive") is False
+
+
+def test_motion_before_queued_start_is_primed_once_before_native_move() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _QueuedNativePressRoot()
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._left_button_is_down = lambda: True
+
+    event_filter._logical_global_from_physical_screen = lambda x, y: (x, y)
+    assert event_filter.queueNativeCharacterPress(
+        120.0, 85.0, 120.0, 85.0
+    ) is True
+    assert event_filter.recordQueuedNativeCharacterPointer(156.0, 109.0) is True
+    app.processEvents()
+
+    assert root.begin_calls == [(120.0, 85.0)]
+    assert root.prime_calls == [91]
+    assert root.latch_calls == [91]
+    assert root.start_calls == [91]
+    assert event_filter._diagnostic_prestart_pointer_samples == 1
+    assert event_filter._diagnostic_prestart_max_distance_logical == pytest.approx(
+        math.hypot(36.0, 24.0)
+    )
+
+
+def test_fast_motion_release_before_queued_start_keeps_latest_point() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _QueuedNativePressRoot()
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._left_button_is_down = lambda: False
+
+    event_filter._logical_global_from_physical_screen = lambda x, y: (x, y)
+    assert event_filter.queueNativeCharacterPress(
+        120.0, 85.0, 120.0, 85.0
+    ) is True
+    assert event_filter.recordQueuedNativeCharacterPointer(180.0, 125.0) is True
+    assert event_filter.handleNativeCharacterRelease() is True
+    app.processEvents()
+
+    assert root.begin_calls == [(120.0, 85.0)]
+    assert root.prime_calls == []
+    assert root.start_calls == []
+    assert root.latch_calls == [91]
+    assert root.finish_calls == [91]
+    assert event_filter._diagnostic_release_before_queued_start is True
+    assert event_filter._diagnostic_prestart_pointer_samples == 1
+    assert event_filter._diagnostic_prestart_max_distance_logical == pytest.approx(
+        math.hypot(60.0, 40.0)
+    )
+    assert event_filter.takeLatestPointerEvent(0) == {
+        "available": True,
+        "serial": 1,
+        "x": 180.0,
+        "y": 125.0,
+    }
+
+
+def test_physical_screen_point_maps_across_qt_dpi_islands() -> None:
+    class _Screen:
+        def __init__(self, rect: QRect, dpr: float) -> None:
+            self._rect = rect
+            self._dpr = dpr
+
+        def geometry(self) -> QRect:
+            return self._rect
+
+        def devicePixelRatio(self) -> float:
+            return self._dpr
+
+    screens = [
+        _Screen(QRect(0, 0, 2560, 1600), 1.5),
+        _Screen(QRect(3840, 0, 1920, 1080), 1.0),
+        _Screen(QRect(-1920, -1080, 1080, 1920), 1.0),
+    ]
+    mapper = CompactPointerEventFilter._logical_global_from_physical_screen
+
+    assert mapper(1500.0, 900.0, screens) == pytest.approx((1000.0, 600.0))
+    assert mapper(4320.0, 540.0, screens) == pytest.approx((4320.0, 540.0))
+    assert mapper(-1500.0, -900.0, screens) == pytest.approx((-1500.0, -900.0))
+
+
+def test_release_closes_prestart_pointer_stream_before_next_move() -> None:
+    root = _QueuedNativePressRoot()
+    event_filter = CompactPointerEventFilter(root)
+
+    assert event_filter.queueNativeCharacterPress(
+        120.0, 85.0, 120.0, 85.0
+    ) is True
+    assert event_filter.recordQueuedNativeCharacterPointer(180.0, 125.0)
+    assert event_filter.handleNativeCharacterRelease() is True
+    before = event_filter._queued_native_character_latest_physical
+
+    assert event_filter.native_character_prestart_active is False
+    assert event_filter.recordQueuedNativeCharacterPointer(900.0, 900.0) is False
+    assert event_filter._queued_native_character_latest_physical == before
+
+
+def test_prestart_move_out_and_back_stays_a_drag() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _QueuedNativePressRoot()
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._logical_global_from_physical_screen = lambda x, y: (x, y)
+    event_filter._left_button_is_down = lambda: False
+
+    assert event_filter.queueNativeCharacterPress(
+        120.0, 85.0, 120.0, 85.0
+    ) is True
+    assert event_filter.recordQueuedNativeCharacterPointer(150.0, 85.0)
+    assert event_filter.recordQueuedNativeCharacterPointer(120.0, 85.0)
+    assert event_filter.handleNativeCharacterRelease() is True
+    app.processEvents()
+
+    assert root.latch_calls == [91]
+    assert root.finish_calls == [91]
+    assert event_filter._diagnostic_prestart_motion_latched is True
+    assert event_filter._diagnostic_prestart_max_distance_logical == 0.0
+    assert event_filter._diagnostic_prestart_max_distance_physical == 30.0
 
 
 def test_failed_native_start_release_watchdog_cannot_strand_gesture() -> None:

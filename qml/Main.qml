@@ -2130,6 +2130,31 @@ Window {
             return startPreparedCharacterGesture(gestureSerial)
         }
 
+        function primeQueuedNativeCharacterPress(gestureSerial) {
+            var serial = Number(gestureSerial)
+            if (!manualDragActive || serial <= 0
+                    || serial !== nativeSystemMoveGestureSerial)
+                return false
+            // A fast hand can move before the zero-delay native-start timer
+            // receives its Qt turn.  Consume that coalesced point once and
+            // place the live window under the original grabbed point before
+            // the static proxy takes over.  Native start remains the next,
+            // single authority; this priming step must never start it itself.
+            return followCapturedPointerEventInternal(false)
+        }
+
+        function latchQueuedNativeCharacterMotion(gestureSerial) {
+            var serial = Number(gestureSerial)
+            if (!manualDragActive || serial <= 0
+                    || serial !== nativeSystemMoveGestureSerial)
+                return false
+            // A fast out-and-back flick can end close to its press point.
+            // Preserve the event-time maximum so it remains a drag and never
+            // becomes an accidental radial-menu click.
+            dragMoved = true
+            return true
+        }
+
         function finishQueuedNativeCharacterPress(gestureSerial) {
             var serial = Number(gestureSerial)
             if (!manualDragActive || serial <= 0)
@@ -2229,9 +2254,9 @@ Window {
             if (expected > 0 && expected !== nativeSystemMoveGestureSerial)
                 return false
             if (!nativeSystemMoveActive) {
-                followPendingPointerEvent()
-                if (!followCapturedPointerEvent())
-                    followGlobalPointerNow()
+                followPendingPointerEventInternal(false)
+                if (!followCapturedPointerEventInternal(false))
+                    followGlobalPointerSample(true, false)
             }
             // Item-local coordinates can change while a habitat pose or its
             // mirror/scale changes under a stationary pointer.  Only global
@@ -2349,6 +2374,10 @@ Window {
         }
 
         function followPointerAt(cursorX, cursorY) {
+            followPointerAtInternal(cursorX, cursorY, true)
+        }
+
+        function followPointerAtInternal(cursorX, cursorY, allowNativeStart) {
             if (!manualDragActive || nativeSystemMoveStartPending
                     || nativeSystemMoveActive)
                 return
@@ -2370,7 +2399,7 @@ Window {
                 // The normal Windows path already requested ownership during
                 // the press event. A late retry is only a compatibility
                 // guard; do not submit duplicate geometry in this frame.
-                if (tryNativeSystemMove())
+                if (allowNativeStart !== false && tryNativeSystemMove())
                     return
             }
             if (nativeSystemMoveStartPending || nativeSystemMoveActive)
@@ -2453,16 +2482,24 @@ Window {
         }
 
         function followPendingPointerEvent() {
+            return followPendingPointerEventInternal(true)
+        }
+
+        function followPendingPointerEventInternal(allowNativeStart) {
             if (!manualDragActive || !dragPointerEventPending)
                 return false
             dragPointerEventPending = false
             var cursor = consumePointerEvent(
                 dragFallbackPointerX, dragFallbackPointerY)
-            followPointerAt(cursor.x, cursor.y)
+            followPointerAtInternal(cursor.x, cursor.y, allowNativeStart)
             return true
         }
 
         function followCapturedPointerEvent() {
+            return followCapturedPointerEventInternal(true)
+        }
+
+        function followCapturedPointerEventInternal(allowNativeStart) {
             if (!manualDragActive)
                 return false
             // The production bridge coalesces native samples in Python and
@@ -2475,11 +2512,11 @@ Window {
             var cursor = consumePointerEvent(0, 0)
             if (!cursor.captured)
                 return false
-            followPointerAt(cursor.x, cursor.y)
+            followPointerAtInternal(cursor.x, cursor.y, allowNativeStart)
             return true
         }
 
-        function followGlobalPointerSample(forceSample) {
+        function followGlobalPointerSample(forceSample, allowNativeStart) {
             if (!manualDragActive)
                 return
             // This is a safety net for coalesced/missing window-system frames,
@@ -2489,18 +2526,19 @@ Window {
                     && Date.now() - lastCapturedPointerEventAt < 20)
                 return
             var cursor = backend.cursorPosition()
-            followPointerAt(Number(cursor.x), Number(cursor.y))
+            followPointerAtInternal(
+                Number(cursor.x), Number(cursor.y), allowNativeStart)
         }
 
         function followGlobalPointer() {
-            followGlobalPointerSample(false)
+            followGlobalPointerSample(false, true)
         }
 
         function followPointerFrame() {
             if (!manualDragActive || nativeSystemMoveStartPending
                     || nativeSystemMoveActive)
                 return
-            if (followPendingPointerEvent())
+            if (followPendingPointerEventInternal(true))
                 return
             // MouseArea can miss a position callback while the native tool
             // window itself is moving, even though the QWindow event filter
@@ -2509,12 +2547,12 @@ Window {
             // waiting. This removes the short "held back, then catch up"
             // feeling without letting stale item-local coordinates move the
             // window twice.
-            if (!followCapturedPointerEvent())
+            if (!followCapturedPointerEventInternal(true))
                 followGlobalPointer()
         }
 
         function followGlobalPointerNow() {
-            followGlobalPointerSample(true)
+            followGlobalPointerSample(true, true)
         }
 
         FrameAnimation {

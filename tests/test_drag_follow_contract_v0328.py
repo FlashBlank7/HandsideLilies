@@ -46,7 +46,8 @@ def test_high_rate_pointer_events_are_coalesced_to_one_move_per_drag_frame() -> 
 
     assert "dragPointerEventPending = true" in event_handler
     assert "followPointerAt(" not in event_handler
-    assert "if (followPendingPointerEvent())" in frame_handler
+    assert "if (followPendingPointerEventInternal(true))" in frame_handler
+    assert "followCapturedPointerEventInternal(true)" in frame_handler
     assert "nativeSystemMoveStartPending" in frame_handler
     assert "nativeSystemMoveActive" in frame_handler
     frame_animation_start = source.index("FrameAnimation {", frame_end)
@@ -64,6 +65,31 @@ def test_high_rate_pointer_events_are_coalesced_to_one_move_per_drag_frame() -> 
     assert "self._latest_global_x" in event_filter
     assert 'self.root.setProperty("capturedPointerGlobalX"' not in event_filter
     assert "def takeLatestPointerEvent(" in app_source
+
+
+def test_prestart_flick_is_coalesced_and_release_never_starts_native_move() -> None:
+    source = _main_source()
+    prime_start = source.index("function primeQueuedNativeCharacterPress(")
+    prime_end = source.index("function finishQueuedNativeCharacterPress(", prime_start)
+    prime = source[prime_start:prime_end]
+    finish_start = source.index("function finishCharacterGesture(")
+    finish_end = source.index("function finalizeMovedCharacterGesture(", finish_start)
+    finish = source[finish_start:finish_end]
+
+    assert "followCapturedPointerEventInternal(false)" in prime
+    assert "followPendingPointerEventInternal(false)" in finish
+    assert "followCapturedPointerEventInternal(false)" in finish
+    assert "followGlobalPointerSample(true, false)" in finish
+
+    app_source = (ROOT / "src" / "lilies" / "app.py").read_text("utf-8")
+    assert "def recordQueuedNativeCharacterPointer(" in app_source
+    assert "self._queued_native_character_prestart_samples + 1" in app_source
+    assert '"releaseBeforeQueuedStart"' in app_source
+    assert '"prestartMaxDistanceLogical"' in app_source
+    assert '"prestartMaxDistancePhysical"' in app_source
+    assert '"prestartMotionLatched"' in app_source
+    assert '"prestartScreenMapMiss"' in app_source
+    assert "function latchQueuedNativeCharacterMotion(" in source
 
 
 def test_native_move_is_consumed_after_press_without_swallowing_release() -> None:

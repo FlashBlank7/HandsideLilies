@@ -176,7 +176,7 @@ def test_fragmented_envelope_is_acked_before_delivery_on_transport_thread(
     assert fake.timeout == 1.0
     assert fake.request.startswith(b"GET /link?ticket=a%2Fb HTTP/1.1\r\n")
     assert b"Host: socket.example.test:444\r\n" in fake.request
-    assert b"User-Agent: lilies-in-the-box/0.3.52\r\n" in fake.request
+    assert b"User-Agent: lilies-in-the-box/0.3.53\r\n" in fake.request
     assert b"Origin:" not in fake.request
 
     sends = [event for event in fake.events if event[0] == "send"]

@@ -1,5 +1,11 @@
 # Lilies in the box
 
+### v0.3.53 快拖事件时交接收口
+
+- 原生按下桥现在执行 `quick-drag event-time handoff`：零延迟 Qt 启动前收到的 `WM_MOUSEMOVE/UP` 仍归同一按下会话，并携带消息发生时的物理屏幕坐标。
+- 预启动样本按目标 `QScreen/DPR` 映射后，只预热窗口位置而不越权启动原生移动；快速移出再甩回会锁存事件时最大位移，释放先到也不会误开径向菜单或丢掉首段位移。
+- 版本资源、主题、安装器、构建与四份候选证据统一为 v0.3.53；`promote_v0353.ps1` 以 SHA-256 固定 v0.3.52 及更早历史包装器，并可通过 `promote_v0353.ps1 -ValidateOnly` 重放相同发布门禁。
+
 ### v0.3.52 原生拖动会话与释放链收口
 
 - Windows 原生系统移动以单调 `session generation` 绑定当前 HWND；嵌套回调和迟到的 WinEvent 不能复活已退休手势，也不会把旧窗口事件归给新拖动。
@@ -403,19 +409,19 @@ cd "F:\code\Lilies in the box"
 
 这是一键发布证据构建：完成 PyInstaller 后会按依赖顺序重新生成并检查以下四份报告，任一步失败都会停止，旧报告会先被安全移除：
 
-1. `artifacts\packaged-self-test-v0352.json`
-2. `artifacts\packaged-compact-resource-v0352.json`
-3. `artifacts\packaged-windows-startup-v0352.json`
-4. `artifacts\pose-click-mask-v0352.json`
+1. `artifacts\packaged-self-test-v0353.json`
+2. `artifacts\packaged-compact-resource-v0353.json`
+3. `artifacts\packaged-windows-startup-v0353.json`
+4. `artifacts\pose-click-mask-v0353.json`
 
 需要逐步排查时，可用与一键脚本相同的顺序手动执行：
 
 ```powershell
-& .\dist\LiliesInTheBox\LiliesInTheBox.exe --self-test .\artifacts\packaged-self-test-v0352.json
+& .\dist\LiliesInTheBox\LiliesInTheBox.exe --self-test .\artifacts\packaged-self-test-v0353.json
 .\scripts\verify_packaged_compact_resources.ps1
 .\scripts\verify_packaged_windows_startup.ps1
 & .\.venv\Scripts\python.exe .\scripts\verify_pose_click_masks.py
-.\scripts\promote_v0352.ps1 -ValidateOnly
+.\scripts\promote_v0353.ps1 -ValidateOnly
 ```
 
 最后一条只验证、不复制：它与正式 promotion 使用同一套 EXE 版本、AdditionalFiles、三份打包报告、姿态点击报告与内容无关原生捕获探针门禁。只有全部通过后才运行不带 `-ValidateOnly` 的正式提升。

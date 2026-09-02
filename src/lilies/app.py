@@ -28,7 +28,15 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPainter, QPen, QPixmap, QWindow
+from PySide6.QtGui import (
+    QColor,
+    QIcon,
+    QMouseEvent,
+    QPainter,
+    QPen,
+    QPixmap,
+    QWindow,
+)
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
@@ -62,6 +70,7 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
     """Let clicks pass through the invisible part of the compact tool window."""
 
     WM_NCHITTEST = 0x0084
+    WM_MOUSEMOVE = 0x0200
     WM_LBUTTONDOWN = 0x0201
     WM_LBUTTONUP = 0x0202
     WM_LBUTTONDBLCLK = 0x0203
@@ -545,6 +554,36 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             for bounds in self._native_control_bounds
         )
 
+    def _native_client_global_point(
+        self,
+        message: wintypes.MSG,
+    ) -> tuple[float, float]:
+        """Map one client mouse packet to Qt logical desktop coordinates.
+
+        The native callback reads only its cached window origin and DPR.  It
+        must not enter the QML object graph or call ``QWindow.winId()`` while
+        User32 is dispatching the packet.
+        """
+
+        packed = int(message.lParam)
+        physical_x = ctypes.c_short(packed & 0xFFFF).value
+        physical_y = ctypes.c_short((packed >> 16) & 0xFFFF).value
+        logical_x, logical_y = self._logical_point(
+            physical_x,
+            physical_y,
+            self._window_dpr_from_hwnd(int(message.hWnd)),
+        )
+        origin_x, origin_y = self._native_window_origin
+        return origin_x + logical_x, origin_y + logical_y
+
+    @staticmethod
+    def _native_message_screen_point(
+        message: wintypes.MSG,
+    ) -> tuple[float, float]:
+        """Return the event-time physical screen point without entering Qt."""
+
+        return float(message.pt.x), float(message.pt.y)
+
     def _native_accepts_point(self, px: float, py: float) -> bool:
         if self._native_point_hits_control(px, py):
             return True
@@ -675,6 +714,40 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
                 except (AttributeError, RuntimeError, TypeError, ValueError):
                     pass
             return False, 0
+        if msg.message == self.WM_MOUSEMOVE:
+            controller = self.native_move_controller
+            if not bool(
+                getattr(
+                    controller,
+                    "native_character_prestart_active",
+                    False,
+                )
+            ):
+                # Keep ordinary hover and sustained drag packets off this
+                # bridge completely.  In particular, do not ask User32 for a
+                # DPR or map coordinates at 500/1000 Hz unless a consumed raw
+                # DOWN is genuinely waiting for its first Qt turn.
+                return False, 0
+            recorder = getattr(
+                controller,
+                "recordQueuedNativeCharacterPointer",
+                None,
+            )
+            if callable(recorder):
+                try:
+                    physical_x, physical_y = self._native_message_screen_point(
+                        msg
+                    )
+                    if bool(recorder(physical_x, physical_y)):
+                        # The original client DOWN was consumed before Qt
+                        # created a MouseArea grab.  Keep this short pre-start
+                        # stream under the same owner.  Store the MSG's
+                        # event-time physical screen point only; the next Qt
+                        # turn maps it through the destination QScreen/DPR.
+                        return True, 0
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+            return False, 0
         if msg.message in {
             self.WM_LBUTTONDOWN,
             self.WM_LBUTTONUP,
@@ -684,6 +757,24 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             if controller is None:
                 return False, 0
             if msg.message == self.WM_LBUTTONUP:
+                recorder = getattr(
+                    controller,
+                    "recordQueuedNativeCharacterPointer",
+                    None,
+                )
+                if callable(recorder):
+                    try:
+                        physical_x, physical_y = (
+                            self._native_message_screen_point(msg)
+                        )
+                        recorder(physical_x, physical_y)
+                    except (
+                        AttributeError,
+                        RuntimeError,
+                        TypeError,
+                        ValueError,
+                    ):
+                        pass
                 try:
                     handled = bool(controller.handleNativeCharacterRelease())
                 except (AttributeError, RuntimeError, TypeError, ValueError):
@@ -720,11 +811,17 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             ) is not True:
                 return False, 0
             try:
-                origin_x, origin_y = self._native_window_origin
-                global_x = origin_x + logical_x
-                global_y = origin_y + logical_y
+                global_x, global_y = self._native_client_global_point(msg)
+                physical_screen_x, physical_screen_y = (
+                    self._native_message_screen_point(msg)
+                )
                 queued = bool(
-                    controller.queueNativeCharacterPress(global_x, global_y)
+                    controller.queueNativeCharacterPress(
+                        global_x,
+                        global_y,
+                        physical_screen_x,
+                        physical_screen_y,
+                    )
                 )
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 queued = False
@@ -1278,6 +1375,20 @@ class CompactPointerEventFilter(QObject):
         self._queued_native_character_request_id = 0
         self._queued_native_character_serial = 0
         self._queued_native_character_global = (0.0, 0.0)
+        self._queued_native_character_latest_global = (0.0, 0.0)
+        self._queued_native_character_has_logical_sample = False
+        self._queued_native_character_press_physical: (
+            tuple[float, float] | None
+        ) = None
+        self._queued_native_character_latest_physical: (
+            tuple[float, float] | None
+        ) = None
+        self._queued_native_character_prestart_samples = 0
+        self._queued_native_character_prestart_max_distance_squared = 0.0
+        self._queued_native_character_prestart_max_distance_physical_squared = (
+            0.0
+        )
+        self._queued_native_character_pressed_at = 0.0
         self._queued_native_character_released = False
         self._queued_native_character_cancelled = False
         self._native_character_start_timer = QTimer(self)
@@ -1324,6 +1435,19 @@ class CompactPointerEventFilter(QObject):
         self._proxy_visual_stale = False
         self._drag_proxy_gesture_active = False
         self._diagnostic_phase = "idle"
+        self._diagnostic_release_before_queued_start = False
+        self._diagnostic_prestart_pointer_samples = 0
+        self._diagnostic_prestart_max_distance_logical = 0.0
+        self._diagnostic_prestart_max_distance_physical = 0.0
+        self._diagnostic_prestart_motion_latched = False
+        self._diagnostic_prestart_screen_map_miss = False
+        self._diagnostic_press_to_qt_start_ms = 0.0
+        self._diagnostic_qml_prepare_ms = 0.0
+        self._diagnostic_native_start_call_ms = 0.0
+        self._diagnostic_capture_release_ms = 0.0
+        self._diagnostic_qml_finish_ms = 0.0
+        self._diagnostic_raw_press_started_at = 0.0
+        self._diagnostic_raw_press_to_finish_ms = 0.0
         self._last_drag_diagnostics: dict[str, object] = {}
         self._system_move_release_timer = QTimer(self)
         # Layered proxy completion is driven by the off-GUI release sentinel;
@@ -1374,6 +1498,18 @@ class CompactPointerEventFilter(QObject):
         return (
             self._queued_native_character_request_id > 0
             or self._active_system_move_serial > 0
+        )
+
+    @property
+    def native_character_prestart_active(self) -> bool:
+        """Whether one consumed raw press still awaits its first Qt turn."""
+
+        return (
+            self._queued_native_character_request_id > 0
+            and self._queued_native_character_serial <= 0
+            and self._active_system_move_serial <= 0
+            and not self._queued_native_character_released
+            and not self._queued_native_character_cancelled
         )
 
     def _owns_system_move_session(
@@ -2400,6 +2536,19 @@ class CompactPointerEventFilter(QObject):
         self._proxy_visual_stale = False
         self._diagnostic_native_hide_used = False
         self._diagnostic_phase = "pressed"
+        self._diagnostic_release_before_queued_start = False
+        self._diagnostic_prestart_pointer_samples = 0
+        self._diagnostic_prestart_max_distance_logical = 0.0
+        self._diagnostic_prestart_max_distance_physical = 0.0
+        self._diagnostic_prestart_motion_latched = False
+        self._diagnostic_prestart_screen_map_miss = False
+        self._diagnostic_press_to_qt_start_ms = 0.0
+        self._diagnostic_qml_prepare_ms = 0.0
+        self._diagnostic_native_start_call_ms = 0.0
+        self._diagnostic_capture_release_ms = 0.0
+        self._diagnostic_qml_finish_ms = 0.0
+        self._diagnostic_raw_press_started_at = 0.0
+        self._diagnostic_raw_press_to_finish_ms = 0.0
         self._last_drag_diagnostics = {}
 
     @classmethod
@@ -2642,11 +2791,33 @@ class CompactPointerEventFilter(QObject):
             return
         self._diagnostic_phase = str(state or "unknown")
 
+    def _clear_queued_native_character_state(self) -> None:
+        """Retire one raw press without discarding the shared latest sample."""
+
+        self._queued_native_character_request_id = 0
+        self._queued_native_character_serial = 0
+        self._queued_native_character_global = (0.0, 0.0)
+        self._queued_native_character_latest_global = (0.0, 0.0)
+        self._queued_native_character_has_logical_sample = False
+        self._queued_native_character_press_physical = None
+        self._queued_native_character_latest_physical = None
+        self._queued_native_character_prestart_samples = 0
+        self._queued_native_character_prestart_max_distance_squared = 0.0
+        self._queued_native_character_prestart_max_distance_physical_squared = (
+            0.0
+        )
+        self._queued_native_character_pressed_at = 0.0
+        self._queued_native_character_released = False
+        self._queued_native_character_cancelled = False
+
     @Slot(float, float, result=bool)
+    @Slot(float, float, float, float, result=bool)
     def queueNativeCharacterPress(
         self,
         global_x: float,
         global_y: float,
+        physical_x: float | None = None,
+        physical_y: float | None = None,
     ) -> bool:
         """Arm the Windows character press without traversing QML input.
 
@@ -2679,11 +2850,156 @@ class CompactPointerEventFilter(QObject):
             float(global_x),
             float(global_y),
         )
+        self._queued_native_character_latest_global = (
+            float(global_x),
+            float(global_y),
+        )
+        self._queued_native_character_has_logical_sample = False
+        if physical_x is not None and physical_y is not None:
+            try:
+                raw_x = float(physical_x)
+                raw_y = float(physical_y)
+            except (TypeError, ValueError):
+                raw_x = math.nan
+                raw_y = math.nan
+            self._queued_native_character_press_physical = (
+                (raw_x, raw_y)
+                if math.isfinite(raw_x) and math.isfinite(raw_y)
+                else None
+            )
+        else:
+            self._queued_native_character_press_physical = None
+        self._queued_native_character_latest_physical = (
+            self._queued_native_character_press_physical
+        )
+        self._queued_native_character_prestart_samples = 0
+        self._queued_native_character_prestart_max_distance_squared = 0.0
+        self._queued_native_character_prestart_max_distance_physical_squared = (
+            0.0
+        )
+        self._queued_native_character_pressed_at = time.perf_counter()
         self._queued_native_character_released = False
         self._queued_native_character_cancelled = False
+        # A consumed raw DOWN bypasses the ordinary Qt MouseButtonPress path,
+        # so retire the previous gesture's direct-move dedupe target here.
+        self._last_direct_position = None
         self._native_character_start_timer.start(0)
         self._native_character_release_watchdog.start()
         return True
+
+    @Slot(float, float, result=bool)
+    def recordQueuedNativeCharacterPointer(
+        self,
+        physical_x: float,
+        physical_y: float,
+    ) -> bool:
+        """Coalesce pointer travel before the queued QML press can start.
+
+        A fast press/move/release can fit inside one busy Qt frame.  The raw
+        DOWN is already owned by this bridge, so dropping those intervening
+        packets turns a real flick into a stationary menu click.  Keep only
+        the newest finite point plus a bounded displacement counter; QML
+        consumes it once, after the native callback has returned.
+        """
+
+        if (
+            self._closing_drag_bridge
+            or self._queued_native_character_request_id <= 0
+            or self._queued_native_character_serial > 0
+            or self._active_system_move_serial > 0
+            or self._queued_native_character_released
+            or self._queued_native_character_cancelled
+        ):
+            return False
+        try:
+            raw_x = float(physical_x)
+            raw_y = float(physical_y)
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(raw_x) or not math.isfinite(raw_y):
+            return False
+        self._queued_native_character_latest_physical = (raw_x, raw_y)
+        press_physical = self._queued_native_character_press_physical
+        if press_physical is not None:
+            dx = raw_x - press_physical[0]
+            dy = raw_y - press_physical[1]
+            self._queued_native_character_prestart_max_distance_physical_squared = max(
+                self._queued_native_character_prestart_max_distance_physical_squared,
+                dx * dx + dy * dy,
+            )
+        self._queued_native_character_prestart_samples = min(
+            self._LOCAL_GESTURE_COUNTER_LIMIT,
+            self._queued_native_character_prestart_samples + 1,
+        )
+        return True
+
+    def _record_prestart_logical_pointer(self, x: float, y: float) -> None:
+        """Publish one authoritative Qt logical-global pre-start sample."""
+
+        press_x, press_y = self._queued_native_character_global
+        dx = x - press_x
+        dy = y - press_y
+        self._queued_native_character_latest_global = (x, y)
+        self._queued_native_character_has_logical_sample = True
+        self._queued_native_character_prestart_max_distance_squared = max(
+            self._queued_native_character_prestart_max_distance_squared,
+            dx * dx + dy * dy,
+        )
+        self.serial += 1
+        self._latest_global_x = x
+        self._latest_global_y = y
+
+    @staticmethod
+    def _logical_global_from_physical_screen(
+        physical_x: float,
+        physical_y: float,
+        screens: object | None = None,
+    ) -> tuple[float, float] | None:
+        """Map a native physical desktop point through Qt's screen islands."""
+
+        if screens is None:
+            try:
+                screens = QApplication.screens()
+            except (AttributeError, RuntimeError, TypeError):
+                return None
+        for screen in screens:
+            try:
+                geometry = screen.geometry()
+                dpr = max(0.25, float(screen.devicePixelRatio() or 1.0))
+                origin_x = float(geometry.x())
+                origin_y = float(geometry.y())
+                physical_width = float(geometry.width()) * dpr
+                physical_height = float(geometry.height()) * dpr
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+            if (
+                origin_x <= physical_x < origin_x + physical_width
+                and origin_y <= physical_y < origin_y + physical_height
+            ):
+                return (
+                    origin_x + (physical_x - origin_x) / dpr,
+                    origin_y + (physical_y - origin_y) / dpr,
+                )
+        return None
+
+    def _sample_prestart_pointer_from_native_event(self) -> None:
+        if (
+            self._queued_native_character_prestart_samples <= 0
+            or self._queued_native_character_has_logical_sample
+        ):
+            return
+        physical = self._queued_native_character_latest_physical
+        logical = (
+            self._logical_global_from_physical_screen(*physical)
+            if physical is not None
+            else None
+        )
+        if logical is None:
+            # Never substitute a later QCursor position after WM_LBUTTONUP.
+            # The original press point is the safe no-jump fallback.
+            self._diagnostic_prestart_screen_map_miss = True
+            logical = self._queued_native_character_global
+        self._record_prestart_logical_pointer(*logical)
 
     def _release_native_character_capture(self) -> None:
         if os.name != "nt":
@@ -2704,19 +3020,46 @@ class CompactPointerEventFilter(QObject):
         self._native_character_start_timer.stop()
         self._native_character_release_watchdog.stop()
         self._native_character_terminal_timer.stop()
-        self._queued_native_character_request_id = 0
-        self._queued_native_character_serial = 0
-        self._queued_native_character_global = (0.0, 0.0)
-        self._queued_native_character_released = False
-        self._queued_native_character_cancelled = False
+        pressed_at = self._queued_native_character_pressed_at
+        self._clear_queued_native_character_state()
+        release_started_at = time.perf_counter()
         self._release_native_character_capture()
+        self._diagnostic_capture_release_ms = max(
+            0.0,
+            (time.perf_counter() - release_started_at) * 1000.0,
+        )
         callback = getattr(self.root, "finishQueuedNativeCharacterPress", None)
         if not callable(callback):
             return False
+        qml_finish_started_at = time.perf_counter()
         try:
-            return bool(callback(expected))
+            accepted = bool(callback(expected))
         except (RuntimeError, TypeError, ValueError):
-            return False
+            accepted = False
+        self._diagnostic_qml_finish_ms = max(
+            0.0,
+            (time.perf_counter() - qml_finish_started_at) * 1000.0,
+        )
+        raw_started_at = self._diagnostic_raw_press_started_at or pressed_at
+        if raw_started_at > 0.0:
+            self._diagnostic_raw_press_to_finish_ms = max(
+                0.0,
+                (time.perf_counter() - raw_started_at) * 1000.0,
+            )
+        if self._last_drag_diagnostics:
+            self._last_drag_diagnostics.update(
+                captureReleaseMs=round(
+                    self._diagnostic_capture_release_ms,
+                    3,
+                ),
+                qmlFinishMs=round(self._diagnostic_qml_finish_ms, 3),
+                rawPressToFinishMs=round(
+                    self._diagnostic_raw_press_to_finish_ms,
+                    3,
+                ),
+            )
+            self._schedule_drag_diagnostics_write()
+        return accepted
 
     def _start_queued_native_character_press(self) -> None:
         request_id = self._queued_native_character_request_id
@@ -2726,33 +3069,77 @@ class CompactPointerEventFilter(QObject):
             self._native_character_terminal_timer.start(0)
             return
         global_x, global_y = self._queued_native_character_global
+        pressed_at = self._queued_native_character_pressed_at
+        # Convert the MSG's event-time physical point only after returning to
+        # Qt.  This preserves the exact UP coordinate without applying the
+        # source HWND's DPR to a destination-screen point.
+        self._sample_prestart_pointer_from_native_event()
+        prestart_samples = self._queued_native_character_prestart_samples
+        prestart_screen_map_miss = (
+            self._diagnostic_prestart_screen_map_miss
+        )
+        prestart_max_distance = math.sqrt(
+            self._queued_native_character_prestart_max_distance_squared
+        )
+        prestart_max_distance_physical = math.sqrt(
+            self._queued_native_character_prestart_max_distance_physical_squared
+        )
         begin_callback = getattr(self.root, "beginNativeCharacterPress", None)
         if not callable(begin_callback):
-            self._queued_native_character_request_id = 0
-            self._queued_native_character_cancelled = False
+            self._clear_queued_native_character_state()
             self._native_character_release_watchdog.stop()
             self._native_character_terminal_timer.stop()
             self._release_native_character_capture()
             return
         self._reset_drag_diagnostics()
+        self._diagnostic_raw_press_started_at = pressed_at
+        if pressed_at > 0.0:
+            self._diagnostic_press_to_qt_start_ms = max(
+                0.0,
+                (time.perf_counter() - pressed_at) * 1000.0,
+            )
+        self._diagnostic_prestart_pointer_samples = prestart_samples
+        self._diagnostic_prestart_max_distance_logical = prestart_max_distance
+        self._diagnostic_prestart_max_distance_physical = (
+            prestart_max_distance_physical
+        )
+        self._diagnostic_prestart_motion_latched = (
+            prestart_max_distance_physical
+            > self._system_move_threshold_physical
+        )
+        self._diagnostic_prestart_screen_map_miss = (
+            prestart_screen_map_miss
+        )
+        qml_prepare_started_at = time.perf_counter()
         try:
             serial = int(begin_callback(global_x, global_y) or 0)
         except (RuntimeError, TypeError, ValueError):
             serial = 0
+        self._diagnostic_qml_prepare_ms = max(
+            0.0,
+            (time.perf_counter() - qml_prepare_started_at) * 1000.0,
+        )
         if (
             serial <= 0
             or request_id != self._queued_native_character_request_id
         ):
-            self._queued_native_character_request_id = 0
-            self._queued_native_character_serial = 0
-            self._queued_native_character_global = (0.0, 0.0)
-            self._queued_native_character_released = False
-            self._queued_native_character_cancelled = False
+            self._clear_queued_native_character_state()
             self._native_character_release_watchdog.stop()
             self._native_character_terminal_timer.stop()
             self._release_native_character_capture()
             return
         self._queued_native_character_serial = serial
+        if self._diagnostic_prestart_motion_latched:
+            latch_callback = getattr(
+                self.root,
+                "latchQueuedNativeCharacterMotion",
+                None,
+            )
+            if callable(latch_callback):
+                try:
+                    latch_callback(serial)
+                except (RuntimeError, TypeError, ValueError):
+                    pass
         released = self._queued_native_character_released
         if not released:
             try:
@@ -2763,22 +3150,39 @@ class CompactPointerEventFilter(QObject):
                 # start attempt instead of manufacturing a lost click.
                 released = False
         if released:
+            self._diagnostic_release_before_queued_start = True
             self._finish_queued_native_character_press(serial)
             return
+        if prestart_samples > 0:
+            # If the pointer already travelled while the GUI turn was busy,
+            # apply its newest point once before starting the native proxy.
+            # This preserves the original grab offset instead of making the
+            # character lag behind by one whole event-loop turn.
+            prime_callback = getattr(
+                self.root,
+                "primeQueuedNativeCharacterPress",
+                None,
+            )
+            if callable(prime_callback):
+                try:
+                    prime_callback(serial)
+                except (RuntimeError, TypeError, ValueError):
+                    pass
         callback = getattr(self.root, "startQueuedNativeCharacterPress", None)
         if not callable(callback):
             self._finish_queued_native_character_press(serial)
             return
+        native_start_started_at = time.perf_counter()
         try:
             started = bool(callback(serial))
         except (RuntimeError, TypeError, ValueError):
             started = False
+        self._diagnostic_native_start_call_ms = max(
+            0.0,
+            (time.perf_counter() - native_start_started_at) * 1000.0,
+        )
         if started:
-            self._queued_native_character_request_id = 0
-            self._queued_native_character_serial = 0
-            self._queued_native_character_global = (0.0, 0.0)
-            self._queued_native_character_released = False
-            self._queued_native_character_cancelled = False
+            self._clear_queued_native_character_state()
             self._native_character_release_watchdog.stop()
             self._native_character_terminal_timer.stop()
             return
@@ -2835,11 +3239,7 @@ class CompactPointerEventFilter(QObject):
             serial = self._queued_native_character_serial
             self._native_character_start_timer.stop()
             self._native_character_release_watchdog.stop()
-            self._queued_native_character_request_id = 0
-            self._queued_native_character_serial = 0
-            self._queued_native_character_global = (0.0, 0.0)
-            self._queued_native_character_released = False
-            self._queued_native_character_cancelled = False
+            self._clear_queued_native_character_state()
             self._release_native_character_capture()
             callback = getattr(
                 self.root,
@@ -2866,10 +3266,7 @@ class CompactPointerEventFilter(QObject):
         # raw press and its queued start).  Retire capture without inventing a
         # QML click.
         self._native_character_release_watchdog.stop()
-        self._queued_native_character_request_id = 0
-        self._queued_native_character_global = (0.0, 0.0)
-        self._queued_native_character_released = False
-        self._queued_native_character_cancelled = False
+        self._clear_queued_native_character_state()
         self._release_native_character_capture()
 
     @Slot(int, result=bool)
@@ -3154,6 +3551,15 @@ class CompactPointerEventFilter(QObject):
             if self._drag_started_at > 0.0
             else 0.0
         )
+        if self._diagnostic_raw_press_started_at > 0.0:
+            self._diagnostic_raw_press_to_finish_ms = max(
+                0.0,
+                (
+                    time.perf_counter()
+                    - self._diagnostic_raw_press_started_at
+                )
+                * 1000.0,
+            )
         try:
             screen = self.root.screen()
         except (AttributeError, RuntimeError, TypeError):
@@ -3207,6 +3613,44 @@ class CompactPointerEventFilter(QObject):
             "completionQueuedBy": self._completion_queued_by,
             "completionDeliveryRetries": self._completion_delivery_retries,
             "lastNativePhase": self._diagnostic_phase,
+            "releaseBeforeQueuedStart": bool(
+                self._diagnostic_release_before_queued_start
+            ),
+            "prestartPointerSamples": int(
+                self._diagnostic_prestart_pointer_samples
+            ),
+            "prestartMaxDistanceLogical": round(
+                self._diagnostic_prestart_max_distance_logical,
+                3,
+            ),
+            "prestartMaxDistancePhysical": round(
+                self._diagnostic_prestart_max_distance_physical,
+                3,
+            ),
+            "prestartMotionLatched": bool(
+                self._diagnostic_prestart_motion_latched
+            ),
+            "prestartScreenMapMiss": bool(
+                self._diagnostic_prestart_screen_map_miss
+            ),
+            "pressToQtStartMs": round(
+                self._diagnostic_press_to_qt_start_ms,
+                3,
+            ),
+            "qmlPrepareMs": round(self._diagnostic_qml_prepare_ms, 3),
+            "nativeStartCallMs": round(
+                self._diagnostic_native_start_call_ms,
+                3,
+            ),
+            "captureReleaseMs": round(
+                self._diagnostic_capture_release_ms,
+                3,
+            ),
+            "qmlFinishMs": round(self._diagnostic_qml_finish_ms, 3),
+            "rawPressToFinishMs": round(
+                self._diagnostic_raw_press_to_finish_ms,
+                3,
+            ),
             "systemMoveWatcherReady": bool(
                 self._system_move_end_watcher is not None
                 and self._system_move_end_watcher.ready
@@ -3285,11 +3729,7 @@ class CompactPointerEventFilter(QObject):
         self._native_character_start_timer.stop()
         self._native_character_release_watchdog.stop()
         self._native_character_terminal_timer.stop()
-        self._queued_native_character_request_id = 0
-        self._queued_native_character_serial = 0
-        self._queued_native_character_global = (0.0, 0.0)
-        self._queued_native_character_released = False
-        self._queued_native_character_cancelled = False
+        self._clear_queued_native_character_state()
         self._release_native_character_capture()
         if self._proxy_move_active:
             self._request_proxy_native_cancel()
@@ -4704,7 +5144,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.52")
+    app.setApplicationVersion("0.3.53")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:

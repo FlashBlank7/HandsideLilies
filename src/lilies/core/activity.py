@@ -515,6 +515,15 @@ class StagedCapture:
     library_root: Path
     _keep: bool = False
     _image_bytes: bytes | None = None
+    _bytes_lock: threading.RLock = field(
+        default_factory=threading.RLock, init=False, repr=False
+    )
+
+    # A 1600 px RGBA frame is about 10 MiB before PNG compression.  Keeping a
+    # hard ceiling here makes the privacy promise independent of encoder
+    # behaviour and prevents an unexpectedly inefficient PNG from living in
+    # the companion bubble for its whole lifetime.
+    MAX_RETAINED_BYTES = 16 * 1024 * 1024
 
     def retain_in_memory(self) -> bytes:
         """Move the compressed capture out of staging for bubble lifetime.
@@ -524,10 +533,33 @@ class StagedCapture:
         and “保存此刻” can still persist the in-memory PNG later.
         """
 
-        if self._image_bytes is None:
-            self._image_bytes = self.path.read_bytes()
+        with self._bytes_lock:
+            if self._image_bytes is None:
+                try:
+                    size = self.path.stat().st_size
+                except OSError as exc:
+                    raise CaptureStorageError(
+                        "capture staging is unavailable"
+                    ) from exc
+                if size <= 0 or size > self.MAX_RETAINED_BYTES:
+                    raise CaptureStorageError(
+                        "capture exceeds the in-memory retention bound"
+                    )
+                try:
+                    payload = self.path.read_bytes()
+                except OSError as exc:
+                    raise CaptureStorageError(
+                        "capture staging is unavailable"
+                    ) from exc
+                if len(payload) != size or len(payload) > self.MAX_RETAINED_BYTES:
+                    raise CaptureStorageError(
+                        "capture exceeds the in-memory retention bound"
+                    )
+                self._image_bytes = payload
+            payload = self._image_bytes
         self.cleanup()
-        return self._image_bytes
+        assert payload is not None
+        return payload
 
     def save(self, name: str | None = None) -> Path:
         """Persist this moment after an explicit user action."""
@@ -540,10 +572,13 @@ class StagedCapture:
             target = self.library_root / f"{target.stem}-{uuid.uuid4().hex[:8]}{suffix}"
         if self.path.is_file():
             shutil.copy2(self.path, target)
-        elif self._image_bytes is not None:
-            target.write_bytes(self._image_bytes)
         else:
-            raise RuntimeError("capture is no longer available")
+            with self._bytes_lock:
+                payload = self._image_bytes
+            if payload is not None:
+                target.write_bytes(payload)
+            else:
+                raise RuntimeError("capture is no longer available")
         self._keep = True
         return target
 
@@ -560,7 +595,8 @@ class StagedCapture:
         """Release both disk and memory state when a bubble expires."""
 
         self.cleanup()
-        self._image_bytes = None
+        with self._bytes_lock:
+            self._image_bytes = None
 
     def __enter__(self) -> "StagedCapture":
         return self

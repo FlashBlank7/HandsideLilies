@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -1451,7 +1452,8 @@ def test_repeated_image_quality_errors_use_bounded_progressive_backoff(tmp_path)
             scene_label="论文阅读",
             image_path=capture,
         )
-        circuit = runtime._proactive_circuits["vision-test:image"]
+        quality_key = next(iter(runtime._quality_circuits))
+        circuit = runtime._quality_circuits[quality_key]
         circuit["retryAfter"] = 0.0
         second = runtime.generate(
             category=ContentCategory.PHILOSOPHY,
@@ -1477,10 +1479,330 @@ def test_repeated_image_quality_errors_use_bounded_progressive_backoff(tmp_path)
             scene_label="论文阅读",
             image_path=capture,
         )
-        assert immediately_blocked["skipReason"] == "image-circuit-open"
+        assert immediately_blocked["skipReason"] == "image-anchor-generic"
+        assert "vision-test:image:哲思:" in immediately_blocked["circuit"]
         assert client.calls == 3
     finally:
         runtime.shutdown()
+
+
+def test_retained_anchor_continuation_reuses_no_pixels_and_keeps_provenance(
+    tmp_path,
+) -> None:
+    runtime = CompanionRuntime(tmp_path, MemoryService(Database(tmp_path / "lilies.db")))
+
+    class Client:
+        model = "anchor-test"
+        ready = True
+
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+            self.image_paths: list[list[object]] = []
+
+        def complete(self, prompt, **kwargs):
+            self.prompts.append(str(prompt))
+            self.image_paths.append(list(kwargs.get("image_paths") or []))
+            return (
+                '{"anchor":"右侧细灰线","evidenceConfidence":"retained",'
+                '"summary":"右侧细灰线把留白分成了两种节奏。",'
+                '"detail":"右侧细灰线没有新增画面事实，只让边界与留白的关系换了一个观察角度。"}'
+            )
+
+        def abort(self):
+            pass
+
+        def stop(self):
+            pass
+
+    client = Client()
+    runtime.luna = client
+    try:
+        result = runtime.generate(
+            category=ContentCategory.SCIENCE,
+            scene_label="论文阅读",
+            prior_anchor="右侧细灰线",
+            continuation_kind="same-image-another",
+        )
+        assert result.get("skip") is not True
+        assert result["contextType"] == "retained-image-anchor"
+        assert result["imageGrounded"] is False
+        assert result["anchorGrounded"] is True
+        assert result["anchor"] == "右侧细灰线"
+        assert client.image_paths == [[]]
+        assert "本轮没有再次发送截图像素" in client.prompts[0]
+        assert "evidenceConfidence 必须是 retained" in client.prompts[0]
+    finally:
+        runtime.shutdown()
+
+
+def test_retained_anchor_continuation_rejects_anchor_drift(tmp_path) -> None:
+    runtime = CompanionRuntime(tmp_path, MemoryService(Database(tmp_path / "lilies.db")))
+
+    class Client:
+        model = "anchor-drift-test"
+        ready = True
+
+        def complete(self, _prompt, **_kwargs):
+            return (
+                '{"anchor":"新出现的蓝色按钮","evidenceConfidence":"retained",'
+                '"summary":"新出现的蓝色按钮改变了节奏。",'
+                '"detail":"新出现的蓝色按钮并不属于原来的锚点。"}'
+            )
+
+        def abort(self):
+            pass
+
+        def stop(self):
+            pass
+
+    runtime.luna = Client()
+    try:
+        result = runtime.generate(
+            category=ContentCategory.SCIENCE,
+            scene_label="论文阅读",
+            prior_anchor="右侧细灰线",
+            continuation_kind="same-image-category",
+        )
+        assert result["skip"] is True
+        assert result["skipReason"] == "retained-anchor-changed"
+        assert result["contextType"] == "retained-image-anchor"
+        assert result["summary"] == result["detail"] == ""
+    finally:
+        runtime.shutdown()
+
+
+def test_quality_circuit_is_scoped_by_scene_category_and_reason(tmp_path) -> None:
+    runtime = CompanionRuntime(tmp_path, MemoryService(Database(tmp_path / "lilies.db")))
+
+    class Client:
+        model = "quality-scope-test"
+        ready = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, _prompt, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return (
+                    '{"anchor":"","evidenceConfidence":"none",'
+                    '"summary":"我看到窗口里有一段论文。",'
+                    '"detail":"画面上的段落似乎正在讨论一个方法。"}'
+                )
+            return (
+                '{"anchor":"","evidenceConfidence":"none",'
+                '"summary":"边界换了一个轻巧的解释。",'
+                '"detail":"这里只讨论条件与结果之间的概念关系。"}'
+            )
+
+        def abort(self):
+            pass
+
+        def stop(self):
+            pass
+
+    client = Client()
+    runtime.luna = client
+    try:
+        rejected = runtime.generate(
+            category=ContentCategory.SCIENCE,
+            scene_label="论文阅读",
+        )
+        other_category = runtime.generate(
+            category=ContentCategory.JOKE,
+            scene_label="论文阅读",
+        )
+        other_scene = runtime.generate(
+            category=ContentCategory.SCIENCE,
+            scene_label="文档工作",
+        )
+        blocked_same_scope = runtime.generate(
+            category=ContentCategory.SCIENCE,
+            scene_label="论文阅读",
+        )
+        assert rejected["skipReason"] == "text-visual-claim"
+        assert other_category.get("skip") is not True
+        assert other_scene.get("skip") is not True
+        assert blocked_same_scope["skip"] is True
+        assert blocked_same_scope["skipReason"] == "text-visual-claim"
+        assert client.calls == 3
+    finally:
+        runtime.shutdown()
+
+
+def test_anchor_quality_failure_does_not_block_text_for_the_same_scene(tmp_path) -> None:
+    runtime = CompanionRuntime(tmp_path, MemoryService(Database(tmp_path / "lilies.db")))
+
+    class Client:
+        model = "quality-anchor-scope-test"
+        ready = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, prompt, **_kwargs):
+            self.calls += 1
+            if "retained-observation-evidence" in str(prompt):
+                return (
+                    '{"anchor":"漂移后的按钮","evidenceConfidence":"retained",'
+                    '"summary":"漂移后的按钮改变了边界。",'
+                    '"detail":"漂移后的按钮不是原来的视觉锚点。"}'
+                )
+            return (
+                '{"anchor":"","evidenceConfidence":"none",'
+                '"summary":"条件与结果之间还留着一个小问题。",'
+                '"detail":"条件改变时，结果也可能换一种解释。"}'
+            )
+
+        def abort(self):
+            pass
+
+        def stop(self):
+            pass
+
+    client = Client()
+    runtime.luna = client
+    try:
+        rejected = runtime.generate(
+            category=ContentCategory.SCIENCE,
+            scene_label="论文阅读",
+            prior_anchor="右侧细灰线",
+            continuation_kind="same-image-another",
+        )
+        text_result = runtime.generate(
+            category=ContentCategory.SCIENCE,
+            scene_label="论文阅读",
+        )
+        assert rejected["skipReason"] == "retained-anchor-changed"
+        assert text_result.get("skip") is not True
+        assert client.calls == 2
+        assert any(":anchor:科普:" in key for key in runtime._quality_circuits)
+    finally:
+        runtime.shutdown()
+
+
+def test_quality_circuit_cache_has_hard_lru_and_idle_expiry(tmp_path) -> None:
+    runtime = CompanionRuntime(tmp_path, MemoryService(Database(tmp_path / "lilies.db")))
+
+    class Client:
+        model = "quality-lru-test"
+
+        def abort(self):
+            pass
+
+        def stop(self):
+            pass
+
+    client = Client()
+    try:
+        for index in range(300):
+            runtime._quality_circuit(
+                client,
+                has_image=False,
+                has_anchor=False,
+                category=ContentCategory.SCIENCE,
+                scene_label=f"untrusted-scene-{index}",
+                reason="text-visual-claim",
+            )
+        assert len(runtime._quality_circuits) == 128
+
+        stale_now = time.monotonic() + 7 * 60 * 60
+        for value in runtime._quality_circuits.values():
+            value["lastTouched"] = 0.0
+            value["retryAfter"] = 0.0
+        runtime._prune_quality_circuits(stale_now)
+        assert runtime._quality_circuits == {}
+    finally:
+        runtime.shutdown()
+
+
+def test_invalid_result_format_gets_one_clean_retry(tmp_path) -> None:
+    runtime = CompanionRuntime(tmp_path, MemoryService(Database(tmp_path / "lilies.db")))
+
+    class Client:
+        model = "format-retry-test"
+        ready = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.prompts: list[str] = []
+
+        def complete(self, prompt, **_kwargs):
+            self.calls += 1
+            self.prompts.append(str(prompt))
+            if self.calls == 1:
+                return "not-json"
+            return (
+                '{"anchor":"","evidenceConfidence":"none",'
+                '"summary":"第二次严格遵守了格式。",'
+                '"detail":"这次没有额外字段，也没有虚构视觉事实。"}'
+            )
+
+        def abort(self):
+            pass
+
+        def stop(self):
+            pass
+
+    client = Client()
+    runtime.luna = client
+    try:
+        result = runtime.generate(
+            category=ContentCategory.SCIENCE,
+            scene_label="文档工作",
+        )
+        assert result.get("skip") is not True
+        assert result["summary"] == "第二次严格遵守了格式。"
+        assert client.calls == 2
+        assert "只因严格 JSON/字段格式未通过" in client.prompts[1]
+        assert runtime._quality_circuits == {}
+    finally:
+        runtime.shutdown()
+
+
+def test_reply_prompt_carries_the_complete_original_bubble_and_anchor(
+    tmp_path,
+) -> None:
+    runtime = CompanionRuntime.__new__(CompanionRuntime)
+    runtime._closed = False
+    runtime.memory = MemoryService(Database(tmp_path / "lilies.db"))
+
+    class Client:
+        def __init__(self) -> None:
+            self.prompt = ""
+
+        def complete(self, prompt, **_kwargs):
+            self.prompt = str(prompt)
+            return "边界仍是原来的边界；我没有再次看到画面。"
+
+    client = Client()
+    runtime.luna = client
+    source = BubbleSource(
+        "Example Journal", "https://example.test/paper", datetime.now(timezone.utc)
+    )
+    bubble = SpeechBubble.create(
+        category=ContentCategory.SCIENCE,
+        summary="右侧细灰线像一条安静的边界。",
+        detail="它把留白分成两种尺度。",
+        scene_label="论文阅读",
+        source=source,
+    )
+
+    answer = runtime.reply(
+        bubble,
+        [{"role": "user", "content": "详细点"}],
+        "为什么？",
+        evidence_anchor="右侧细灰线",
+    )
+
+    assert "右侧细灰线" in client.prompt
+    assert "它把留白分成两种尺度" in client.prompt
+    assert '"category": "科普"' in client.prompt
+    assert '"sceneLabel": "论文阅读"' in client.prompt
+    assert "Example Journal" in client.prompt
+    assert "https://example.test/paper" in client.prompt
+    assert "没有再次看到屏幕" in client.prompt
+    assert answer == "边界仍是原来的边界；我没有再次看到画面。"
 
 
 @pytest.mark.parametrize(

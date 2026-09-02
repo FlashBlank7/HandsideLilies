@@ -102,7 +102,7 @@ def test_packaging_build_hard_runs_the_hidden_qwindows_probe() -> None:
     assert "verify_packaged_windows_startup.ps1" in build
     assert "-WindowStyle Hidden -PassThru" in probe
     assert "--windows-startup-probe" in probe
-    assert "packaged-windows-startup-v0351.json" in probe
+    assert "packaged-windows-startup-v0352.json" in probe
     assert "$env:LILIES_DATA_DIR = $diagnosticRoot" in probe
     assert "Stop-Process -Id $process.Id -Force" in probe
     assert "Get-Process -Name" not in probe
@@ -130,8 +130,8 @@ def test_packaging_build_hard_runs_the_hidden_qwindows_probe() -> None:
         assert field in probe
 
 
-def test_v0351_release_gate_requires_native_desktop_mode_tab_hit() -> None:
-    promotion = _read("scripts/promote_v0351.ps1")
+def test_v0352_release_gate_requires_native_desktop_mode_tab_hit() -> None:
+    promotion = _read("scripts/promote_v0352.ps1")
     probe = _read("scripts/verify_packaged_windows_startup.ps1")
 
     for source in (promotion, probe):

@@ -98,7 +98,13 @@ def _normalize_proactive_generation(
     if not isinstance(generation, Mapping) or not generation:
         return {}
     context_type = str(generation.get("contextType", ""))[:40]
-    if context_type not in {"application-signal", "active-window-image"}:
+    if context_type not in {
+        "application-signal",
+        "active-window-image",
+        # Provenance only.  The generated anchor itself is intentionally not
+        # part of this receipt and is never written to SQLite.
+        "retained-image-anchor",
+    }:
         return {}
     model = _compact_text(str(generation.get("model", "")))[:80]
     if model not in _PROACTIVE_MODEL_IDS:

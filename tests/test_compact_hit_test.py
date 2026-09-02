@@ -451,7 +451,7 @@ def test_system_owned_pointer_stream_skips_all_sampling_work():
     root = _NativeMoveRoot()
     root.setProperty("manualDragActive", True)
     event_filter = CompactPointerEventFilter(root)
-    assert event_filter.tryStartSystemMove(71) is True
+    assert _start_qt_system_move_compatibility(event_filter, 71) is True
 
     for index in range(1000):
         event = QMouseEvent(
@@ -565,6 +565,26 @@ class _NativeMoveRoot(QObject):
         return 4321
 
 
+def _start_qt_system_move_compatibility(
+    event_filter: CompactPointerEventFilter,
+    gesture_serial: int,
+) -> bool:
+    """Exercise the retained non-Windows Qt compatibility branch on Windows.
+
+    Production Windows tests use the sentinel-backed layered proxy. Tests for
+    QML/filter/diagnostic bookkeeping that do not construct that proxy still
+    need a deterministic way to cover Qt's cross-platform startSystemMove
+    result without re-enabling the unsafe Windows fallback.
+    """
+
+    original_name = os.name
+    try:
+        os.name = "posix"
+        return event_filter.tryStartSystemMove(gesture_serial)
+    finally:
+        os.name = original_name
+
+
 class _QueuedNativePressRoot(QObject):
     def __init__(self, *, start_result: bool = True) -> None:
         super().__init__()
@@ -652,6 +672,63 @@ def test_failed_native_start_release_watchdog_cannot_strand_gesture() -> None:
     assert root.finish_calls == [91]
     assert root.property("manualDragActive") is False
     assert event_filter.native_character_press_active is False
+
+
+def test_swapped_primary_button_drives_raw_press_release_probe() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _QueuedNativePressRoot()
+    event_filter = CompactPointerEventFilter(root)
+
+    class User32:
+        def __init__(self) -> None:
+            self.keys: list[int] = []
+
+        def GetSystemMetrics(self, metric: int) -> int:
+            assert metric == CompactPointerEventFilter._SM_SWAPBUTTON
+            return 1
+
+        def GetAsyncKeyState(self, key: int) -> int:
+            self.keys.append(int(key))
+            return 0
+
+    user32 = User32()
+    event_filter._win32_user32 = lambda: user32
+
+    assert event_filter.queueNativeCharacterPress(120.0, 85.0) is True
+    app.processEvents()
+
+    assert user32.keys == [CompactPointerEventFilter._VK_RBUTTON]
+    assert root.start_calls == []
+    assert root.finish_calls == [91]
+
+
+def test_swapped_primary_button_drives_native_move_watchdog() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _NativeMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+
+    class User32:
+        def __init__(self) -> None:
+            self.keys: list[int] = []
+
+        def GetSystemMetrics(self, metric: int) -> int:
+            assert metric == CompactPointerEventFilter._SM_SWAPBUTTON
+            return 1
+
+        def GetAsyncKeyState(self, key: int) -> int:
+            self.keys.append(int(key))
+            return 0
+
+    user32 = User32()
+    event_filter._win32_user32 = lambda: user32
+
+    assert _start_qt_system_move_compatibility(event_filter, 92) is True
+    event_filter._poll_system_move_release()
+    app.processEvents()
+
+    assert user32.keys == [CompactPointerEventFilter._VK_RBUTTON]
+    assert root.completions == [92]
+    assert event_filter.native_system_move_active is False
 
 
 def test_capture_loss_cancels_queued_native_character_gesture() -> None:
@@ -848,7 +925,7 @@ def test_system_move_suspends_python_native_filter_until_completion() -> None:
     native_filter = object()
     event_filter.configure_native_drag_filter(app, native_filter)
 
-    assert event_filter.tryStartSystemMove(35) is True
+    assert _start_qt_system_move_compatibility(event_filter, 35) is True
     assert app.removed == [native_filter]
     assert app.installed == []
     assert event_filter._native_drag_filter_suspended is True
@@ -867,6 +944,7 @@ def test_cached_proxy_moves_only_preview_then_commits_real_window_once(
     root = _ProxyMoveRoot()
     event_filter = CompactPointerEventFilter(root)
     root_window_id = 2**48 + 77
+    root.winId = lambda: root_window_id
     event_filter._native_drag_filter = SimpleNamespace(
         native_window_id=root_window_id
     )
@@ -939,6 +1017,200 @@ def test_cached_proxy_moves_only_preview_then_commits_real_window_once(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
+def test_synchronous_capture_cancel_retires_proxy_before_start_returns(
+    monkeypatch,
+) -> None:
+    root = _ProxyMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    root_window_id = 2**48 + 177
+    root.winId = lambda: root_window_id
+    event_filter._native_drag_filter = SimpleNamespace(
+        native_window_id=root_window_id
+    )
+    cache = _ProxyCache()
+    event_filter._drag_proxy_cache = cache
+    monkeypatch.setattr(
+        event_filter,
+        "_native_window_rect",
+        lambda _window_id: SimpleNamespace(
+            left=100, top=200, right=520, bottom=596
+        ),
+    )
+    native_visibility: list[tuple[int, bool]] = []
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_shown",
+        lambda window_id, shown: not native_visibility.append(
+            (int(window_id), bool(shown))
+        ),
+    )
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_position",
+        lambda _window_id, _x, _y: True,
+    )
+    original_start = cache.start_move
+
+    def reentrant_start() -> bool:
+        # Mirrors ReleaseCapture -> QML finish/ack while Python's proxy start
+        # call is still on the stack.
+        event_filter.acknowledgeSystemMoveFinished(501)
+        return original_start()
+
+    cache.start_move = reentrant_start
+
+    event_filter._reset_drag_diagnostics()
+    assert event_filter.tryStartSystemMove(501) is False
+
+    assert event_filter._active_system_move_session_id == 0
+    assert event_filter.native_system_move_active is False
+    assert event_filter._proxy_move_active is False
+    assert event_filter._proxy_move_session_id == 0
+    assert event_filter._proxy_real_geometry_commits == 1
+    assert cache.native_move_cancels == 1
+    assert native_visibility == [
+        (root_window_id, False),
+        (root_window_id, True),
+    ]
+    # The successful return from the already-posted request did not resurrect
+    # the retired session.
+    event_filter._on_system_move_started(cache.proxy_handle, 1)
+    event_filter._on_system_move_ended(cache.proxy_handle, 1)
+    assert event_filter.native_system_move_active is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
+def test_no_start_or_end_event_still_commits_and_restores_after_button_up(
+    monkeypatch,
+) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _ProxyMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    root_window_id = 2**48 + 178
+    root.winId = lambda: root_window_id
+    event_filter._native_drag_filter = SimpleNamespace(
+        native_window_id=root_window_id
+    )
+    cache = _ProxyCache()
+    cache.final = SimpleNamespace(
+        rect=SimpleNamespace(left=148, top=271),
+        delta=SimpleNamespace(x=28, y=31),
+    )
+    event_filter._drag_proxy_cache = cache
+    monkeypatch.setattr(
+        event_filter,
+        "_native_window_rect",
+        lambda _window_id: SimpleNamespace(
+            left=100, top=200, right=520, bottom=596
+        ),
+    )
+    commits: list[tuple[int, int, int]] = []
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_position",
+        lambda window_id, x, y: not commits.append(
+            (int(window_id), int(x), int(y))
+        ),
+    )
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_shown",
+        lambda _window_id, _shown: True,
+    )
+    event_filter._left_button_is_down = lambda: False
+
+    event_filter._reset_drag_diagnostics()
+    assert event_filter.tryStartSystemMove(502) is True
+    assert event_filter._system_move_entered is False
+    assert event_filter._system_move_exited is False
+
+    event_filter._poll_system_move_release()
+    app.processEvents()
+
+    assert event_filter.native_system_move_active is False
+    assert event_filter._active_system_move_session_id == 0
+    assert event_filter._proxy_move_active is False
+    assert event_filter._proxy_root_native_hidden is False
+    assert event_filter._proxy_real_geometry_commits == 1
+    assert commits == [(root_window_id, 128, 231)]
+    assert root.completions == [502]
+    assert event_filter._completion_queued_by == "button-release-watchdog"
+
+
+def test_late_old_completion_cannot_retire_or_resurrect_new_session() -> None:
+    root = _NativeMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+
+    assert _start_qt_system_move_compatibility(event_filter, 601) is True
+    first_session = event_filter._active_system_move_session_id
+    event_filter.acknowledgeSystemMoveFinished(601)
+    assert _start_qt_system_move_compatibility(event_filter, 602) is True
+    second_session = event_filter._active_system_move_session_id
+    assert second_session != first_session
+
+    event_filter._deliverSystemMoveFinished(first_session, 601)
+    event_filter._on_system_move_started(4321, first_session)
+    event_filter._on_system_move_ended(4321, first_session)
+
+    assert event_filter._active_system_move_session_id == second_session
+    assert event_filter._active_system_move_serial == 602
+    event_filter.acknowledgeSystemMoveFinished(602)
+    assert event_filter.native_system_move_active is False
+
+
+def test_layered_proxy_ignores_all_same_hwnd_winevents_across_generations() -> None:
+    root = _NativeMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    session_id = event_filter._new_system_move_session(611)
+    proxy_window_id = 2**48 + 611
+    event_filter._active_system_move_window_id = proxy_window_id
+    event_filter._proxy_move_active = True
+    event_filter._proxy_move_session_id = session_id
+
+    # OUTOFCONTEXT callbacks can read the *current* generation after old N
+    # events were queued. Neither old nor apparently-current tags are allowed
+    # to establish START or terminate a layered proxy session.
+    event_filter._on_system_move_started(proxy_window_id, session_id - 1)
+    event_filter._on_system_move_ended(proxy_window_id, session_id - 1)
+    event_filter._on_system_move_started(proxy_window_id, session_id)
+    event_filter._on_system_move_ended(proxy_window_id, session_id)
+
+    assert event_filter._system_move_entered is False
+    assert event_filter._system_move_exited is False
+    assert event_filter._active_system_move_session_id == session_id
+    assert event_filter._active_system_move_serial == 611
+    assert event_filter._completion_queued_by == ""
+    event_filter._proxy_move_active = False
+    event_filter._retire_system_move_identity(session_id, 611)
+
+
+def test_system_move_and_raw_press_tokens_never_wrap_at_old_boundaries() -> None:
+    root = _NativeMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._system_move_session_counter = 2_000_000_000
+
+    first_session = event_filter._new_system_move_session(701)
+    assert first_session == 2_000_000_001
+    assert event_filter._retire_system_move_identity(first_session, 701)
+    second_session = event_filter._new_system_move_session(702)
+    assert second_session == 2_000_000_002
+
+    event_filter._deliverSystemMoveFinished(first_session, 701)
+    event_filter._on_system_move_started(4321, first_session)
+    event_filter._on_system_move_ended(4321, first_session)
+    assert event_filter._active_system_move_session_id == second_session
+    assert event_filter._active_system_move_serial == 702
+    event_filter._retire_system_move_identity(second_session, 702)
+
+    queued_root = _QueuedNativePressRoot()
+    queued_filter = CompactPointerEventFilter(queued_root)
+    queued_filter._native_character_request_counter = 1_000_000_000
+    assert queued_filter.queueNativeCharacterPress(1.0, 2.0) is True
+    assert queued_filter._queued_native_character_request_id == 1_000_000_001
+    queued_filter.cancelNativeCharacterPress()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
 def test_native_restore_recovers_from_recreated_root_hwnd(monkeypatch) -> None:
     root = _ProxyMoveRoot()
     event_filter = CompactPointerEventFilter(root)
@@ -949,18 +1221,66 @@ def test_native_restore_recovers_from_recreated_root_hwnd(monkeypatch) -> None:
 
     def set_shown(window_id, shown):
         native_visibility.append((int(window_id), bool(shown)))
-        return int(window_id) == int(root.winId())
+        # A stale numeric HWND may already be valid for another process-local
+        # window, so even a successful raw call is not identity evidence.
+        return True
 
     monkeypatch.setattr(event_filter, "_set_native_window_shown", set_shown)
 
     assert event_filter._restore_proxy_root_presentation() is True
-    assert native_visibility == [
-        (stale_window_id, True),
-        (int(root.winId()), True),
-    ]
+    assert native_visibility == [(int(root.winId()), True)]
     assert event_filter._proxy_root_native_hidden is False
     assert event_filter._proxy_root_native_window_id == 0
     assert root.update_requests == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
+def test_proxy_commit_never_moves_or_shows_a_reused_stale_root_hwnd(
+    monkeypatch,
+) -> None:
+    root = _ProxyMoveRoot()
+    old_window_id = 2**48 + 740
+    current_window_id = 2**48 + 741
+    root.winId = lambda: current_window_id
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._native_drag_filter = SimpleNamespace(
+        native_window_id=old_window_id
+    )
+    cache = _ProxyCache()
+    cache.final = SimpleNamespace(
+        rect=SimpleNamespace(left=150, top=260),
+        delta=SimpleNamespace(x=30, y=20),
+    )
+    event_filter._drag_proxy_cache = cache
+    cache.active = True
+    event_filter._proxy_move_active = True
+    event_filter._proxy_move_session_id = 91
+    event_filter._proxy_root_origin_physical = SimpleNamespace(
+        left=100, top=200, right=520, bottom=596
+    )
+    event_filter._proxy_root_native_hidden = True
+    event_filter._proxy_root_native_window_id = old_window_id
+    moved: list[tuple[int, int, int]] = []
+    shown: list[tuple[int, bool]] = []
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_position",
+        lambda window_id, x, y: not moved.append(
+            (int(window_id), int(x), int(y))
+        ),
+    )
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_shown",
+        lambda window_id, visible: not shown.append(
+            (int(window_id), bool(visible))
+        ),
+    )
+
+    assert event_filter._commit_proxy_geometry(91) is True
+    assert moved == [(current_window_id, 130, 220)]
+    assert shown == [(current_window_id, True)]
+    assert event_filter._native_drag_filter.native_window_id == current_window_id
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
@@ -968,6 +1288,7 @@ def test_failed_native_restore_retains_recoverable_state(monkeypatch) -> None:
     root = _ProxyMoveRoot()
     event_filter = CompactPointerEventFilter(root)
     hidden_window_id = 2**48 + 75
+    root.winId = lambda: hidden_window_id
     event_filter._native_drag_filter = SimpleNamespace(
         native_window_id=hidden_window_id
     )
@@ -1036,10 +1357,11 @@ def test_opacity_is_used_only_when_native_hide_is_unavailable(monkeypatch) -> No
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
-def test_native_hide_start_failure_restores_before_live_fallback(monkeypatch) -> None:
+def test_native_hide_start_failure_restores_before_direct_frame_fallback(monkeypatch) -> None:
     root = _ProxyMoveRoot()
     event_filter = CompactPointerEventFilter(root)
     root_window_id = 2**48 + 73
+    root.winId = lambda: root_window_id
     event_filter._native_drag_filter = SimpleNamespace(
         native_window_id=root_window_id
     )
@@ -1062,16 +1384,18 @@ def test_native_hide_start_failure_restores_before_live_fallback(monkeypatch) ->
     )
 
     event_filter._reset_drag_diagnostics()
-    assert event_filter.tryStartSystemMove(358) is True
+    assert event_filter.tryStartSystemMove(358) is False
     assert native_visibility == [
         (root_window_id, False),
         (root_window_id, True),
     ]
-    assert root.system_move_starts == 1
+    assert root.system_move_starts == 0
     assert root.opacity_writes == []
     assert event_filter._proxy_root_native_hidden is False
-    assert event_filter._active_system_move_window_id == root_window_id
-    event_filter.acknowledgeSystemMoveFinished(358)
+    assert event_filter._active_system_move_window_id == 0
+    assert event_filter.native_system_move_active is False
+    event_filter.endDragProxyGesture()
+    assert cache.gesture_active is False
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
@@ -1079,6 +1403,7 @@ def test_interrupted_proxy_ack_cancels_native_loop_before_commit(monkeypatch) ->
     root = _ProxyMoveRoot()
     event_filter = CompactPointerEventFilter(root)
     root_window_id = 2**48 + 76
+    root.winId = lambda: root_window_id
     event_filter._native_drag_filter = SimpleNamespace(
         native_window_id=root_window_id
     )
@@ -1126,12 +1451,13 @@ def test_interrupted_proxy_ack_cancels_native_loop_before_commit(monkeypatch) ->
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
-def test_stale_proxy_falls_back_without_hiding_or_losing_root_system_move(
+def test_stale_proxy_falls_back_without_starting_unguarded_root_system_move(
     monkeypatch,
 ) -> None:
     root = _ProxyMoveRoot()
     event_filter = CompactPointerEventFilter(root)
     root_window_id = 2**48 + 78
+    root.winId = lambda: root_window_id
     event_filter._native_drag_filter = SimpleNamespace(
         native_window_id=root_window_id
     )
@@ -1146,13 +1472,13 @@ def test_stale_proxy_falls_back_without_hiding_or_losing_root_system_move(
     )
 
     event_filter._reset_drag_diagnostics()
-    assert event_filter.tryStartSystemMove(362) is True
-    assert root.system_move_starts == 1
+    assert event_filter.tryStartSystemMove(362) is False
+    assert root.system_move_starts == 0
     assert root.opacity_value == 1.0
     assert event_filter._diagnostic_proxy_used is False
     assert event_filter._proxy_fallback_reason == "stale-key"
-    event_filter.acknowledgeSystemMoveFinished(362)
-    assert event_filter.dragDiagnosticsSnapshot()["mode"] == "native"
+    assert event_filter._proxy_runtime_last_mode == "direct-fallback"
+    event_filter.endDragProxyGesture()
     assert cache.gesture_active is False
 
 
@@ -1243,12 +1569,13 @@ def test_proxy_preview_hide_from_first_drag_cannot_hide_second_drag(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
-def test_proxy_start_failure_restores_root_origin_before_native_fallback(
+def test_proxy_start_failure_restores_root_origin_before_direct_fallback(
     monkeypatch,
 ) -> None:
     root = _ProxyMoveRoot()
     event_filter = CompactPointerEventFilter(root)
     root_window_id = 2**48 + 80
+    root.winId = lambda: root_window_id
     event_filter._native_drag_filter = SimpleNamespace(
         native_window_id=root_window_id
     )
@@ -1263,15 +1590,16 @@ def test_proxy_start_failure_restores_root_origin_before_native_fallback(
     )
 
     event_filter._reset_drag_diagnostics()
-    assert event_filter.tryStartSystemMove(365) is True
-    assert root.system_move_starts == 1
+    assert event_filter.tryStartSystemMove(365) is False
+    assert root.system_move_starts == 0
     assert root.opacity_value == 1.0
-    assert event_filter._active_system_move_window_id == root_window_id
+    assert event_filter._active_system_move_window_id == 0
     assert event_filter._system_move_origin_physical == (100, 200)
     assert event_filter._proxy_move_active is False
     assert event_filter._diagnostic_proxy_used is False
     assert event_filter._proxy_fallback_reason == "move-request-failed"
-    event_filter.acknowledgeSystemMoveFinished(365)
+    event_filter.endDragProxyGesture()
+    assert cache.gesture_active is False
 
 
 def test_local_gesture_bridge_reference_counts_filter_ownership() -> None:
@@ -1309,7 +1637,7 @@ def test_local_gesture_does_not_restore_filters_owned_by_system_move() -> None:
     event_filter.configure_native_drag_filter(app, native_filter)
 
     assert event_filter.beginLocalGesture("resize") is True
-    assert event_filter.tryStartSystemMove(351) is True
+    assert _start_qt_system_move_compatibility(event_filter, 351) is True
     assert event_filter.endLocalGesture("resize", False) is True
     assert app.installed == []
 
@@ -1324,7 +1652,7 @@ def test_system_move_does_not_restore_filters_owned_by_local_gesture() -> None:
     native_filter = object()
     event_filter.configure_native_drag_filter(app, native_filter)
 
-    assert event_filter.tryStartSystemMove(352) is True
+    assert _start_qt_system_move_compatibility(event_filter, 352) is True
     assert event_filter.beginLocalGesture("action") is True
     event_filter.acknowledgeSystemMoveFinished(352)
     assert app.installed == []
@@ -1344,7 +1672,7 @@ def test_local_gesture_rejects_unbounded_surface_names_and_unmatched_end() -> No
     assert event_filter._local_gesture_total_depth == 0
 
 
-def test_local_gesture_diagnostic_is_schema_three_and_content_free(tmp_path) -> None:
+def test_local_gesture_diagnostic_is_session_bound_and_content_free(tmp_path) -> None:
     QCoreApplication.instance() or QCoreApplication([])
     root = _NativeMoveRoot()
     report_path = tmp_path / "runtime" / "pet-drag-latest.json"
@@ -1359,18 +1687,23 @@ def test_local_gesture_diagnostic_is_schema_three_and_content_free(tmp_path) -> 
 
     report = json.loads(report_path.read_text("utf-8"))
     assert report == {
+        "applicationVersion": report["applicationVersion"],
         "cancelled": False,
         "durationMs": report["durationMs"],
         "mode": "local",
         "nativeGeometryCommits": 5,
+        "processId": os.getpid(),
+        "processStartedAt": report["processStartedAt"],
         "rawEvents": 120,
         "recordedAt": report["recordedAt"],
+        "runtimeSessionId": report["runtimeSessionId"],
         "sceneCommits": 7,
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "state": "finished",
         "surface": "resize",
     }
     assert report["durationMs"] >= 0
+    assert report["runtimeSessionId"].startswith(f"{os.getpid()}-")
     assert not any(
         key.casefold() in {"x", "y", "cursor", "title", "text"}
         for key in report
@@ -1425,7 +1758,7 @@ def test_local_gesture_close_cancels_diagnostic_and_clears_owners(tmp_path) -> N
     event_filter.close_drag_diagnostics_writer()
 
     report = json.loads(report_path.read_text("utf-8"))
-    assert report["schemaVersion"] == 3
+    assert report["schemaVersion"] == 4
     assert report["surface"] == "accessory"
     assert report["state"] == "cancelled"
     assert report["cancelled"] is True
@@ -1477,7 +1810,7 @@ def test_native_filter_resume_keeps_retry_authority_until_install_succeeds() -> 
     native_filter = object()
     event_filter.configure_native_drag_filter(app, native_filter)
 
-    assert event_filter.tryStartSystemMove(37) is True
+    assert _start_qt_system_move_compatibility(event_filter, 37) is True
     event_filter.acknowledgeSystemMoveFinished(37)
     assert event_filter._native_drag_filter_suspended is True
     assert app.installed == []
@@ -1494,7 +1827,7 @@ def test_qt_pointer_filter_resume_retries_after_native_filter_succeeds() -> None
     native_filter = object()
     event_filter.configure_native_drag_filter(app, native_filter)
 
-    assert event_filter.tryStartSystemMove(371) is True
+    assert _start_qt_system_move_compatibility(event_filter, 371) is True
     event_filter.acknowledgeSystemMoveFinished(371)
     assert event_filter._native_drag_filter_suspended is False
     assert event_filter._qt_pointer_filter_suspended is True
@@ -1513,7 +1846,7 @@ def test_release_watchdog_failure_restores_filter_and_finishes_gesture() -> None
     native_filter = object()
     event_filter.configure_native_drag_filter(native_app, native_filter)
 
-    assert event_filter.tryStartSystemMove(38) is True
+    assert _start_qt_system_move_compatibility(event_filter, 38) is True
 
     def unavailable_button_state() -> bool:
         raise OSError("User32 unavailable")
@@ -1536,7 +1869,8 @@ def test_release_watchdog_has_bounded_native_move_fail_safe() -> None:
     native_filter = object()
     event_filter.configure_native_drag_filter(native_app, native_filter)
 
-    assert event_filter.tryStartSystemMove(39) is True
+    assert _start_qt_system_move_compatibility(event_filter, 39) is True
+    event_filter._system_move_watchdog_started_at = 0.000001
     event_filter._SYSTEM_MOVE_MAX_HOLD_SECONDS = 0.0
     event_filter._poll_system_move_release()
     app_loop.processEvents()
@@ -1559,7 +1893,13 @@ def test_process_move_events_replace_frame_rate_release_polling() -> None:
     event_filter._system_move_end_watcher = SimpleNamespace(ready=True)
 
     event_filter._reset_drag_diagnostics()
-    assert event_filter.tryStartSystemMove(391) is True
+    event_filter._new_system_move_session(391)
+    event_filter._diagnostic_gesture_serial = 391
+    event_filter._active_system_move_window_id = native_window_id
+    event_filter._system_move_start_returned = True
+    event_filter._system_move_release_timer.setSingleShot(False)
+    event_filter._system_move_release_timer.setInterval(64)
+    event_filter._system_move_release_timer.start()
     assert event_filter._system_move_release_timer.interval() == 64
     assert event_filter._system_move_release_timer.isSingleShot() is False
 
@@ -1571,6 +1911,7 @@ def test_process_move_events_replace_frame_rate_release_polling() -> None:
     assert event_filter._system_move_release_timer.interval() == 64
     event_filter.noteSystemMoveEntered(100, 100)
     event_filter.noteSystemWindowMoving(112, 100)
+    event_filter._system_move_max_distance_squared = 144.0
     event_filter._on_system_move_ended(9999)
     assert event_filter.native_system_move_active is True
 
@@ -1622,13 +1963,13 @@ def test_native_move_completion_waits_one_turn_and_honors_release_ack():
     root = _NativeMoveRoot()
     event_filter = CompactPointerEventFilter(root)
 
-    assert event_filter.tryStartSystemMove(41) is True
+    assert _start_qt_system_move_compatibility(event_filter, 41) is True
     event_filter.queueSystemMoveFinished()
     assert root.completions == []
     app.processEvents()
     assert root.completions == [41]
 
-    assert event_filter.tryStartSystemMove(42) is True
+    assert _start_qt_system_move_compatibility(event_filter, 42) is True
     event_filter.queueSystemMoveFinished()
     event_filter.acknowledgeSystemMoveFinished(42)
     app.processEvents()
@@ -1652,7 +1993,7 @@ def test_drag_diagnostics_are_content_free_and_persist_after_release(tmp_path):
         Qt.KeyboardModifier.NoModifier,
     )
     assert event_filter.eventFilter(root, press) is False
-    assert event_filter.tryStartSystemMove(81) is True
+    assert _start_qt_system_move_compatibility(event_filter, 81) is True
     event_filter.noteSystemMoveEntered(100, 100)
     # The root reports DPR 1.5, so the logical 4 px threshold is 6 physical
     # pixels. The exact boundary is still a click; only a larger path latches.
@@ -1675,7 +2016,9 @@ def test_drag_diagnostics_are_content_free_and_persist_after_release(tmp_path):
     assert event_filter.wait_for_drag_diagnostics_write(1.0) is True
 
     report = json.loads(report_path.read_text("utf-8"))
-    assert report["schemaVersion"] == 3
+    assert report["schemaVersion"] == 4
+    assert report["processId"] == os.getpid()
+    assert report["runtimeSessionId"].startswith(f"{os.getpid()}-")
     assert report["state"] == "finished"
     assert report["surface"] == "character"
     assert report["mode"] == "native"
@@ -1703,7 +2046,7 @@ def test_drag_diagnostics_keep_armed_phase_in_memory_until_release(tmp_path):
     event_filter = CompactPointerEventFilter(root, diagnostics_path=report_path)
 
     event_filter._reset_drag_diagnostics()
-    assert event_filter.tryStartSystemMove(811) is True
+    assert _start_qt_system_move_compatibility(event_filter, 811) is True
     assert event_filter._diagnostic_phase == "armed"
     assert not report_path.exists()
 
@@ -1727,7 +2070,7 @@ def test_stationary_native_press_still_persists_path_diagnostics(tmp_path):
     )
 
     event_filter._reset_drag_diagnostics()
-    assert event_filter.tryStartSystemMove(82) is True
+    assert _start_qt_system_move_compatibility(event_filter, 82) is True
     event_filter.acknowledgeSystemMoveFinished(82)
     assert event_filter.wait_for_drag_diagnostics_write(1.0) is True
 

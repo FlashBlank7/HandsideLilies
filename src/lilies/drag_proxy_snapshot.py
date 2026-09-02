@@ -419,6 +419,8 @@ class DragProxySnapshotCache(QObject):
         captured_geometry_key = self._grab_geometry_key
         deferred_for_gesture = self._gesture_active
         ready_proxy: WindowsDragProxy | None = None
+        candidate_proxy: WindowsDragProxy | None = None
+        candidate_was_new = False
         ready_bounds = QRect()
         if deferred_for_gesture:
             self._last_failure = "grab-deferred-for-gesture"
@@ -448,8 +450,12 @@ class DragProxySnapshotCache(QObject):
                         cropped.constBits(),
                         stride=cropped.bytesPerLine(),
                     )
-                    ready_proxy = self._proxy or self._proxy_factory()
-                    ready_proxy.upload_bitmap(bitmap)
+                    candidate_proxy = self._proxy
+                    if candidate_proxy is None:
+                        candidate_proxy = self._proxy_factory()
+                        candidate_was_new = True
+                    candidate_proxy.upload_bitmap(bitmap)
+                    ready_proxy = candidate_proxy
             except (
                 AttributeError,
                 RuntimeError,
@@ -460,6 +466,19 @@ class DragProxySnapshotCache(QObject):
                 ready_proxy = None
                 self._last_failure = "upload-failed"
                 self._last_failure_type = type(error).__name__
+                if candidate_was_new and candidate_proxy is not None:
+                    # Native candidates prewarm a release sentinel in their
+                    # constructor. If first upload fails, this local candidate
+                    # never reaches self._proxy/app shutdown, so close it here
+                    # rather than leaking one idle worker per refresh attempt.
+                    close_candidate = getattr(candidate_proxy, "close", None)
+                    try:
+                        if callable(close_candidate):
+                            close_candidate()
+                        elif candidate_proxy.handle is not None:
+                            candidate_proxy.destroy()
+                    except (AttributeError, RuntimeError, WindowsDragProxyError):
+                        pass
         if ready_proxy is not None and not ready_bounds.isEmpty():
             self._proxy = ready_proxy
             self._metadata = DragProxySnapshotMetadata(
@@ -585,7 +604,25 @@ class DragProxySnapshotCache(QObject):
         except WindowsDragProxyError:
             started = False
         if not started:
+            invalidated = getattr(proxy, "handle", None) is None
             self.cancel()
+            if invalidated:
+                # A poison guard can synchronously destroy the just-posted
+                # native target. Its bitmap and metadata are one lifecycle
+                # unit: keeping the old metadata would make same-key request()
+                # incorrectly skip the replacement idle grab forever.
+                close_proxy = getattr(proxy, "close", None)
+                try:
+                    if callable(close_proxy):
+                        close_proxy()
+                    elif getattr(proxy, "handle", None) is not None:
+                        proxy.destroy()
+                except (AttributeError, RuntimeError, WindowsDragProxyError):
+                    pass
+                self._proxy = None
+                self._metadata = None
+                self._refresh_after_gesture = True
+                self._schedule_refresh_after_preview()
             self._last_failure = "move-request-failed"
         return started
 
@@ -674,9 +711,13 @@ class DragProxySnapshotCache(QObject):
         self._alpha_logical_height = 0.0
         self._alpha_semantic_key = ""
         self._alpha_geometry_key = ""
-        if proxy is not None and proxy.handle is not None:
+        if proxy is not None:
             try:
-                proxy.destroy()
+                close_proxy = getattr(proxy, "close", None)
+                if callable(close_proxy):
+                    close_proxy()
+                elif proxy.handle is not None:
+                    proxy.destroy()
             except WindowsDragProxyError:
                 pass
 

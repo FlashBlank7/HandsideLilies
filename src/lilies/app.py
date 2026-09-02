@@ -945,6 +945,8 @@ class _SystemMoveWatcher(QObject):
     # catches PySide's OverflowError.
     moveStarted = Signal(object)
     moveEnded = Signal(object)
+    moveStartedTagged = Signal(object, object)
+    moveEndedTagged = Signal(object, object)
 
     _EVENT_SYSTEM_MOVESIZESTART = 0x000A
     _EVENT_SYSTEM_MOVESIZEEND = 0x000B
@@ -955,6 +957,7 @@ class _SystemMoveWatcher(QObject):
     def __init__(self, window_id: int, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._window_id = max(0, int(window_id))
+        self._window_generation = 0
         self._window_id_lock = threading.Lock()
         self._start_event_count = 0
         self._end_event_count = 0
@@ -986,9 +989,10 @@ class _SystemMoveWatcher(QObject):
         self._ready.wait(max(0.0, float(timeout)))
         return self.ready
 
-    def set_window_id(self, window_id: int) -> None:
+    def set_window_id(self, window_id: int, generation: int = 0) -> None:
         with self._window_id_lock:
             self._window_id = max(0, int(window_id))
+            self._window_generation = max(0, int(generation))
 
     @property
     def target_window_id(self) -> int:
@@ -1083,6 +1087,7 @@ class _SystemMoveWatcher(QObject):
                     with self._window_id_lock:
                         if observed <= 0 or observed != self._window_id:
                             return
+                        generation = int(self._window_generation)
                         if event_kind == self._EVENT_SYSTEM_MOVESIZESTART:
                             self._start_event_count += 1
                         elif event_kind == self._EVENT_SYSTEM_MOVESIZEEND:
@@ -1091,8 +1096,10 @@ class _SystemMoveWatcher(QObject):
                             return
                     if event_kind == self._EVENT_SYSTEM_MOVESIZESTART:
                         self.moveStarted.emit(observed)
+                        self.moveStartedTagged.emit(observed, generation)
                     elif event_kind == self._EVENT_SYSTEM_MOVESIZEEND:
                         self.moveEnded.emit(observed)
+                        self.moveEndedTagged.emit(observed, generation)
                 except Exception:
                     # Never unwind Python through the User32 callback.
                     return
@@ -1180,6 +1187,9 @@ class CompactPointerEventFilter(QObject):
     _SWP_HIDEWINDOW = 0x0080
     _SW_HIDE = 0
     _SW_SHOWNOACTIVATE = 4
+    _VK_LBUTTON = 0x01
+    _VK_RBUTTON = 0x02
+    _SM_SWAPBUTTON = 23
     _LOCAL_GESTURE_SURFACES = frozenset({"resize", "accessory", "action"})
     _LOCAL_GESTURE_COUNTER_LIMIT = 1_000_000_000
 
@@ -1194,6 +1204,21 @@ class CompactPointerEventFilter(QObject):
         self._diagnostics_path = (
             Path(diagnostics_path) if diagnostics_path is not None else None
         )
+        # A latest-only diagnostic can survive an application update.  Bind
+        # every sample to the exact process/runtime session that produced it
+        # so an older stationary press can never be mistaken for evidence
+        # from the currently installed build.
+        self._diagnostic_process_id = os.getpid()
+        self._diagnostic_process_started_at = datetime.now(UTC).isoformat()
+        self._diagnostic_runtime_session_id = (
+            f"{self._diagnostic_process_id}-{time.time_ns():x}"
+        )
+        try:
+            self._diagnostic_application_version = str(
+                QApplication.applicationVersion() or ""
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            self._diagnostic_application_version = ""
         self._diagnostics_writer = (
             _LatestJsonFileWriter(self._diagnostics_path)
             if self._diagnostics_path is not None
@@ -1201,6 +1226,14 @@ class CompactPointerEventFilter(QObject):
         )
         self._last_diagnostics_write_sequence = 0
         self.serial = 0
+        # ``gesture_serial`` is owned by QML and can be cleared synchronously
+        # when ReleaseCapture cancels a MouseArea.  This Python-only generation
+        # is the lifecycle authority: once retired, no return from a nested
+        # start call or delayed native event may make that session active again.
+        self._system_move_session_counter = 0
+        self._active_system_move_session_id = 0
+        self._proxy_move_session_id = 0
+        self._system_move_watcher_generation = 0
         self._active_system_move_serial = 0
         self._active_system_move_window_id = 0
         self._last_direct_position: QPoint | None = None
@@ -1293,10 +1326,10 @@ class CompactPointerEventFilter(QObject):
         self._diagnostic_phase = "idle"
         self._last_drag_diagnostics: dict[str, object] = {}
         self._system_move_release_timer = QTimer(self)
-        # EVENT_SYSTEM_MOVESIZEEND is the normal completion authority. A short
-        # initial cadence only latches the first real displacement (including
-        # out-and-back drags); after that this becomes a sparse fail-safe and
-        # must not become a second frame clock.
+        # Layered proxy completion is driven by the off-GUI release sentinel;
+        # this timer observes the logical primary button after the modal loop
+        # returns and commits/restores presentation without becoming a frame
+        # clock.
         self._system_move_release_timer.setInterval(250)
         self._system_move_release_timer.timeout.connect(
             self._poll_system_move_release
@@ -1342,6 +1375,52 @@ class CompactPointerEventFilter(QObject):
             self._queued_native_character_request_id > 0
             or self._active_system_move_serial > 0
         )
+
+    def _owns_system_move_session(
+        self,
+        session_id: int,
+        gesture_serial: int | None = None,
+    ) -> bool:
+        """Return whether one non-retired native move still owns this object."""
+
+        expected_session = int(session_id)
+        if (
+            expected_session <= 0
+            or expected_session != self._active_system_move_session_id
+        ):
+            return False
+        if gesture_serial is None:
+            return self._active_system_move_serial > 0
+        return int(gesture_serial) == self._active_system_move_serial
+
+    def _new_system_move_session(self, gesture_serial: int) -> int:
+        """Create the sole lifecycle token before any re-entrant native call."""
+
+        # Signal(object) and every Python-side owner accept arbitrary-size
+        # integers. Never wrap: a delayed WinEvent tag from an old move must be
+        # unable to become equal to a future session in this process.
+        self._system_move_session_counter += 1
+        session_id = self._system_move_session_counter
+        self._active_system_move_session_id = session_id
+        self._active_system_move_serial = int(gesture_serial)
+        return session_id
+
+    def _retire_system_move_identity(
+        self,
+        session_id: int,
+        gesture_serial: int,
+    ) -> bool:
+        """Make terminal state authoritative before callbacks can re-enter."""
+
+        if not self._owns_system_move_session(session_id, gesture_serial):
+            return False
+        self._active_system_move_session_id = 0
+        self._active_system_move_serial = 0
+        self._active_system_move_window_id = 0
+        self._system_move_watcher_generation = 0
+        self._system_move_watchdog_started_at = 0.0
+        self._system_move_release_timer.stop()
+        return True
 
     def _publish_drag_proxy_runtime_state(
         self,
@@ -1489,11 +1568,11 @@ class CompactPointerEventFilter(QObject):
                 int(native_filter.native_window_id),
                 self,
             )
-            watcher.moveStarted.connect(
+            watcher.moveStartedTagged.connect(
                 self._on_system_move_started,
                 Qt.ConnectionType.QueuedConnection,
             )
-            watcher.moveEnded.connect(
+            watcher.moveEndedTagged.connect(
                 self._on_system_move_ended,
                 Qt.ConnectionType.QueuedConnection,
             )
@@ -1811,9 +1890,28 @@ class CompactPointerEventFilter(QObject):
         )
         return True
 
+    def _current_root_window_id(self) -> int:
+        """Return and publish the QWindow's current HWND identity."""
+
+        try:
+            current_window_id = int(self.root.winId())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return 0
+        if current_window_id <= 0:
+            return 0
+        native_filter = self._native_drag_filter
+        if native_filter is not None:
+            try:
+                if int(getattr(native_filter, "native_window_id", 0) or 0) != (
+                    current_window_id
+                ):
+                    native_filter.native_window_id = current_window_id
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+        return current_window_id
+
     def _restore_proxy_root_presentation(self) -> bool:
         native_hidden = self._proxy_root_native_hidden
-        native_window_id = self._proxy_root_native_window_id
         try:
             logical_visible = bool(self.root.isVisible())
         except (AttributeError, RuntimeError, TypeError, ValueError):
@@ -1846,24 +1944,15 @@ class CompactPointerEventFilter(QObject):
             self._publish_drag_proxy_runtime_state()
             return True
 
-        restored_native = False
-        attempted_ids: set[int] = set()
-        if native_window_id > 0:
-            attempted_ids.add(native_window_id)
-            restored_native = self._set_native_window_shown(
-                native_window_id,
-                True,
-            )
-        if not restored_native:
-            try:
-                current_window_id = int(self.root.winId())
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                current_window_id = 0
-            if current_window_id > 0 and current_window_id not in attempted_ids:
-                restored_native = self._set_native_window_shown(
-                    current_window_id,
-                    True,
-                )
+        # The saved HWND can be destroyed and numerically reused by another
+        # window while the proxy is moving. Resolve QWindow's current identity
+        # first and never touch the saved value when it differs, even if a raw
+        # ShowWindow on that stale/reused value would report success.
+        current_window_id = self._current_root_window_id()
+        restored_native = bool(
+            current_window_id > 0
+            and self._set_native_window_shown(current_window_id, True)
+        )
         if not restored_native:
             # A WinId recreation can make the first show fail transiently.
             # Retain ownership and retry instead of leaving QML logically
@@ -1928,12 +2017,11 @@ class CompactPointerEventFilter(QObject):
 
     def _reset_proxy_watcher_target(self) -> None:
         watcher = self._system_move_end_watcher
-        native_filter = self._native_drag_filter
-        root_window_id = int(
-            getattr(native_filter, "native_window_id", 0) or 0
-        )
-        if watcher is not None and root_window_id > 0:
-            watcher.set_window_id(root_window_id)
+        root_window_id = self._current_root_window_id()
+        setter = getattr(watcher, "set_window_id", None)
+        if callable(setter) and root_window_id > 0:
+            setter(root_window_id, 0)
+        self._system_move_watcher_generation = 0
 
     def _complete_proxy_preview(
         self,
@@ -2001,6 +2089,7 @@ class CompactPointerEventFilter(QObject):
         self._end_drag_proxy_gesture()
         self._restore_proxy_root_presentation()
         self._proxy_move_active = False
+        self._proxy_move_session_id = 0
         self._proxy_root_origin_physical = None
         self._reset_proxy_watcher_target()
         self._publish_drag_proxy_runtime_state()
@@ -2070,14 +2159,15 @@ class CompactPointerEventFilter(QObject):
 
     def _prepare_proxy_system_move(
         self,
+        session_id: int,
         semantic_key: str = "",
         geometry_key: str = "",
     ) -> bool:
+        session_id = int(session_id)
+        if not self._owns_system_move_session(session_id):
+            return False
         cache = self._drag_proxy_cache
-        native_filter = self._native_drag_filter
-        root_window_id = int(
-            getattr(native_filter, "native_window_id", 0) or 0
-        )
+        root_window_id = self._current_root_window_id()
         if self._proxy_preview_hide_pending:
             self._complete_proxy_preview(
                 self._proxy_preview_hide_generation
@@ -2126,9 +2216,12 @@ class CompactPointerEventFilter(QObject):
                 fallback_reason=self._proxy_fallback_reason
             )
             return False
-        watcher = self._system_move_end_watcher
-        if watcher is not None:
-            watcher.set_window_id(proxy_window_id)
+        # Do not retarget the OUTOFCONTEXT WinEvent hook to a reused proxy
+        # HWND. Its callback observes generation only when Python eventually
+        # runs, so a delayed event from session N could otherwise be mislabeled
+        # as N+1. Layered proxy completion is owned by the prewarmed release
+        # sentinel plus the logical-primary-button watchdog after modal exit.
+        self._system_move_watcher_generation = 0
         self._active_system_move_window_id = int(proxy_window_id)
         self._proxy_root_origin_physical = root_rect
         preview = cache.preview_final()
@@ -2137,7 +2230,24 @@ class CompactPointerEventFilter(QObject):
                 preview.rect.left,
                 preview.rect.top,
             )
+        # Mark proxy ownership *before* start_move(). Native request_move posts
+        # WM_NCLBUTTONDOWN and calls ReleaseCapture; that call can synchronously
+        # re-enter QML and finish this gesture. The terminal path must therefore
+        # already be able to cancel, sample, commit and restore the proxy.
+        self._proxy_move_active = True
+        self._proxy_move_session_id = session_id
+        self._diagnostic_proxy_used = True
+        self._proxy_fallback_reason = ""
+        self._proxy_cache_age_ms = cache.cache_age_ms
+        self._proxy_visual_stale = cache.last_prepare_used_stale_visual
+        metadata = cache.metadata
+        if metadata is not None:
+            self._proxy_bitmap_width = metadata.pixel_size.width()
+            self._proxy_bitmap_height = metadata.pixel_size.height()
         if not cache.start_move():
+            self._proxy_move_active = False
+            self._proxy_move_session_id = 0
+            self._diagnostic_proxy_used = False
             cache.cancel()
             self._restore_proxy_root_presentation()
             self._reset_proxy_watcher_target()
@@ -2154,31 +2264,40 @@ class CompactPointerEventFilter(QObject):
                 fallback_reason=self._proxy_fallback_reason
             )
             return False
-        metadata = cache.metadata
-        self._proxy_move_active = True
-        self._diagnostic_proxy_used = True
-        self._proxy_fallback_reason = ""
-        self._proxy_cache_age_ms = cache.cache_age_ms
-        self._proxy_visual_stale = cache.last_prepare_used_stale_visual
-        if metadata is not None:
-            self._proxy_bitmap_width = metadata.pixel_size.width()
-            self._proxy_bitmap_height = metadata.pixel_size.height()
+        if not self._owns_system_move_session(session_id):
+            # ReleaseCapture completed the QML side while request_move was on
+            # the stack. The session is terminal; never publish or resurrect
+            # it merely because the already-posted native request returned
+            # success. A generation-bound CANCEL is queued behind that request
+            # and this idempotent commit restores the real pet immediately.
+            if self._proxy_move_session_id == session_id:
+                self._request_proxy_native_cancel()
+                self._sample_system_window_position()
+                self._commit_proxy_geometry(session_id)
+            return False
         self._publish_drag_proxy_runtime_state(
             last_mode="layered-proxy",
             fallback_reason="",
         )
         return True
 
-    def _commit_proxy_geometry(self) -> bool:
+    def _commit_proxy_geometry(
+        self,
+        expected_session_id: int | None = None,
+    ) -> bool:
         if not self._proxy_move_active:
+            return False
+        if (
+            expected_session_id is not None
+            and int(expected_session_id) != self._proxy_move_session_id
+        ):
             return False
         cache = self._drag_proxy_cache
         origin = self._proxy_root_origin_physical
         final = cache.preview_final() if cache is not None else None
-        native_filter = self._native_drag_filter
-        root_window_id = int(
-            getattr(native_filter, "native_window_id", 0) or 0
-        )
+        # Resolve the QWindow identity at commit time. The handle captured at
+        # press may already belong to an unrelated window after WinIdChange.
+        root_window_id = self._current_root_window_id()
         committed = False
         if final is not None and origin is not None and root_window_id > 0:
             target_x = origin.left + final.delta.x
@@ -2192,6 +2311,7 @@ class CompactPointerEventFilter(QObject):
             self._proxy_real_geometry_commits += 1
         root_restored = self._restore_proxy_root_presentation()
         self._proxy_move_active = False
+        self._proxy_move_session_id = 0
         self._proxy_root_origin_physical = None
         self._reset_proxy_watcher_target()
         if cache is not None:
@@ -2310,7 +2430,7 @@ class CompactPointerEventFilter(QObject):
             else 0.0
         )
         return {
-            "schemaVersion": 3,
+            **self._drag_diagnostic_identity(),
             "recordedAt": datetime.now(UTC).isoformat(),
             "state": str(phase),
             "surface": surface,
@@ -2322,6 +2442,17 @@ class CompactPointerEventFilter(QObject):
             "nativeGeometryCommits": int(
                 state.get("nativeGeometryCommits", 0) or 0
             ),
+        }
+
+    def _drag_diagnostic_identity(self) -> dict[str, object]:
+        """Return bounded build/session identity shared by every drag sample."""
+
+        return {
+            "schemaVersion": 4,
+            "applicationVersion": self._diagnostic_application_version,
+            "processId": self._diagnostic_process_id,
+            "processStartedAt": self._diagnostic_process_started_at,
+            "runtimeSessionId": self._diagnostic_runtime_session_id,
         }
 
     def _submit_local_gesture_phase(
@@ -2537,9 +2668,9 @@ class CompactPointerEventFilter(QObject):
         # Do not call QML while QAbstractNativeEventFilter is on User32's
         # dispatch stack.  Store only two finite coordinates and a local token;
         # the next Qt turn owns all declarative state changes and proxy work.
-        self._native_character_request_counter = (
-            self._native_character_request_counter % 1_000_000_000
-        ) + 1
+        # This request token is compared only in Python. Monotonic, non-wrapping
+        # identity keeps a delayed terminal timer permanently stale.
+        self._native_character_request_counter += 1
         self._queued_native_character_request_id = (
             self._native_character_request_counter
         )
@@ -2759,16 +2890,32 @@ class CompactPointerEventFilter(QObject):
         gesture_serial = int(gesture_serial)
         if gesture_serial <= 0 or self._closing_drag_bridge:
             return False
+        if self._active_system_move_session_id > 0:
+            # A compatibility retry for the same QML gesture is idempotent.
+            # A different gesture may not steal a proxy/native loop that has
+            # not reached its terminal transition yet.
+            return bool(gesture_serial == self._active_system_move_serial)
         # Claim this gesture before Qt posts SC_DRAGMOVE.  This closes the
         # small press-to-native-message window in which a high-polling mouse
         # could otherwise feed the direct fallback as well as DWM.
-        self._active_system_move_serial = gesture_serial
+        session_id = self._new_system_move_session(gesture_serial)
         self._diagnostic_gesture_serial = gesture_serial
         native_filter = self._native_drag_filter
         self._active_system_move_window_id = int(
             getattr(native_filter, "native_window_id", 0) or 0
         )
         self._enqueue_drag_phase(gesture_serial, "armed")
+        watcher = self._system_move_end_watcher
+        watcher_set_window = getattr(watcher, "set_window_id", None)
+        if (
+            callable(watcher_set_window)
+            and self._active_system_move_window_id > 0
+        ):
+            watcher_set_window(
+                self._active_system_move_window_id,
+                session_id,
+            )
+            self._system_move_watcher_generation = session_id
         if os.name == "nt":
             # The HWND was materialized during startup.  Capture one exact
             # physical origin before the modal move loop so diagnostics and
@@ -2787,34 +2934,64 @@ class CompactPointerEventFilter(QObject):
         # held gesture and restore it at the first completion boundary.
         self._suspend_native_drag_filter()
         started = self._prepare_proxy_system_move(
+            session_id,
             str(semantic_key or ""),
             str(geometry_key or ""),
         )
         proxy_started = bool(started)
-        if not started:
+        if (
+            not started
+            and os.name != "nt"
+            and self._owns_system_move_session(session_id, gesture_serial)
+        ):
             try:
                 started = bool(self.root.startSystemMove())
             except (AttributeError, RuntimeError, TypeError, ValueError):
-                self._active_system_move_serial = 0
-                self._active_system_move_window_id = 0
-                self._system_move_watchdog_started_at = 0.0
-                self._resume_native_drag_filter()
-                self._publish_drag_proxy_runtime_state(
-                    last_mode="direct-fallback",
-                    fallback_reason=(
-                        self._proxy_fallback_reason
-                        or "native-move-unavailable"
-                    ),
-                )
-                return False
-        self._system_move_start_returned = started
-        self._active_system_move_serial = gesture_serial if started else 0
+                started = False
+        self._system_move_start_returned = bool(started)
+        if self._last_drag_diagnostics:
+            # A synchronous capture cancellation can finish QML while the
+            # native request is on this stack. Keep its content-free evidence
+            # truthful without allowing that old completion to own lifecycle.
+            self._last_drag_diagnostics["systemMoveStartReturned"] = bool(
+                started
+            )
+            self._schedule_drag_diagnostics_write()
+        if not self._owns_system_move_session(session_id, gesture_serial):
+            # A terminal callback won the race. Never execute the historical
+            # unconditional assignment that resurrected ``active`` after QML
+            # had already completed. If proxy setup crossed that terminal
+            # edge, retire only the matching generation.
+            if (
+                self._proxy_move_active
+                and self._proxy_move_session_id == session_id
+            ):
+                self._request_proxy_native_cancel()
+                self._sample_system_window_position()
+                self._commit_proxy_geometry(session_id)
+            self._resume_native_drag_filter()
+            return False
+        if not started:
+            self._retire_system_move_identity(session_id, gesture_serial)
+            if (
+                self._proxy_move_active
+                and self._proxy_move_session_id == session_id
+            ):
+                self._request_proxy_native_cancel()
+                self._commit_proxy_geometry(session_id)
+            self._resume_native_drag_filter()
+            self._publish_drag_proxy_runtime_state(
+                last_mode="direct-fallback",
+                fallback_reason=(
+                    self._proxy_fallback_reason
+                    or "native-move-unavailable"
+                ),
+            )
+            return False
         if started and os.name == "nt":
-            # The process-local WinEvent hook is the normal completion signal.
-            # Keep a deliberately sparse public-button-state poll only as a
-            # fail-safe for a broken accessibility hook.  It does not drive
-            # window motion and therefore does not need display-frame cadence.
-            watcher = self._system_move_end_watcher
+            # The off-GUI sentinel makes User32 leave the proxy modal loop on
+            # release. This sparse logical-primary-button poll then owns the
+            # GUI-side commit/restore; it never drives window motion.
             self._system_move_release_timer.setSingleShot(False)
             self._system_move_release_timer.setInterval(
                 64 if watcher is not None and watcher.ready else 100
@@ -2822,10 +2999,10 @@ class CompactPointerEventFilter(QObject):
             self._system_move_watchdog_started_at = time.perf_counter()
             self._system_move_release_timer.start()
         else:
-            self._active_system_move_window_id = 0
+            # Offscreen platforms keep a deterministic compatibility result;
+            # their tests explicitly acknowledge the session.
             self._system_move_watchdog_started_at = 0.0
             self._system_move_release_timer.stop()
-            self._resume_native_drag_filter()
         self._publish_drag_proxy_runtime_state(
             last_mode=(
                 "layered-proxy"
@@ -2999,7 +3176,7 @@ class CompactPointerEventFilter(QObject):
             else "direct"
         )
         self._last_drag_diagnostics = {
-            "schemaVersion": 3,
+            **self._drag_diagnostic_identity(),
             "recordedAt": datetime.now(UTC).isoformat(),
             "state": "finished",
             "surface": "character",
@@ -3130,6 +3307,9 @@ class CompactPointerEventFilter(QObject):
         )
         self._proxy_root_restore_timer.stop()
         self._active_system_move_serial = 0
+        self._active_system_move_session_id = 0
+        self._proxy_move_session_id = 0
+        self._system_move_watcher_generation = 0
         self._active_system_move_window_id = 0
         self._system_move_watchdog_started_at = 0.0
         self._system_move_release_timer.stop()
@@ -3150,35 +3330,32 @@ class CompactPointerEventFilter(QObject):
     def acknowledgeSystemMoveFinished(self, gesture_serial: int) -> None:
         """Make a later queued native completion a no-op after QML release."""
 
-        if int(gesture_serial) == self._active_system_move_serial:
-            # Privacy/full-screen state can hide the pet while User32 still
-            # owns the proxy's modal move. End that native loop first so an
-            # invisible HWND never retains capture until the physical release.
-            # Natural WM_EXITSIZEMOVE completion has already committed the
-            # proxy and therefore makes this a no-op.
-            self._request_proxy_native_cancel()
-            if not self._last_drag_diagnostics:
-                # QWindow::startSystemMove can synchronously release QML's
-                # pointer grab.  If that re-entrant cancellation acknowledges
-                # the native request before the ordinary release callback, keep
-                # a content-free record instead of silently losing the only
-                # clue about which path the installed machine took.
-                self._sample_system_window_position()
-                self._commit_proxy_geometry()
-                if not self._completion_queued_by:
-                    self._completion_queued_by = "qml-acknowledge"
-                self.completeGestureDiagnostics(
-                    int(gesture_serial),
-                    self.systemMoveHadMotion(int(gesture_serial)),
-                    bool(self._system_move_start_returned),
-                    True,
-                )
-            self._active_system_move_serial = 0
-            self._active_system_move_window_id = 0
-            self._system_move_watchdog_started_at = 0.0
-            self._system_move_release_timer.stop()
-            self._resume_native_drag_filter()
-            self._end_drag_proxy_gesture()
+        serial = int(gesture_serial)
+        session_id = self._active_system_move_session_id
+        if not self._owns_system_move_session(session_id, serial):
+            return
+        # Sample/cancel while the proxy HWND identity is still available, then
+        # retire the session *before* any geometry/QML callback can re-enter.
+        # This ordering is what makes a synchronous ReleaseCapture completion
+        # terminal instead of allowing tryStartSystemMove's return path to
+        # resurrect the old gesture.
+        self._sample_system_window_position()
+        self._request_proxy_native_cancel()
+        moved = self.systemMoveHadMotion(serial)
+        self._retire_system_move_identity(session_id, serial)
+        self._commit_proxy_geometry(session_id)
+        self._reset_proxy_watcher_target()
+        if not self._completion_queued_by:
+            self._completion_queued_by = "qml-acknowledge"
+        if not self._last_drag_diagnostics:
+            self.completeGestureDiagnostics(
+                serial,
+                moved,
+                bool(self._system_move_start_returned),
+                True,
+            )
+        self._resume_native_drag_filter()
+        self._end_drag_proxy_gesture()
 
     @Slot(int, result="QVariantMap")
     def takeLatestPointerEvent(self, after_serial: int) -> dict[str, object]:
@@ -3205,7 +3382,8 @@ class CompactPointerEventFilter(QObject):
         if self._closing_drag_bridge:
             return
         gesture_serial = self._active_system_move_serial
-        if gesture_serial <= 0:
+        session_id = self._active_system_move_session_id
+        if gesture_serial <= 0 or session_id <= 0:
             return
         self._completion_queued_by = str(source or "unknown")
         if self._last_drag_diagnostics:
@@ -3215,16 +3393,33 @@ class CompactPointerEventFilter(QObject):
             self._schedule_drag_diagnostics_write()
         QTimer.singleShot(
             0,
-            lambda serial=gesture_serial: self._deliverSystemMoveFinished(serial),
+            lambda current=session_id, serial=gesture_serial: (
+                self._deliverSystemMoveFinished(current, serial)
+            ),
         )
 
-    @Slot(object)
-    def _on_system_move_started(self, window_id: object) -> None:
+    @Slot(object, object)
+    def _on_system_move_started(
+        self,
+        window_id: object,
+        watcher_generation: object = 0,
+    ) -> None:
         """Latch proof that User32 entered the compositor move loop."""
 
         if self._closing_drag_bridge or self._active_system_move_serial <= 0:
             return
+        if self._proxy_move_active:
+            # WinEvent delivery cannot safely bind a reused proxy HWND to the
+            # generation in which the native event happened. Never let it
+            # mutate layered-proxy state; sentinel/watchdog own completion.
+            return
         if int(window_id) != self._active_system_move_window_id:
+            return
+        observed_generation = int(watcher_generation or 0)
+        if (
+            observed_generation > 0
+            and observed_generation != self._active_system_move_session_id
+        ):
             return
         self.noteSystemMoveEntered()
         self._enqueue_drag_phase(
@@ -3232,14 +3427,26 @@ class CompactPointerEventFilter(QObject):
             "native-active",
         )
 
-    @Slot(object)
-    def _on_system_move_ended(self, window_id: object) -> None:
+    @Slot(object, object)
+    def _on_system_move_ended(
+        self,
+        window_id: object,
+        watcher_generation: object = 0,
+    ) -> None:
         """Finish one compositor-owned gesture from EVENT_SYSTEM_MOVESIZEEND."""
 
         gesture_serial = self._active_system_move_serial
         if self._closing_drag_bridge or gesture_serial <= 0:
             return
+        if self._proxy_move_active:
+            return
         if int(window_id) != self._active_system_move_window_id:
+            return
+        observed_generation = int(watcher_generation or 0)
+        if (
+            observed_generation > 0
+            and observed_generation != self._active_system_move_session_id
+        ):
             return
         # A delayed END without this gesture's START must never terminate a
         # newly armed move on a reused HWND.
@@ -3290,9 +3497,9 @@ class CompactPointerEventFilter(QObject):
             and watcher.ready
             and self._system_move_release_timer.interval() < 500
         ):
-            # Once motion is proven, WinEvent END owns normal completion. Two
-            # public button-state checks per second are enough to recover from
-            # a missing END without adding visible cadence to DWM movement.
+            # Once motion is proven, two public primary-button checks per
+            # second are enough to finish after sentinel cancellation without
+            # adding visible cadence to DWM movement.
             self._system_move_release_timer.setInterval(500)
         try:
             left_button_down = self._left_button_is_down()
@@ -3312,68 +3519,69 @@ class CompactPointerEventFilter(QObject):
         self.queueSystemMoveFinished("button-release-watchdog")
 
     def _left_button_is_down(self) -> bool:
-        """Read only the public aggregate left-button state for drag exit."""
+        """Read the logical primary-button state for every drag exit path."""
 
-        return bool(ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000)
+        user32 = self._win32_user32()
+        primary_vk = (
+            self._VK_RBUTTON
+            if int(user32.GetSystemMetrics(self._SM_SWAPBUTTON))
+            else self._VK_LBUTTON
+        )
+        return bool(user32.GetAsyncKeyState(primary_vk) & 0x8000)
 
-    def _deliverSystemMoveFinished(self, gesture_serial: int) -> None:
-        if (
-            self._closing_drag_bridge
-            or gesture_serial != self._active_system_move_serial
+    @staticmethod
+    def _win32_user32() -> object:
+        """Narrow seam for deterministic swapped-button contract tests."""
+
+        return ctypes.windll.user32
+
+    def _deliverSystemMoveFinished(
+        self,
+        session_id: int,
+        gesture_serial: int,
+    ) -> None:
+        if self._closing_drag_bridge or not self._owns_system_move_session(
+            session_id, gesture_serial
         ):
             return
-        self._commit_proxy_geometry()
+        self._sample_system_window_position()
+        self._request_proxy_native_cancel()
+        moved = self.systemMoveHadMotion(gesture_serial)
+        native_active = bool(self._system_move_start_returned)
+        # Terminal identity changes first. Geometry restoration and QML may
+        # synchronously emit cancellation/acknowledgement, but those callbacks
+        # now see a retired token and are necessarily idempotent no-ops.
+        self._retire_system_move_identity(session_id, gesture_serial)
+        self._commit_proxy_geometry(session_id)
+        self._reset_proxy_watcher_target()
         self._resume_native_drag_filter()
         callback = getattr(self.root, "finishNativeSystemMove", None)
-        if not callable(callback):
-            self._active_system_move_serial = 0
-            self._active_system_move_window_id = 0
-            self._system_move_release_timer.stop()
-            self._end_drag_proxy_gesture()
-            return
-        try:
-            accepted = callback(gesture_serial)
-        except (RuntimeError, TypeError):
-            accepted = False
-        # A simple Python test double historically returned None. Production
-        # QML returns an explicit bool; only that explicit False is rejection.
-        if accepted is not False:
-            self._active_system_move_serial = 0
-            self._active_system_move_window_id = 0
-            self._system_move_watchdog_started_at = 0.0
-            self._system_move_release_timer.stop()
-            self._end_drag_proxy_gesture()
-            return
-        self._completion_delivery_retries += 1
-        force_callback = getattr(self.root, "forceFinishNativeSystemMove", None)
-        if callable(force_callback):
+        accepted = False
+        if callable(callback):
             try:
-                forced = force_callback(gesture_serial)
+                accepted = callback(gesture_serial)
             except (RuntimeError, TypeError):
-                forced = False
-            if forced is not False:
-                self._active_system_move_serial = 0
-                self._active_system_move_window_id = 0
-                self._system_move_watchdog_started_at = 0.0
-                self._system_move_release_timer.stop()
-                self._end_drag_proxy_gesture()
-                return
-        if self._completion_delivery_retries < 3:
-            QTimer.singleShot(
-                16,
-                lambda serial=gesture_serial: self._deliverSystemMoveFinished(
-                    serial
-                ),
+                accepted = False
+        # A simple Python test double historically returned None. Production
+        # QML returns an explicit bool; only explicit False requests its force
+        # reconciliation. Lifecycle is already safely terminal either way.
+        if accepted is False:
+            self._completion_delivery_retries += 1
+            force_callback = getattr(
+                self.root, "forceFinishNativeSystemMove", None
             )
-            return
-        # Never consume every future MouseMove because a stale QML serial
-        # rejected completion. Visibility/habitat cleanup remains free to
-        # reconcile presentation state, while diagnostics record the retries.
-        self._active_system_move_serial = 0
-        self._active_system_move_window_id = 0
-        self._system_move_watchdog_started_at = 0.0
-        self._system_move_release_timer.stop()
-        self._resume_native_drag_filter()
+            if callable(force_callback):
+                try:
+                    accepted = force_callback(gesture_serial)
+                except (RuntimeError, TypeError):
+                    accepted = False
+        if not self._last_drag_diagnostics:
+            self.completeGestureDiagnostics(
+                gesture_serial,
+                moved,
+                native_active,
+                True,
+            )
         self._end_drag_proxy_gesture()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -4496,7 +4704,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.51")
+    app.setApplicationVersion("0.3.52")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:

@@ -8,11 +8,13 @@ from PIL import Image, ImageDraw
 from lilies.core.activity import (
     ActivityContextService,
     CaptureCancelled,
+    CaptureStorageError,
     CaptureStaging,
     ForegroundContext,
     LowInformationCapture,
     ObservationPolicy,
     SensitiveWindowGuard,
+    StagedCapture,
     sanitize_window_title,
 )
 
@@ -220,6 +222,25 @@ def test_capture_staging_resizes_and_always_removes_temporary_file(tmp_path: Pat
     assert saved.is_file()
     current.release()
     assert current._image_bytes is None
+
+
+def test_retained_capture_has_a_hard_memory_bound_and_release_cleans_it(
+    tmp_path: Path,
+) -> None:
+    capture_path = tmp_path / "capture-staging" / "oversized.png"
+    capture_path.parent.mkdir(parents=True, exist_ok=True)
+    with capture_path.open("wb") as handle:
+        handle.truncate(StagedCapture.MAX_RETAINED_BYTES + 1)
+    capture = StagedCapture(capture_path, tmp_path / "capture-library")
+
+    with pytest.raises(CaptureStorageError, match="retention bound"):
+        capture.retain_in_memory()
+
+    assert capture._image_bytes is None
+    assert capture_path.exists()
+    capture.release()
+    assert not capture_path.exists()
+    assert capture._image_bytes is None
 
 
 def test_capture_staging_cleans_failure(tmp_path: Path) -> None:

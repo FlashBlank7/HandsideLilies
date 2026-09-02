@@ -355,61 +355,28 @@ Window {
         onTriggered: root.highlightedAnchor = ""
     }
 
-    function stageFor(points) {
-        if (points >= 1200)
-            return "相伴"
-        if (points >= 700)
-            return "亲近"
-        if (points >= 300)
-            return "信赖"
-        if (points >= 100)
-            return "熟悉"
-        return "初遇"
-    }
-
-    function stageBase(points) {
-        if (points >= 1200)
-            return 1200
-        if (points >= 700)
-            return 700
-        if (points >= 300)
-            return 300
-        if (points >= 100)
-            return 100
-        return 0
-    }
-
-    function nextThreshold(points) {
-        if (points >= 1200)
-            return 1200
-        if (points >= 700)
-            return 1200
-        if (points >= 300)
-            return 700
-        if (points >= 100)
-            return 300
-        return 100
-    }
-
-    function nextStage(points) {
-        if (points >= 1200)
-            return "已抵达相伴"
-        if (points >= 700)
-            return "相伴"
-        if (points >= 300)
-            return "亲近"
-        if (points >= 100)
-            return "信赖"
-        return "熟悉"
-    }
-
     property var taskItems: value("taskItems", value("tasks", []))
     property var reminderItems: value("reminderItems", value("reminders", []))
     property var focusInfo: value("focusStatus", ({ active: false, elapsedSeconds: 0, durationMinutes: 25 }))
     property var readingInfo: value("readingStatus", ({ active: false, elapsedSeconds: 0 }))
-    property var growthInfo: value("growthStatus", ({ points: 0, stage: "初遇", unlocks: [] }))
+    property var growthInfo: value("growthStatus", ({
+        points: 0,
+        stage: "初遇",
+        nextStage: "熟悉",
+        nextAt: 100,
+        progress: 0,
+        unlocks: []
+    }))
     property int resonancePoints: Number(growthInfo.points !== undefined ? growthInfo.points
                                                                          : (growthInfo.value || 0))
+    readonly property string resonanceStage: String(growthInfo.stage || "初遇")
+    readonly property string resonanceNextStage: String(growthInfo.nextStage || "")
+    readonly property var resonanceNextAt: growthInfo.nextAt
+    readonly property bool resonanceFinalStage: resonanceNextStage === ""
+                                                    || resonanceNextAt === null
+                                                    || resonanceNextAt === undefined
+    readonly property real resonanceProgress: Math.max(
+        0, Math.min(1, Number(growthInfo.progress || 0)))
     property var outfitItems: value("wardrobeOutfits", value("outfits", []))
     property var poseItems: value("wardrobePoses", value("poses", []))
     property var calendarInfo: value("calendarStatus", ({ connected: false, lastSyncAt: "", policy: {} }))
@@ -587,7 +554,7 @@ Window {
                 }
                 StatusPill {
                     good: true
-                    label: root.stageFor(root.resonancePoints) + " · " + String(root.resonancePoints)
+                    label: root.resonanceStage + " · " + String(root.resonancePoints)
                 }
             }
 
@@ -658,6 +625,7 @@ Window {
                                 Layout.fillWidth: true
                                 TextField {
                                     id: newTaskTitle
+                                    objectName: "workPanelTaskTitleInput"
                                     Layout.fillWidth: true
                                     placeholderText: "写下一件要完成的事"
                                     selectByMouse: true
@@ -670,21 +638,32 @@ Window {
                                 }
                                 ComboBox {
                                     id: taskPriority
+                                    objectName: "workPanelTaskPriorityInput"
                                     model: ["普通", "较高", "重要"]
                                     implicitWidth: 88
                                 }
+                                ComboBox {
+                                    id: taskCategory
+                                    objectName: "workPanelTaskCategoryInput"
+                                    model: ["日常", "项目", "论文", "收件箱"]
+                                    currentIndex: 0
+                                    implicitWidth: 92
+                                    Accessible.name: "任务分类"
+                                }
                                 QuietButton {
                                     id: createTaskButton
+                                    objectName: "workPanelTaskCreateButton"
                                     text: "加入"
                                     accent: true
                                     enabled: newTaskTitle.text.trim() !== ""
                                     onClicked: {
                                         var title = newTaskTitle.text.trim()
                                         var priorityKeys = ["normal", "high", "critical"]
+                                        var categoryKeys = ["daily", "project", "research", "inbox"]
                                         if (root.invoke("tasksCreate", [{
                                                 title: title,
                                                 priority: priorityKeys[taskPriority.currentIndex],
-                                                category: "inbox"
+                                                category: categoryKeys[taskCategory.currentIndex]
                                             }], "任务服务尚未接入"))
                                             newTaskTitle.clear()
                                     }
@@ -736,6 +715,9 @@ Window {
                                         }
                                         QuietButton {
                                             visible: !Boolean(taskRow.modelData.completed)
+                                            objectName: "workPanelTaskComplete_"
+                                                        + String(taskRow.modelData.id
+                                                                 || taskRow.modelData.taskId || "")
                                             text: "完成"
                                             implicitHeight: 30
                                             onClicked: root.invoke("tasksComplete", [taskRow.modelData.id || taskRow.modelData.taskId],
@@ -856,6 +838,7 @@ Window {
                                 Layout.fillWidth: true
                                 TextField {
                                     id: reminderTitle
+                                    objectName: "workPanelReminderTitleInput"
                                     Layout.fillWidth: true
                                     placeholderText: "提醒内容"
                                     background: Rectangle {
@@ -864,9 +847,17 @@ Window {
                                         border.color: reminderTitle.activeFocus ? root.cord : root.hairline
                                     }
                                 }
-                                SpinBox { id: reminderDelay; from: 1; to: 1440; value: 30; editable: true }
+                                SpinBox {
+                                    id: reminderDelay
+                                    objectName: "workPanelReminderDelayInput"
+                                    from: 1
+                                    to: 1440
+                                    value: 30
+                                    editable: true
+                                }
                                 Text { text: "分钟后"; color: root.mutedInk; font.pixelSize: 11 }
                                 QuietButton {
+                                    objectName: "workPanelReminderCreateButton"
                                     text: "创建提醒"
                                     enabled: reminderTitle.text.trim() !== ""
                                     onClicked: {
@@ -899,11 +890,15 @@ Window {
                                     }
                                     QuietButton {
                                         text: "稍后"
+                                        objectName: "workPanelReminderSnooze_"
+                                                    + String(reminderRow.modelData.id || "")
                                         implicitHeight: 28
                                         onClicked: root.invoke("remindersSnooze", [reminderRow.modelData.id, 10], "提醒服务尚未接入")
                                     }
                                     QuietButton {
                                         text: "完成"
+                                        objectName: "workPanelReminderDismiss_"
+                                                    + String(reminderRow.modelData.id || "")
                                         implicitHeight: 28
                                         onClicked: root.invoke("remindersDismiss", [reminderRow.modelData.id], "提醒服务尚未接入")
                                     }
@@ -931,18 +926,18 @@ Window {
                             RowLayout {
                                 Layout.fillWidth: true
                                 Text {
-                                    text: root.stageFor(root.resonancePoints)
+                                    text: root.resonanceStage
                                     color: root.ink
                                     font.pixelSize: 26
                                     font.weight: Font.DemiBold
                                 }
                                 Item { Layout.fillWidth: true }
                                 Text {
-                                    text: root.resonancePoints >= 1200
-                                          ? (String(root.resonancePoints) + " · 已抵达相伴")
+                                    text: root.resonanceFinalStage
+                                          ? (String(root.resonancePoints) + " · 已抵达" + root.resonanceStage)
                                           : (String(root.resonancePoints) + " / "
-                                             + String(root.nextThreshold(root.resonancePoints))
-                                             + " · 下一阶段：" + root.nextStage(root.resonancePoints))
+                                             + String(root.resonanceNextAt)
+                                             + " · 下一阶段：" + root.resonanceNextStage)
                                     color: root.mutedInk
                                     font.pixelSize: 12
                                 }
@@ -953,13 +948,7 @@ Window {
                                 Layout.fillWidth: true
                                 from: 0
                                 to: 1
-                                value: {
-                                    if (root.resonancePoints >= 1200)
-                                        return 1
-                                    var base = root.stageBase(root.resonancePoints)
-                                    var ceiling = root.nextThreshold(root.resonancePoints)
-                                    return (root.resonancePoints - base) / Math.max(1, ceiling - base)
-                                }
+                                value: root.resonanceProgress
                                 background: Rectangle { radius: 4; color: "#ece3d7" }
                                 contentItem: Item {
                                     implicitHeight: 8
@@ -1410,7 +1399,7 @@ Window {
                                         spacing: 3
                                         Text {
                                             anchors.horizontalCenter: parent.horizontalCenter
-                                            text: String(root.boxWorldGrowth.stage || root.stageFor(root.resonancePoints))
+                                            text: String(root.boxWorldGrowth.stage || root.resonanceStage)
                                             color: root.calm
                                             font.pixelSize: 18
                                             font.weight: Font.DemiBold

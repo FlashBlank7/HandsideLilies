@@ -72,6 +72,43 @@ def test_backend_exposes_v03_connector_and_focus_contract(tmp_path, monkeypatch)
         app.processEvents()
 
 
+def test_workbench_defaults_tasks_to_daily_and_projects_only_pending_reminders(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    try:
+        backend._productivity_timer.stop()
+        backend.tasksCreate({"title": "收拾桌面", "priority": "normal"})
+        assert len(backend.taskItems) == 1
+        assert backend.taskItems[0]["category"] == "daily"
+
+        for index in range(2):
+            backend.tasksCreate({"title": f"日常事项 {index}", "category": "daily"})
+        for task in list(backend.taskItems):
+            backend.tasksComplete(str(task["id"]))
+
+        unlocks = {value["item_key"] for value in backend.growthStatus["unlocks"]}
+        assert backend.growthStatus["points"] == 30
+        assert {"outfit:home-cardigan", "world:living-corner"} <= unlocks
+
+        pending = backend.reminders.create(
+            "待处理", datetime.now(UTC) + timedelta(hours=1)
+        )
+        dismissed = backend.reminders.create(
+            "已结束", datetime.now(UTC) + timedelta(hours=2)
+        )
+        backend.reminders.dismiss(str(dismissed["reminder_id"]))
+
+        projected = backend.reminderItems
+        assert [value["id"] for value in projected] == [pending["reminder_id"]]
+        assert all(value["state"] == "pending" for value in projected)
+    finally:
+        backend.shutdown()
+        app.processEvents()
+
+
 def test_slack_open_inbox_rejects_disconnected_and_emits_real_panel_anchor(
     tmp_path, monkeypatch
 ):

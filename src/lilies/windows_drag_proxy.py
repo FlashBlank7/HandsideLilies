@@ -14,6 +14,7 @@ ARGB value, while its byte layout on little-endian Windows is ``B, G, R, A``.
 import ctypes
 import os
 import threading
+import time
 from ctypes import wintypes
 from typing import Any, NamedTuple, Protocol
 
@@ -31,6 +32,13 @@ SWP_NOACTIVATE = 0x0010
 WM_NCLBUTTONDOWN = 0x00A1
 WM_CANCELMODE = 0x001F
 HTCAPTION = 2
+VK_LBUTTON = 0x01
+VK_RBUTTON = 0x02
+SM_SWAPBUTTON = 23
+PM_REMOVE = 0x0001
+SMTO_BLOCK = 0x0001
+SMTO_ABORTIFHUNG = 0x0002
+SMTO_ERRORONEXIT = 0x0020
 
 ULW_ALPHA = 0x00000002
 AC_SRC_OVER = 0x00
@@ -43,6 +51,488 @@ DEFAULT_PROXY_EX_STYLE = (
 )
 DEFAULT_PROXY_STYLE = WS_POPUP
 WINDOWS_AVAILABLE = os.name == "nt"
+
+
+class _NativeMoveReleaseSentinel:
+    """End a posted native move even when its GUI thread is modal-blocked.
+
+    A proxy move starts with a posted ``WM_NCLBUTTONDOWN``.  A very fast
+    release can happen before that message is dispatched.  DefWindowProc then
+    enters its move loop *after* the only button-up has already passed, which
+    also prevents every Qt timer on that GUI thread from running.  This tiny
+    daemon observes only the aggregate left-button bit and posts
+    ``WM_CANCELMODE`` when it becomes clear.  It never reads coordinates or
+    injects input.
+
+    Generation changes and cancellation posts are serialized by one lock.
+    Therefore a worker from session N either posts before session N+1's move
+    request (FIFO in the same target queue), or sees that it is stale and does
+    nothing.  It can never cancel a later session.
+    """
+
+    _POLL_SECONDS = 0.008
+    _RELAXED_POLL_SECONDS = 0.025
+    _FAST_POLL_WINDOW_SECONDS = 0.25
+    _MAX_HOLD_SECONDS = 180.0
+    _CANCEL_POST_ATTEMPTS = 2
+    _CANCEL_RETRY_INITIAL_SECONDS = 0.004
+    _CANCEL_RETRY_MAX_SECONDS = 0.100
+    _FORCE_CANCEL_AFTER_SECONDS = 0.250
+    _FORCE_CANCEL_RETRY_SECONDS = 0.500
+
+    _IDLE = "idle"
+    _RESERVED = "reserved"
+    _ARMED = "armed"
+    _CANCEL_POSTING = "cancel-posting"
+    _CANCEL_POSTED = "cancel-posted"
+    _POISONED = "poisoned"
+    _CLOSED = "closed"
+
+    def __init__(
+        self,
+        *,
+        left_button_is_down: Any,
+        post_cancel: Any,
+        target_is_valid: Any | None = None,
+        force_cancel: Any | None = None,
+        monotonic: Any = time.monotonic,
+    ) -> None:
+        self._left_button_is_down = left_button_is_down
+        self._post_cancel = post_cancel
+        self._target_is_valid = target_is_valid
+        self._force_cancel = force_cancel
+        self._monotonic = monotonic
+        self._condition = threading.Condition()
+        self._generation = 0
+        self._active_handle = 0
+        self._state = self._IDLE
+        self._armed_at = 0.0
+        self._deadline = 0.0
+        self._retire_pending = False
+        self._worker: threading.Thread | None = None
+
+    @property
+    def active(self) -> bool:
+        with self._condition:
+            return self._state in {
+                self._RESERVED,
+                self._ARMED,
+                self._CANCEL_POSTING,
+                self._CANCEL_POSTED,
+            }
+
+    @property
+    def poisoned(self) -> bool:
+        with self._condition:
+            return self._state == self._POISONED
+
+    @property
+    def worker_ready(self) -> bool:
+        with self._condition:
+            worker = self._worker
+            return bool(worker is not None and worker.is_alive())
+
+    def state_for(self, handle: int, generation: int) -> str:
+        """Return the state only when it still belongs to this exact ticket."""
+
+        target = max(0, int(handle))
+        ticket = max(0, int(generation))
+        with self._condition:
+            if (
+                target <= 0
+                or ticket <= 0
+                or target != self._active_handle
+                or ticket != self._generation
+            ):
+                return "stale"
+            return self._state
+
+    def ensure_worker(self) -> bool:
+        """Start the persistent observer before a native DOWN can be posted."""
+
+        with self._condition:
+            if self._state in {self._CLOSED, self._POISONED}:
+                return False
+            worker = self._worker
+            if worker is not None and worker.is_alive():
+                return True
+            worker = threading.Thread(
+                target=self._watch,
+                name="lilies-proxy-release-sentinel",
+                daemon=True,
+            )
+            try:
+                worker.start()
+            except RuntimeError:
+                return False
+            self._worker = worker
+            return True
+
+    def _post_cancel_bounded(self, target: int) -> bool:
+        """Try a small fixed number of non-blocking terminal posts."""
+
+        for _attempt in range(self._CANCEL_POST_ATTEMPTS):
+            try:
+                if bool(self._post_cancel(target)):
+                    return True
+            except Exception:
+                # A broken adapter is equivalent to PostMessage failure.  The
+                # caller moves to POISONED rather than stranding CANCEL_POSTING.
+                pass
+        return False
+
+    def _target_still_valid(self, target: int) -> bool:
+        probe = self._target_is_valid
+        if not callable(probe):
+            return True
+        try:
+            return bool(probe(target))
+        except Exception:
+            # Unknown is not proof that a queued DOWN became harmless.
+            return True
+
+    def _force_cancel_bounded(self, target: int) -> bool:
+        force = self._force_cancel
+        if not callable(force):
+            return False
+        try:
+            return bool(force(target))
+        except Exception:
+            return False
+
+    def _finish_cancel_posting(
+        self,
+        handle: int,
+        generation: int,
+    ) -> None:
+        """Retry cancellation off-GUI until queued DOWN cannot strand it.
+
+        PostMessage can transiently fail when a thread queue is under pressure.
+        Never convert two adjacent failures into a terminal state: back off on
+        this worker, periodically use a bounded SendMessageTimeout fallback,
+        and stop only after cancellation succeeds, the HWND is gone, the exact
+        generation is retired, or shutdown closes the sentinel.
+        """
+
+        delay = self._CANCEL_RETRY_INITIAL_SECONDS
+        force_at = self._monotonic() + self._FORCE_CANCEL_AFTER_SECONDS
+        while True:
+            with self._condition:
+                if (
+                    generation != self._generation
+                    or handle != self._active_handle
+                    or self._state != self._CANCEL_POSTING
+                ):
+                    return
+            try:
+                posted = bool(self._post_cancel(handle))
+            except Exception:
+                posted = False
+            target_gone = not self._target_still_valid(handle)
+            now = self._monotonic()
+            forced = False
+            if not posted and not target_gone and now >= force_at:
+                forced = self._force_cancel_bounded(handle)
+                force_at = now + self._FORCE_CANCEL_RETRY_SECONDS
+                if not forced:
+                    target_gone = not self._target_still_valid(handle)
+            if posted or forced or target_gone:
+                with self._condition:
+                    if (
+                        generation == self._generation
+                        and handle == self._active_handle
+                        and self._state == self._CANCEL_POSTING
+                    ):
+                        # TARGET_GONE is equally terminal for ordering: there
+                        # is no HWND on which the old DOWN could later execute.
+                        # A GUI retire received while posting was pending may
+                        # become IDLE only now, after this ordering fence.
+                        if self._retire_pending:
+                            self._active_handle = 0
+                            self._state = self._IDLE
+                            self._armed_at = 0.0
+                            self._deadline = 0.0
+                            self._retire_pending = False
+                        else:
+                            self._state = self._CANCEL_POSTED
+                        self._condition.notify_all()
+                return
+            with self._condition:
+                if (
+                    generation != self._generation
+                    or handle != self._active_handle
+                    or self._state != self._CANCEL_POSTING
+                ):
+                    return
+                self._condition.wait(delay)
+            delay = min(self._CANCEL_RETRY_MAX_SECONDS, delay * 2.0)
+
+    def reserve(self, handle: int) -> int:
+        """Invalidate the previous generation before a new DOWN is posted."""
+
+        target = max(0, int(handle))
+        if target <= 0:
+            return 0
+        with self._condition:
+            # CANCEL_POSTED remains owned until the GUI-side terminal path has
+            # sampled/committed and explicitly retired its ticket. Reusing the
+            # same HWND any earlier would let an old queued cancel cross into a
+            # new gesture.
+            worker = self._worker
+            if (
+                self._state != self._IDLE
+                or worker is None
+                or not worker.is_alive()
+            ):
+                return 0
+            self._generation += 1
+            generation = self._generation
+            self._active_handle = target
+            self._state = self._RESERVED
+            self._armed_at = 0.0
+            self._deadline = 0.0
+            self._retire_pending = False
+        return generation
+
+    def commit(self, handle: int, generation: int) -> bool:
+        """Start observation only for the matching reserved generation."""
+
+        target = max(0, int(handle))
+        ticket = max(0, int(generation))
+        with self._condition:
+            if (
+                target <= 0
+                or ticket <= 0
+                or ticket != self._generation
+                or target != self._active_handle
+                or self._state != self._RESERVED
+            ):
+                return False
+            worker = self._worker
+            if worker is None or not worker.is_alive():
+                # DOWN is already in the queue. Queue CANCEL behind it before
+                # returning. Production request_move preflights ensure_worker,
+                # so this is only the bounded race/fault recovery path.
+                posted = self._post_cancel_bounded(target)
+                self._state = self._CANCEL_POSTED if posted else self._POISONED
+                self._condition.notify_all()
+                return False
+            self._state = self._ARMED
+            self._armed_at = self._monotonic()
+            self._deadline = self._armed_at + self._MAX_HOLD_SECONDS
+            self._condition.notify_all()
+            return True
+
+    def arm(self, handle: int) -> int:
+        """Convenience API for deterministic tests without a posted DOWN."""
+
+        if not self.ensure_worker():
+            return 0
+        generation = self.reserve(handle)
+        if generation <= 0 or not self.commit(handle, generation):
+            return 0
+        return generation
+
+    def retire(
+        self,
+        handle: int | None = None,
+        generation: int | None = None,
+    ) -> bool:
+        target = None if handle is None else max(0, int(handle))
+        ticket = None if generation is None else max(0, int(generation))
+        with self._condition:
+            if target is not None and self._active_handle not in {0, target}:
+                return False
+            if ticket is not None and ticket != self._generation:
+                return False
+            if self._state == self._POISONED and (
+                target is None
+                or ticket is None
+                or target != self._active_handle
+                or ticket != self._generation
+            ):
+                # A failed async cancel is recoverable only when the GUI-side
+                # terminal path proves it owns the exact generation. Broad or
+                # stale cleanup must never unpoison somebody else's session.
+                return False
+            if self._state == self._CANCEL_POSTING:
+                if (
+                    target is None
+                    or ticket is None
+                    or target != self._active_handle
+                    or ticket != self._generation
+                ):
+                    return False
+                # GUI presentation is terminal, but the ordered CANCEL is not
+                # in the queue yet. Keep the ticket reserved until the worker
+                # posts it (or proves the target HWND gone), so a new DOWN can
+                # never reuse this handle ahead of the old cancel.
+                self._retire_pending = True
+                self._condition.notify_all()
+                return True
+            was_active = self._state in {
+                self._RESERVED,
+                self._ARMED,
+                self._CANCEL_POSTING,
+                self._CANCEL_POSTED,
+                self._POISONED,
+            }
+            if self._state == self._CLOSED:
+                return False
+            self._active_handle = 0
+            self._state = self._IDLE
+            self._armed_at = 0.0
+            self._deadline = 0.0
+            self._retire_pending = False
+            self._condition.notify_all()
+            return was_active
+
+    def cancel(self, handle: int, generation: int | None = None) -> bool:
+        """Post one ordered cancel and retire the matching generation."""
+
+        target = max(0, int(handle))
+        ticket = None if generation is None else max(0, int(generation))
+        if target <= 0:
+            return False
+        with self._condition:
+            if ticket is not None and (
+                ticket != self._generation or target != self._active_handle
+            ):
+                return False
+            if self._state == self._CANCEL_POSTED:
+                return True
+            if self._state not in {self._RESERVED, self._ARMED}:
+                return False
+            self._state = self._CANCEL_POSTING
+            posted = self._post_cancel_bounded(target)
+            worker = self._worker
+            self._state = (
+                self._CANCEL_POSTED
+                if posted
+                else (
+                    self._CANCEL_POSTING
+                    if worker is not None and worker.is_alive()
+                    else self._POISONED
+                )
+            )
+            self._condition.notify_all()
+            return posted
+
+    def abort(self, handle: int, generation: int) -> bool:
+        """Release a reservation whose DOWN could not be posted."""
+
+        target = max(0, int(handle))
+        ticket = max(0, int(generation))
+        with self._condition:
+            if (
+                self._state != self._RESERVED
+                or target != self._active_handle
+                or ticket != self._generation
+            ):
+                return False
+            self._active_handle = 0
+            self._state = self._IDLE
+            self._retire_pending = False
+            self._condition.notify_all()
+            return True
+
+    def discard_failed_post(self, handle: int, generation: int) -> bool:
+        """Retire a failed ticket after its queued DOWN is proven unreachable.
+
+        ``request_move`` calls this only after removing the exact DOWN from the
+        owner queue or destroying its target HWND.  It deliberately cannot
+        retire CANCEL_POSTED because that terminal message must remain owned
+        until the ordinary GUI completion path consumes it.
+        """
+
+        target = max(0, int(handle))
+        ticket = max(0, int(generation))
+        with self._condition:
+            if (
+                target <= 0
+                or ticket <= 0
+                or target != self._active_handle
+                or ticket != self._generation
+                or self._state in {self._CANCEL_POSTED, self._CLOSED}
+            ):
+                return False
+            self._active_handle = 0
+            self._state = self._IDLE
+            self._armed_at = 0.0
+            self._deadline = 0.0
+            self._retire_pending = False
+            self._condition.notify_all()
+            return True
+
+    def close(self, timeout: float = 0.25) -> bool:
+        with self._condition:
+            if self._state == self._CLOSED:
+                worker = self._worker
+            else:
+                self._state = self._CLOSED
+                self._active_handle = 0
+                self._retire_pending = False
+                self._condition.notify_all()
+                worker = self._worker
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(max(0.0, float(timeout)))
+        return bool(worker is None or not worker.is_alive())
+
+    def _watch(self) -> None:
+        while True:
+            with self._condition:
+                while self._state not in {
+                    self._ARMED,
+                    self._CANCEL_POSTING,
+                    self._CLOSED,
+                }:
+                    self._condition.wait()
+                if self._state == self._CLOSED:
+                    return
+                handle = self._active_handle
+                generation = self._generation
+                if self._state == self._CANCEL_POSTING:
+                    armed_at = 0.0
+                    deadline = 0.0
+                    retry_cancel = True
+                else:
+                    retry_cancel = False
+                    armed_at = self._armed_at
+                    deadline = self._deadline
+            if retry_cancel:
+                self._finish_cancel_posting(handle, generation)
+                continue
+            try:
+                released = not bool(self._left_button_is_down())
+            except Exception:
+                # An unavailable aggregate state is unsafe for a posted modal
+                # move: cancel rather than allow the transparent pet to vanish.
+                released = True
+            now = self._monotonic()
+            expired = now >= deadline
+            if released or expired:
+                with self._condition:
+                    if (
+                        generation != self._generation
+                        or handle != self._active_handle
+                        or self._state != self._ARMED
+                    ):
+                        continue
+                    self._state = self._CANCEL_POSTING
+                    self._condition.notify_all()
+                continue
+            interval = (
+                self._POLL_SECONDS
+                if now - armed_at < self._FAST_POLL_WINDOW_SECONDS
+                else self._RELAXED_POLL_SECONDS
+            )
+            with self._condition:
+                if (
+                    generation == self._generation
+                    and handle == self._active_handle
+                    and self._state == self._ARMED
+                ):
+                    self._condition.wait(interval)
 
 
 class WindowsDragProxyError(RuntimeError):
@@ -277,9 +767,9 @@ class Win32DragProxyApi(Protocol):
         handle: int,
         *,
         cursor_position: tuple[int, int] | None,
-    ) -> bool: ...
+    ) -> bool | int: ...
 
-    def cancel_move(self, handle: int) -> bool: ...
+    def cancel_move(self, handle: int, generation: int | None = None) -> bool: ...
 
     def get_window_rect(self, handle: int) -> WindowRect | None: ...
 
@@ -387,7 +877,30 @@ class NativeWin32DragProxyApi:
         self._window_proc: Any = None
         self._registered = False
         self._handles: set[int] = set()
+        self._invalidated_handles: set[int] = set()
+        self._move_tickets: dict[int, int] = {}
         self._owner_thread: int | None = None
+        self._move_release_sentinel = _NativeMoveReleaseSentinel(
+            left_button_is_down=lambda: bool(
+                self._user32.GetAsyncKeyState(
+                    VK_RBUTTON
+                    if self._user32.GetSystemMetrics(SM_SWAPBUTTON)
+                    else VK_LBUTTON
+                )
+                & 0x8000
+            ),
+            post_cancel=lambda handle: bool(
+                self._user32.PostMessageW(handle, WM_CANCELMODE, 0, 0)
+            ),
+            target_is_valid=lambda handle: bool(
+                self._user32.IsWindow(handle)
+            ),
+            force_cancel=self._force_cancel_with_timeout,
+        )
+        # Prewarm outside the pointer-press path. request_move never creates an
+        # OS thread; if this bounded startup fails it simply declines native
+        # movement before posting any DOWN.
+        self._move_release_sentinel.ensure_worker()
 
     def _configure_functions(self) -> None:
         user32 = self._user32
@@ -463,6 +976,30 @@ class NativeWin32DragProxyApi:
             wintypes.LPARAM,
         ]
         user32.PostMessageW.restype = wintypes.BOOL
+        user32.PeekMessageW.argtypes = [
+            ctypes.POINTER(wintypes.MSG),
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.UINT,
+            wintypes.UINT,
+        ]
+        user32.PeekMessageW.restype = wintypes.BOOL
+        user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+        user32.GetAsyncKeyState.restype = ctypes.c_short
+        user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+        user32.GetSystemMetrics.restype = ctypes.c_int
+        user32.IsWindow.argtypes = [wintypes.HWND]
+        user32.IsWindow.restype = wintypes.BOOL
+        user32.SendMessageTimeoutW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+            wintypes.UINT,
+            wintypes.UINT,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        user32.SendMessageTimeoutW.restype = ctypes.c_size_t
 
         gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
         gdi32.CreateCompatibleDC.restype = wintypes.HDC
@@ -490,12 +1027,45 @@ class NativeWin32DragProxyApi:
         error = ctypes.get_last_error()
         raise OSError(error, f"{operation} failed")
 
+    def _force_cancel_with_timeout(self, handle: int) -> bool:
+        """Bounded cross-thread fallback for a saturated posted queue."""
+
+        result = ctypes.c_size_t()
+        return bool(
+            self._user32.SendMessageTimeoutW(
+                handle,
+                WM_CANCELMODE,
+                0,
+                0,
+                SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT,
+                100,
+                ctypes.byref(result),
+            )
+        )
+
     def _check_thread(self) -> None:
         current = threading.get_ident()
         if self._owner_thread is None:
             self._owner_thread = current
         elif self._owner_thread != current:
             raise WindowsDragProxyError("the proxy window must stay on its creating thread")
+
+    def _unregister_class_if_unused(self) -> bool:
+        """Release this adapter's unique WNDCLASS after its last HWND."""
+
+        if self._handles:
+            return True
+        if not getattr(self, "_registered", False):
+            return True
+        class_name = getattr(self, "_class_name", None)
+        if class_name is None:
+            return True
+        if not self._user32.UnregisterClassW(class_name, self._instance):
+            return False
+        self._registered = False
+        self._class_name = None
+        self._window_proc = None
+        return True
 
     def _ensure_window_class(self) -> None:
         if self._registered:
@@ -650,7 +1220,7 @@ class NativeWin32DragProxyApi:
         handle: int,
         *,
         cursor_position: tuple[int, int] | None,
-    ) -> bool:
+    ) -> bool | int:
         self._check_thread()
         if cursor_position is None:
             cursor = _POINT()
@@ -660,22 +1230,85 @@ class NativeWin32DragProxyApi:
         if cursor_position is not None:
             x, y = cursor_position
             lparam = ((y & 0xFFFF) << 16) | (x & 0xFFFF)
-        # This posts a normal non-client move request to our own HWND.  It does
+        # Reserve the generation before DOWN is queued. reserve also verifies
+        # the observer was prewarmed; request_move must never cold-start an OS
+        # thread on the pointer-press hot path. If an old worker is in
+        # its locked CANCEL_POSTING transition, reserve waits for that post and
+        # then refuses reuse until the old GUI terminal path retires it. An old
+        # cancel can therefore never land behind this new DOWN on the same HWND.
+        ticket = self._move_release_sentinel.reserve(handle)
+        if ticket <= 0:
+            return False
+        # This posts a normal non-client move request to our own HWND. It does
         # not use global input injection and cannot move another HWND.
         posted = bool(
             self._user32.PostMessageW(handle, WM_NCLBUTTONDOWN, HTCAPTION, lparam)
         )
-        # Preserve the original QML capture if the queue request itself fails;
-        # that lets the established direct fallback continue normally.
-        if posted:
-            self._user32.ReleaseCapture()
-        return posted
+        if not posted:
+            self._move_release_sentinel.abort(handle, ticket)
+            return False
+        # The worker was prewarmed before the DOWN. A very narrow observer
+        # failure race can still occur here: only a confirmed CANCEL_POSTED is
+        # safe to continue. POISONED is retracted without releasing the root's
+        # capture, so direct fallback receives the real release normally.
+        committed = self._move_release_sentinel.commit(handle, ticket)
+        if not committed:
+            state = self._move_release_sentinel.state_for(handle, ticket)
+            if state != self._move_release_sentinel._CANCEL_POSTED:
+                queued = wintypes.MSG()
+                removed = bool(
+                    self._user32.PeekMessageW(
+                        ctypes.byref(queued),
+                        handle,
+                        WM_NCLBUTTONDOWN,
+                        WM_NCLBUTTONDOWN,
+                        PM_REMOVE,
+                    )
+                )
+                invalidated = False
+                if not removed:
+                    # Same-thread PeekMessage should always find our just-posted
+                    # DOWN. Destroying the target is the final bounded guard if
+                    # an adapter/queue violates that invariant: queued messages
+                    # for the dead HWND cannot later enter a modal move loop.
+                    invalidated = bool(self._user32.DestroyWindow(handle))
+                    if invalidated:
+                        self._handles.discard(int(handle))
+                        self._invalidated_handles.add(int(handle))
+                        self._unregister_class_if_unused()
+                if removed or invalidated:
+                    self._move_release_sentinel.discard_failed_post(
+                        handle, ticket
+                    )
+                return False
+        self._move_tickets[int(handle)] = ticket
+        self._user32.ReleaseCapture()
+        return ticket
 
-    def cancel_move(self, handle: int) -> bool:
+    def consume_invalidated_handle(self, handle: int) -> bool:
+        """Tell the lifecycle wrapper a poison guard destroyed this HWND."""
+
+        self._check_thread()
+        target = int(handle)
+        if target not in self._invalidated_handles:
+            return False
+        self._invalidated_handles.discard(target)
+        return True
+
+    def cancel_move(
+        self,
+        handle: int,
+        generation: int | None = None,
+    ) -> bool:
         """Ask User32 to leave the proxy's modal move loop asynchronously."""
 
         self._check_thread()
-        return bool(self._user32.PostMessageW(handle, WM_CANCELMODE, 0, 0))
+        ticket = (
+            int(generation)
+            if generation is not None
+            else int(self._move_tickets.get(int(handle), 0))
+        )
+        return self._move_release_sentinel.cancel(handle, ticket or None)
 
     def get_window_rect(self, handle: int) -> WindowRect | None:
         self._check_thread()
@@ -691,20 +1324,28 @@ class NativeWin32DragProxyApi:
 
     def hide_window(self, handle: int) -> bool:
         self._check_thread()
+        ticket = self._move_tickets.pop(int(handle), 0)
+        self._move_release_sentinel.retire(handle, ticket or None)
         self._user32.ShowWindow(handle, SW_HIDE)
         return True
 
     def destroy_window(self, handle: int) -> bool:
         self._check_thread()
+        ticket = self._move_tickets.pop(int(handle), 0)
+        self._move_release_sentinel.retire(handle, ticket or None)
         if not self._user32.DestroyWindow(handle):
             return False
         self._handles.discard(handle)
-        if not self._handles and self._registered and self._class_name is not None:
-            if self._user32.UnregisterClassW(self._class_name, self._instance):
-                self._registered = False
-                self._class_name = None
-                self._window_proc = None
+        self._unregister_class_if_unused()
         return True
+
+    def close(self, timeout: float = 0.25) -> bool:
+        """Stop the prewarmed observer during ordinary proxy shutdown."""
+
+        self._check_thread()
+        observer_closed = self._move_release_sentinel.close(timeout)
+        class_released = self._unregister_class_if_unused()
+        return bool(observer_closed and class_released)
 
 
 class WindowsDragProxy:
@@ -719,6 +1360,7 @@ class WindowsDragProxy:
         self._move_origin: WindowRect | None = None
         self._last_rect: WindowRect | None = None
         self._final: DragProxyFinal | None = None
+        self._move_ticket = 0
 
     @property
     def handle(self) -> int | None:
@@ -827,14 +1469,31 @@ class WindowsDragProxy:
         if origin is None:
             raise WindowsDragProxyError("the proxy rectangle is unavailable")
         self._move_origin = origin
-        requested = bool(
-            self.api.request_move(
-                self._handle,
-                cursor_position=cursor_position,
-            )
+        request_result = self.api.request_move(
+            self._handle,
+            cursor_position=cursor_position,
+        )
+        requested = bool(request_result)
+        self._move_ticket = (
+            int(request_result)
+            if requested and not isinstance(request_result, bool)
+            else 0
         )
         if not requested:
             self._move_origin = origin
+            consume_invalidated = getattr(
+                self.api, "consume_invalidated_handle", None
+            )
+            if callable(consume_invalidated) and consume_invalidated(
+                self._handle
+            ):
+                # The native adapter destroyed a poisoned target before its
+                # queued DOWN could dispatch. Forget it immediately; the next
+                # idle snapshot creates and uploads a fresh proxy HWND.
+                self._handle = None
+                self._bitmap = None
+                self._visible = False
+                self._move_ticket = 0
         return requested
 
     request_move = start_move
@@ -847,7 +1506,12 @@ class WindowsDragProxy:
         cancel = getattr(self.api, "cancel_move", None)
         if not callable(cancel):
             return False
-        return bool(cancel(self._handle))
+        try:
+            return bool(cancel(self._handle, self._move_ticket or None))
+        except TypeError:
+            # Existing injected test adapters implement the original one-arg
+            # protocol; production NativeWin32DragProxyApi validates tickets.
+            return bool(cancel(self._handle))
 
     def rect(self) -> WindowRect | None:
         if self._handle is None:
@@ -873,6 +1537,7 @@ class WindowsDragProxy:
         hidden = bool(self.api.hide_window(self._handle))
         if hidden:
             self._visible = False
+            self._move_ticket = 0
         return hidden
 
     def finalize(self, *, destroy: bool = True) -> DragProxyFinal:
@@ -906,17 +1571,34 @@ class WindowsDragProxy:
         self._handle = None
         self._bitmap = None
         self._visible = False
+        self._move_ticket = 0
         return True
+
+    def close(self, timeout: float = 0.25) -> bool:
+        """Destroy the window and join any native release observer."""
+
+        destroyed = True
+        if self._handle is not None:
+            try:
+                destroyed = self.destroy()
+            except WindowsDragProxyError:
+                destroyed = False
+        close_api = getattr(self.api, "close", None)
+        observer_closed = True
+        if callable(close_api):
+            try:
+                observer_closed = bool(close_api(timeout))
+            except TypeError:
+                observer_closed = bool(close_api())
+        return bool(destroyed and observer_closed)
 
     def __enter__(self) -> "WindowsDragProxy":
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         del traceback
-        if self._handle is None:
-            return
         try:
-            self.destroy()
+            self.close()
         except Exception:
             if exc_type is None and exc is None:
                 raise

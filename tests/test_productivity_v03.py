@@ -314,6 +314,29 @@ def test_reminders_claim_each_schedule_once_and_advance_recurrence(tmp_path, clo
     )
 
 
+@pytest.mark.parametrize("terminal_state", ("completed", "dismissed"))
+def test_terminal_reminder_cannot_be_resurrected_by_snooze(
+    tmp_path, clock, terminal_state: str
+) -> None:
+    database, _growth, _tasks = services(tmp_path, clock)
+    reminders = ReminderScheduler(database, now=clock)
+    reminder = reminders.create("只处理一次", clock.current)
+    reminder_id = reminder["reminder_id"]
+
+    if terminal_state == "completed":
+        assert reminders.claim_due(channel="bubble")[0]["reminder_id"] == reminder_id
+    else:
+        reminders.dismiss(reminder_id)
+
+    with pytest.raises(ValueError, match="only a pending reminder"):
+        reminders.snooze(reminder_id, 10)
+    saved = next(
+        value for value in reminders.list() if value["reminder_id"] == reminder_id
+    )
+    assert saved["state"] == terminal_state
+    assert saved["snoozed_until"] is None
+
+
 def test_outbox_retries_committed_growth_events_without_duplication(tmp_path, clock) -> None:
     database, _growth, tasks = services(tmp_path, clock)
     task = tasks.create("提交实验记录")

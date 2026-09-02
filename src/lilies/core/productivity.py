@@ -1424,9 +1424,16 @@ class ReminderScheduler:
         current = _now(self.now)
         until = current + timedelta(minutes=duration)
         with self.database.connect() as db:
+            existing = db.execute(
+                "SELECT state FROM reminders WHERE reminder_id=?", (reminder_id,)
+            ).fetchone()
+            if existing is None:
+                raise KeyError(f"unknown reminder: {reminder_id}")
+            if str(existing["state"]) != "pending":
+                raise ValueError("only a pending reminder can be snoozed")
             cursor = db.execute(
                 """UPDATE reminders SET state='pending',snoozed_until=?,updated_at=?
-                   WHERE reminder_id=?""",
+                   WHERE reminder_id=? AND state='pending'""",
                 (until.isoformat(), current.isoformat(), reminder_id),
             )
             if not cursor.rowcount:

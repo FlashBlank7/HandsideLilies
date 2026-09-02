@@ -166,7 +166,8 @@ def test_native_move_completion_is_serialized_and_cancel_waits_for_it() -> None:
     assert "WM_EXITSIZEMOVE = 0x0232" in app_source
     assert "controller.queueSystemMoveFinished()" in app_source
     assert "QTimer.singleShot(" in app_source
-    assert "_deliverSystemMoveFinished(serial)" in app_source
+    assert "_deliverSystemMoveFinished(current, serial)" in app_source
+    assert "_active_system_move_session_id" in app_source
 
 
 def test_gesture_finish_has_one_stationary_and_one_moved_outcome() -> None:

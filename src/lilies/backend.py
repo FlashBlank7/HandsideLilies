@@ -974,7 +974,15 @@ class Backend(QObject):
 
     @Property("QVariantList", notify=productivityChanged)
     def reminderItems(self) -> list[dict[str, Any]]:
-        return [self._reminder_public(value) for value in self.reminders.list(limit=200)]
+        # The work surface is an actionable queue, not an audit log.  Keeping
+        # completed/dismissed rows here let five old entries permanently hide
+        # every new reminder and exposed a stale "snooze" action for work that
+        # had already ended.  History remains available through the versioned
+        # reminders.list component with an explicit state filter.
+        return [
+            self._reminder_public(value)
+            for value in self.reminders.list(state="pending", limit=200)
+        ]
 
     @Property("QVariantMap", notify=productivityChanged)
     def growthStatus(self) -> dict[str, Any]:
@@ -2559,7 +2567,7 @@ class Backend(QObject):
             self.tasks.create(
                 str(payload.get("title", "")),
                 note=str(payload.get("note", "")),
-                category=str(payload.get("category", "inbox")),
+                category=str(payload.get("category", "daily")),
                 priority=int(priority),
                 due_at=payload.get("dueAt"),
                 timezone_name=str(payload.get("timezone", "UTC")),
@@ -2742,12 +2750,20 @@ class Backend(QObject):
 
     @Slot(str, int)
     def remindersSnooze(self, reminder_id: str, minutes: int = 10) -> None:
-        self.reminders.snooze(reminder_id, minutes)
+        try:
+            self.reminders.snooze(reminder_id, minutes)
+            self._set_status(f"提醒已推迟 {int(minutes)} 分钟")
+        except (KeyError, ValueError) as exc:
+            self._set_status(f"提醒没有推迟：{exc}")
         self.refreshProductivity()
 
     @Slot(str)
     def remindersDismiss(self, reminder_id: str) -> None:
-        self.reminders.dismiss(reminder_id)
+        try:
+            self.reminders.dismiss(reminder_id)
+            self._set_status("提醒已完成")
+        except KeyError as exc:
+            self._set_status(f"提醒没有完成：{exc}")
         self.refreshProductivity()
 
     @Slot(str)

@@ -141,6 +141,7 @@ _IMAGE_QUALITY_CAPTURE_REASONS = frozenset(
         "image-model-unavailable",
         "image-result-invalid",
         "philosophy-quality-invalid",
+        "retained-anchor-changed",
     }
 )
 
@@ -376,6 +377,11 @@ class CompanionController(QObject):
             self.content.fetcher = UrllibFetcher()
         self._bubble: dict[str, Any] = {}
         self._bubble_object: SpeechBubble | None = None
+        # Safe, generated evidence for the currently visible bubble only.
+        # It is deliberately absent from SQLite/session persistence: the
+        # anchor may have been derived from a one-shot screenshot and is useful
+        # only while that bubble owns its bounded in-memory image.
+        self._bubble_evidence: dict[str, str] = {}
         self._capture: StagedCapture | None = None
         self._inflight_capture: StagedCapture | None = None
         self._bubble_ttl_remaining_seconds = _BUBBLE_PRESENTATION_SECONDS
@@ -388,6 +394,15 @@ class CompanionController(QObject):
         self._bubble_capture_diagnostic_token = 0
         self._active_generation_has_capture = False
         self._active_generation_capture_diagnostic_token = 0
+        self._active_generation_is_anchor_continuation = False
+        # Bubble replies are separate from proactive generation tokens. Keep
+        # a cooperative cancellation handle only while one of them carries
+        # screen-derived evidence, so clearing the bubble also fences a queued
+        # copy of its transient anchor.
+        self._visual_reply_cancel_event: threading.Event | None = None
+        self._visual_reply_model_task_id = ""
+        self._reply_serial = 0
+        self._active_reply_serial = 0
         raw_delivery = database.get_setting("companion_delivery_status", {})
         self._delivery_record = (
             dict(raw_delivery) if isinstance(raw_delivery, dict) else {}
@@ -397,6 +412,7 @@ class CompanionController(QObject):
         self._probe_busy = False
         self._generation_cancel_event: threading.Event | None = None
         self._active_generation_model_id = ""
+        self._active_generation_model_task_id = ""
         self._last_unread_redelivery_at = -float("inf")
         self._prune_unread_delivery()
         raw_capture_status = database.get_setting("companion_last_capture_status", {})
@@ -1646,6 +1662,11 @@ class CompanionController(QObject):
         self._bubble_presented = False
         self._bubble["expiresAt"] = ""
         self._bubble["deliveryState"] = "suppressed"
+        # Suppression is a privacy boundary, not merely a visual hide.  Keep
+        # the generated prose for recoverable delivery, but drop the retained
+        # PNG and its in-memory anchor so a later interaction cannot reuse
+        # pixels across the quiet interval.
+        self._clear_retained_visual_evidence()
         self._set_delivery_state(
             "suppressed",
             "privacy-suppressed",
@@ -1770,9 +1791,10 @@ class CompanionController(QObject):
 
         Entering suppression invalidates the current proactive generation so a
         late worker result cannot be committed after the quiet interval.  The
-        existing bubble remains intact. Its presentation TTL is paused while
-        hidden, then a safe foreground must receive a fresh QML ACK before the
-        remaining lifetime resumes.
+        existing bubble prose remains intact, while retained screenshot bytes
+        and the continuation anchor are cleared at the privacy boundary. Its
+        presentation TTL is paused while hidden, then a safe foreground must
+        receive a fresh QML ACK before the remaining lifetime resumes.
         """
 
         next_value = bool(suppressed)
@@ -2373,6 +2395,7 @@ class CompanionController(QObject):
         reason: str,
         *,
         capture_reason: str = "cancelled",
+        active_model_task_only: bool = False,
     ) -> bool:
         """Invalidate, abort and clean one proactive generation atomically."""
 
@@ -2385,6 +2408,7 @@ class CompanionController(QObject):
             self._generation_serial += 1
             self._active_generation_token = 0
             self._active_generation_user_requested = False
+            self._active_generation_is_anchor_continuation = False
         had_capture = bool(
             self._active_generation_has_capture or self._inflight_capture is not None
         )
@@ -2404,9 +2428,16 @@ class CompanionController(QObject):
             self._generation_cancel_event = None
         if cancel_event is not None:
             cancel_event.set()
-        self._cancel_model_tasks(reason)
+        active_model_task_id = (
+            self._active_generation_model_task_id if had_active else ""
+        )
+        if active_model_task_only:
+            self._abandon_model_task(active_model_task_id, reason)
+        else:
+            self._cancel_model_tasks(reason)
         if had_active:
             self._active_generation_model_id = ""
+            self._active_generation_model_task_id = ""
         # The broker lease owns model cancellation.  Calling abort_model here
         # is unsafe while this proactive request is still queued: another
         # higher-priority chat may currently own the same Luna/Terra runtime.
@@ -2517,6 +2548,9 @@ class CompanionController(QObject):
         force: bool,
         duplicate_retry: int = 0,
         manual_capture: bool = False,
+        continuation_anchor: str = "",
+        continuation_kind: str = "",
+        continuation_scene_label: str = "",
     ) -> bool:
         if self._interaction_suspended:
             if force:
@@ -2550,11 +2584,28 @@ class CompanionController(QObject):
             or (self._active and not self._presentation_sync_ready)
         ):
             return False
+        bounded_continuation_anchor = " ".join(
+            str(continuation_anchor).split()
+        )[:160]
+        bounded_continuation_kind = str(continuation_kind).strip().casefold()[:40]
+        if bounded_continuation_kind not in {
+            "",
+            "same-image-another",
+            "same-image-category",
+        }:
+            bounded_continuation_kind = ""
+        anchor_continuation = bool(
+            bounded_continuation_anchor and bounded_continuation_kind
+        )
         generation_context = context
         # The current window is the only factual scene label. Momentum may
         # gently influence topic selection, but must never make a new window
         # look like the previous application to the model or user.
-        scene_label = self._scene_label(generation_context)
+        scene_label = (
+            str(continuation_scene_label).strip()[:120]
+            if anchor_continuation and str(continuation_scene_label).strip()
+            else self._scene_label(generation_context)
+        )
         category, content_item = self._choose_category(scene_label)
         if category is None:
             if force:
@@ -2577,7 +2628,9 @@ class CompanionController(QObject):
         # ``manual_capture`` belongs to a separate, plainly labelled one-shot
         # consent action and must still cross every automatic privacy guard.
         capture_enabled_for_turn = bool(
-            self._smart_observation and (not force or manual_capture)
+            self._smart_observation
+            and not anchor_continuation
+            and (not force or manual_capture)
         )
         capture_diagnostic_token = (
             self._begin_capture_diagnostic() if capture_enabled_for_turn else 0
@@ -2751,14 +2804,23 @@ class CompanionController(QObject):
         generation_token = self._generation_serial
         self._active_generation_token = generation_token
         self._active_generation_user_requested = bool(force)
+        self._active_generation_is_anchor_continuation = anchor_continuation
         self._active_generation_has_capture = capture_requested
         self._active_generation_capture_diagnostic_token = (
             capture_diagnostic_token if capture_requested else 0
         )
         self._busy = True
         self.changed.emit()
-        metadata = self._model_context_metadata(
-            generation_context, scene_label, self.momentum.current
+        metadata = (
+            {
+                "applicationCategory": "",
+                "fullScreen": False,
+                "inputScope": "retained-image-anchor",
+            }
+            if anchor_continuation
+            else self._model_context_metadata(
+                generation_context, scene_label, self.momentum.current
+            )
         )
         raw_interest_hints = self.database.get_setting("companion_interests", [])
         generation_interest_hints = (
@@ -2788,10 +2850,12 @@ class CompanionController(QObject):
                 "hasCapture": capture_requested,
                 "manualCapture": bool(manual_capture),
                 "hasSource": content_item is not None,
+                "anchorContinuation": anchor_continuation,
             },
-            context_bound=True,
+            context_bound=not anchor_continuation,
             ttl_seconds=120.0,
         )
+        self._active_generation_model_task_id = broker_task_id
 
         def worker() -> None:
             nonlocal captured_image, capture_attempt_failed, capture_fallback_requested
@@ -3172,6 +3236,8 @@ class CompanionController(QObject):
                     interest_hints=generation_interest_hints,
                     interest_weight=generation_interest_weight,
                     scene_weight=generation_scene_weight,
+                    prior_anchor=bounded_continuation_anchor,
+                    continuation_kind=bounded_continuation_kind,
                     allow_latest=bool(
                         isinstance(content_item, ContentItem)
                         and content_item.id in self._fresh_content_ids
@@ -3286,6 +3352,9 @@ class CompanionController(QObject):
                             and self._is_browser_context(generation_context)
                         ),
                         "manualCapture": bool(manual_capture),
+                        "continuationAnchor": bounded_continuation_anchor,
+                        "continuationKind": bounded_continuation_kind,
+                        "continuationSceneLabel": scene_label,
                     }
                 )
             except BaseException as exc:
@@ -3325,10 +3394,13 @@ class CompanionController(QObject):
         if self._active_generation_token == generation_token:
             self._active_generation_token = 0
             self._active_generation_user_requested = False
+            self._active_generation_is_anchor_continuation = False
         if self._generation_cancel_event is generation_cancel_event:
             self._generation_cancel_event = None
         if self._active_generation_model_id == model_id:
             self._active_generation_model_id = ""
+        if self._active_generation_model_task_id == broker_task_id:
+            self._active_generation_model_task_id = ""
         self._active_generation_has_capture = False
         self._active_generation_capture_diagnostic_token = 0
         self._abandon_model_task(broker_task_id, "worker-start-failed")
@@ -3545,20 +3617,29 @@ class CompanionController(QObject):
             if isinstance(capture, StagedCapture):
                 capture.release()
             record_presentation("quiet", "quality-rejected")
-            try:
-                retry_seconds = max(
-                    15.0,
-                    min(
-                        1800.0,
-                        float(result.get("retryAfterSeconds", 30.0) or 30.0),
-                    ),
+            if skip_reason == "capture-attempt-failed":
+                # Native acquisition failed before a model/evidence circuit
+                # existed. Keep a short hardware retry delay so the 1.5-second
+                # activity heartbeat does not hammer the same window.
+                try:
+                    retry_seconds = max(
+                        15.0,
+                        min(
+                            60.0,
+                            float(
+                                result.get("retryAfterSeconds", 30.0) or 30.0
+                            ),
+                        ),
+                    )
+                except (TypeError, ValueError):
+                    retry_seconds = 30.0
+                self._generation_attempt_not_before = max(
+                    self._generation_attempt_not_before,
+                    time.monotonic() + retry_seconds,
                 )
-            except (TypeError, ValueError):
-                retry_seconds = 30.0
-            self._generation_attempt_not_before = max(
-                self._generation_attempt_not_before,
-                time.monotonic() + retry_seconds,
-            )
+            # Every model/content quality skip has its own bounded runtime
+            # circuit. A controller-global timestamp here would make one bad
+            # philosophy sentence silence unrelated categories and scenes.
             self._last_generation_model = str(result.get("model", ""))
             self._last_generation_error = ""
             if bool(value.get("force")):
@@ -3720,6 +3801,22 @@ class CompanionController(QObject):
                     }
                     if bool(value.get("manualCapture")):
                         retry_arguments["manual_capture"] = True
+                    continuation_anchor = " ".join(
+                        str(value.get("continuationAnchor", "")).split()
+                    )[:160]
+                    continuation_kind = str(
+                        value.get("continuationKind", "")
+                    ).strip()[:40]
+                    if continuation_anchor and continuation_kind:
+                        retry_arguments.update(
+                            {
+                                "continuation_anchor": continuation_anchor,
+                                "continuation_kind": continuation_kind,
+                                "continuation_scene_label": str(
+                                    value.get("continuationSceneLabel", "")
+                                )[:120],
+                            }
+                        )
                     started = self._start_generation(
                         retry_context, **retry_arguments
                     )
@@ -3794,6 +3891,24 @@ class CompanionController(QObject):
         self._release_capture()
         self._capture = value.get("capture") if isinstance(value.get("capture"), StagedCapture) else None
         self._bubble_object = bubble
+        retained_anchor = " ".join(str(result.get("anchor", "")).split())[:160]
+        evidence_context_type = str(result.get("contextType", ""))[:40]
+        self._bubble_evidence = (
+            {
+                "anchor": retained_anchor,
+                "contextType": evidence_context_type,
+                "sceneLabel": str(value.get("sceneLabel", ""))[:120],
+            }
+            if (
+                (
+                    evidence_context_type == "active-window-image"
+                    and self._capture is not None
+                )
+                or evidence_context_type == "retained-image-anchor"
+            )
+            and retained_anchor
+            else {}
+        )
         self._last_generation_model = str(result.get("model", ""))
         self._last_generation_error = str(result.get("error", ""))
         self._bubble = {
@@ -3862,6 +3977,11 @@ class CompanionController(QObject):
         if str(self._bubble["contextType"]) == "active-window-image":
             self._set_request_feedback(
                 "模型已使用本次活动窗口画面；暂存文件已删除，气泡正在等待可见确认",
+                "pending",
+            )
+        elif str(self._bubble["contextType"]) == "retained-image-anchor":
+            self._set_request_feedback(
+                "已沿用当前气泡的画面锚点换了一个角度；没有再次发送截图像素",
                 "pending",
             )
         else:
@@ -4070,7 +4190,13 @@ class CompanionController(QObject):
         self.updateForegroundContext(current)
         return current, bool(decision.can_bubble), str(decision.reason)
 
-    def _start_manual_generation(self) -> bool:
+    def _start_manual_generation(
+        self,
+        *,
+        continuation_anchor: str = "",
+        continuation_kind: str = "",
+        continuation_scene_label: str = "",
+    ) -> bool:
         if self._interaction_suspended:
             self._set_request_feedback(
                 "正在移动莉莉丝；这次请求没有排队，请松开后再试一次",
@@ -4092,7 +4218,16 @@ class CompanionController(QObject):
             self.status_sink(f"当前场景保持安静 · {label}")
             self.changed.emit()
             return False
-        started = self._start_generation(context, force=True)
+        generation_arguments: dict[str, Any] = {"force": True}
+        if continuation_anchor and continuation_kind:
+            generation_arguments.update(
+                {
+                    "continuation_anchor": continuation_anchor,
+                    "continuation_kind": continuation_kind,
+                    "continuation_scene_label": continuation_scene_label,
+                }
+            )
+        started = self._start_generation(context, **generation_arguments)
         if not started and not self._busy:
             self._set_request_feedback("这次没有找到可用的陪伴内容", "warning")
             self.changed.emit()
@@ -4102,6 +4237,50 @@ class CompanionController(QObject):
         if self._capture is not None:
             self._capture.release()
             self._capture = None
+
+    def _invalidate_retained_visual_followups(
+        self, reason: str = "visual-evidence-cleared"
+    ) -> None:
+        """Fence work that copied the current bubble's transient anchor.
+
+        Clearing only ``_bubble_evidence`` is not sufficient: an ``another``
+        generation or explicit reply may already have copied the anchor into a
+        queued worker closure. Cancel those owners first so expiry, dismissal
+        or a privacy boundary cannot resurrect the visual bubble later.
+        """
+
+        if (
+            self._active_generation_token
+            and self._active_generation_is_anchor_continuation
+        ):
+            self._cancel_active_generation(
+                str(reason),
+                capture_reason="generation-cancelled",
+                active_model_task_only=True,
+            )
+
+        reply_cancel_event = self._visual_reply_cancel_event
+        reply_task_id = self._visual_reply_model_task_id
+        self._visual_reply_cancel_event = None
+        self._visual_reply_model_task_id = ""
+        if reply_cancel_event is not None:
+            self._active_reply_serial = 0
+            reply_cancel_event.set()
+            self._abandon_model_task(reply_task_id, str(reason))
+            self._busy = False
+            if self._bubble.get("busy"):
+                self._bubble["busy"] = False
+
+    def _clear_retained_visual_evidence(
+        self, reason: str = "visual-evidence-cleared"
+    ) -> None:
+        """Drop every screen-derived continuation aid for the live bubble."""
+
+        self._invalidate_retained_visual_followups(reason)
+        self._release_capture()
+        self._bubble_evidence = {}
+        if self._bubble.get("hasCapture"):
+            self._bubble["hasCapture"] = False
 
     def _mark_bubble_interacted(self, reason: str) -> None:
         if not self._bubble:
@@ -4140,7 +4319,7 @@ class CompanionController(QObject):
         self._legacy_dismiss_serial += 1
         self._bubble_expiry_timer.stop()
         self._presentation_ack_timer.stop()
-        self._release_capture()
+        self._clear_retained_visual_evidence(reason)
         self._bubble = {}
         self._bubble_object = None
         self._bubble_presented = False
@@ -4399,7 +4578,31 @@ class CompanionController(QObject):
         bubble = self._bubble_object
         requested = bubble.category if bubble is not None else None
         self._requested_category = requested
-        if not self._start_manual_generation():
+        visual_context = str(self._bubble.get("contextType", "")) in {
+            "active-window-image",
+            "retained-image-anchor",
+        }
+        continuation_arguments: dict[str, str] = {}
+        if visual_context:
+            anchor = " ".join(
+                str(self._bubble_evidence.get("anchor", "")).split()
+            )[:160]
+            if not anchor:
+                self._requested_category = None
+                self._set_request_feedback(
+                    "这张画面的临时锚点已经清理；保留原气泡，没有改用应用类别套话",
+                    "quiet",
+                )
+                self.changed.emit()
+                return
+            continuation_arguments = {
+                "continuation_anchor": anchor,
+                "continuation_kind": "same-image-another",
+                "continuation_scene_label": str(
+                    self._bubble_evidence.get("sceneLabel", bubble.scene_label)
+                )[:120],
+            }
+        if not self._start_manual_generation(**continuation_arguments):
             self._requested_category = None
 
     @Slot(str, result=bool)
@@ -4416,7 +4619,10 @@ class CompanionController(QObject):
             self.status_sink(f"“{requested.value}”已在陪伴偏好中关闭")
             return False
         if requested in {ContentCategory.NEWS, ContentCategory.RESEARCH}:
-            current_scene = self._scene_label(self.activity.current_context)
+            current_scene = str(
+                self._bubble_evidence.get("sceneLabel", "")
+                or self._scene_label(self.activity.current_context)
+            )
             weak_topic = str(self.momentum.current or "")
             ranking_query = " ".join(
                 value for value in (current_scene, weak_topic) if value
@@ -4428,7 +4634,36 @@ class CompanionController(QObject):
                 )
                 return False
         self._requested_category = requested
-        started = self._start_manual_generation()
+        visual_context = str(self._bubble.get("contextType", "")) in {
+            "active-window-image",
+            "retained-image-anchor",
+        }
+        continuation_arguments: dict[str, str] = {}
+        if visual_context:
+            anchor = " ".join(
+                str(self._bubble_evidence.get("anchor", "")).split()
+            )[:160]
+            if not anchor:
+                self._requested_category = None
+                self._set_request_feedback(
+                    "这张画面的临时锚点已经清理；保留原气泡，没有改用应用类别套话",
+                    "quiet",
+                )
+                self.changed.emit()
+                return False
+            continuation_arguments = {
+                "continuation_anchor": anchor,
+                "continuation_kind": "same-image-category",
+                "continuation_scene_label": str(
+                    self._bubble_evidence.get(
+                        "sceneLabel",
+                        self._bubble_object.scene_label
+                        if self._bubble_object is not None
+                        else "",
+                    )
+                )[:120],
+            }
+        started = self._start_manual_generation(**continuation_arguments)
         if not started:
             self._requested_category = None
         return started
@@ -4553,6 +4788,15 @@ class CompanionController(QObject):
         self.bubbleChanged.emit()
         self.changed.emit()
         dialogue = [message.to_mapping() for message in session.messages]
+        reply_evidence_anchor = " ".join(
+            str(self._bubble_evidence.get("anchor", "")).split()
+        )[:160]
+        visual_reply_cancel_event = (
+            threading.Event() if reply_evidence_anchor else None
+        )
+        self._reply_serial += 1
+        reply_serial = self._reply_serial
+        self._active_reply_serial = reply_serial
         broker_task_id = self._submit_model_task(
             LUNA_MODEL,
             ModelTaskKind.EXPLICIT_CHAT_REPLY,
@@ -4560,6 +4804,9 @@ class CompanionController(QObject):
             context_bound=False,
             ttl_seconds=120.0,
         )
+        if visual_reply_cancel_event is not None:
+            self._visual_reply_cancel_event = visual_reply_cancel_event
+            self._visual_reply_model_task_id = broker_task_id
 
         def worker() -> None:
             lease = _BrokerTaskLease(
@@ -4567,27 +4814,65 @@ class CompanionController(QObject):
                 broker_task_id or None,
                 LUNA_MODEL,
                 abort=lambda: self.runtime.abort_model(LUNA_MODEL),
+                local_cancel=visual_reply_cancel_event,
             )
             try:
                 if not lease.acquire():
                     self._replyReady.emit(
-                        {"bubbleId": bubble.id, "cancelled": True}
+                        {
+                            "bubbleId": bubble.id,
+                            "cancelled": True,
+                            "replySerial": reply_serial,
+                        }
                     )
                     return
-                answer = self.runtime.reply(bubble, dialogue, clean)
+                if lease.cancelled:
+                    self._replyReady.emit(
+                        {
+                            "bubbleId": bubble.id,
+                            "cancelled": True,
+                            "replySerial": reply_serial,
+                        }
+                    )
+                    return
+                if reply_evidence_anchor:
+                    answer = self.runtime.reply(
+                        bubble,
+                        dialogue,
+                        clean,
+                        evidence_anchor=reply_evidence_anchor,
+                    )
+                else:
+                    answer = self.runtime.reply(bubble, dialogue, clean)
                 if lease.commit(result={"completed": True}):
                     self._replyReady.emit(
-                        {"bubbleId": bubble.id, "answer": answer}
+                        {
+                            "bubbleId": bubble.id,
+                            "answer": answer,
+                            "replySerial": reply_serial,
+                        }
                     )
                 else:
                     self._replyReady.emit(
-                        {"bubbleId": bubble.id, "cancelled": True}
+                        {
+                            "bubbleId": bubble.id,
+                            "cancelled": True,
+                            "replySerial": reply_serial,
+                        }
                     )
             except BaseException as exc:
                 self._replyReady.emit(
-                    {"bubbleId": bubble.id, "cancelled": True}
+                    {
+                        "bubbleId": bubble.id,
+                        "cancelled": True,
+                        "replySerial": reply_serial,
+                    }
                     if lease.cancelled
-                    else {"bubbleId": bubble.id, "error": str(exc)}
+                    else {
+                        "bubbleId": bubble.id,
+                        "error": str(exc),
+                        "replySerial": reply_serial,
+                    }
                 )
             finally:
                 lease.close(result={"completed": not lease.cancelled})
@@ -4597,11 +4882,25 @@ class CompanionController(QObject):
             self._busy = False
             self._bubble["busy"] = False
             self._abandon_model_task(broker_task_id, "worker-start-failed")
+            if self._visual_reply_cancel_event is visual_reply_cancel_event:
+                self._visual_reply_cancel_event = None
+                self._visual_reply_model_task_id = ""
+            if self._active_reply_serial == reply_serial:
+                self._active_reply_serial = 0
 
     def _accept_reply(self, payload: object) -> None:
         if self._closing:
             return
         value = dict(payload) if isinstance(payload, dict) else {}
+        try:
+            reply_serial = int(value.get("replySerial") or 0)
+        except (TypeError, ValueError):
+            reply_serial = -1
+        if reply_serial and reply_serial != self._active_reply_serial:
+            return
+        self._active_reply_serial = 0
+        self._visual_reply_cancel_event = None
+        self._visual_reply_model_task_id = ""
         bubble = self._bubble_object
         if bubble is None or bubble.id != value.get("bubbleId"):
             self._busy = False
@@ -4829,9 +5128,8 @@ class CompanionController(QObject):
                 "smart-observation-revoked",
                 capture_reason="authorization-revoked",
             )
-            self._release_capture()
-            if self._bubble.get("hasCapture"):
-                self._bubble["hasCapture"] = False
+            self._clear_retained_visual_evidence()
+            if self._bubble:
                 self.bubbleChanged.emit()
         self.changed.emit()
 
@@ -5377,7 +5675,7 @@ class CompanionController(QObject):
         archive_cancel_event = self._archive_cancel_event
         if archive_cancel_event is not None:
             archive_cancel_event.set()
-        self._release_capture()
+        self._clear_retained_visual_evidence()
         self.runtime.shutdown()
         self._join_workers()
         self._busy = False

@@ -305,6 +305,144 @@ def _click_action(
     return result
 
 
+def _click_named_item(window: QQuickWindow, object_name: str) -> bool:
+    item = _named_item(window, object_name)
+    if item is None or not item.isVisible() or not item.isEnabled():
+        return False
+    QTest.mouseClick(
+        window,
+        Qt.MouseButton.LeftButton,
+        pos=_item_center(item),
+    )
+    QTest.qWait(160)
+    return True
+
+
+def _replace_text(
+    window: QQuickWindow, object_name: str, text: str
+) -> bool:
+    item = _named_item(window, object_name)
+    if item is None or not item.isVisible() or not item.isEnabled():
+        return False
+    QTest.mouseClick(
+        window,
+        Qt.MouseButton.LeftButton,
+        pos=_item_center(item),
+    )
+    # QTest exposes text entry only for QWidget, while this surface is a
+    # QQuickWindow.  The focus click above is still real; seed the deterministic
+    # test string through the public TextField property, then exercise every
+    # state-changing button through QTest below.
+    item.setProperty("text", text)
+    QTest.qWait(80)
+    return str(item.property("text") or "") == text
+
+
+def _exercise_daily_loop(
+    backend: Backend, work_panel: QQuickWindow
+) -> dict[str, object]:
+    """Exercise real QML controls from task creation through deterministic unlock."""
+
+    category = _named_item(work_panel, "workPanelTaskCategoryInput")
+    result: dict[str, object] = {
+        "categoryFound": category is not None,
+        "categoryDefault": str(category.property("currentText") or "")
+        if category is not None
+        else "",
+        "createdByClick": 0,
+        "completedByClick": 0,
+    }
+    for index in range(3):
+        title = f"Daily loop {index + 1}"
+        if not _replace_text(work_panel, "workPanelTaskTitleInput", title):
+            continue
+        if not _click_named_item(work_panel, "workPanelTaskCreateButton"):
+            continue
+        task = next(
+            (
+                value
+                for value in backend.taskItems
+                if str(value.get("title", "")) == title
+            ),
+            None,
+        )
+        if task is None:
+            continue
+        result["createdByClick"] = int(result["createdByClick"]) + 1
+        if str(task.get("category", "")) != "daily":
+            continue
+        if _click_named_item(
+            work_panel, f"workPanelTaskComplete_{task.get('id', '')}"
+        ):
+            result["completedByClick"] = int(result["completedByClick"]) + 1
+
+    growth = backend.growthStatus
+    unlock_keys = {
+        str(value.get("item_key", "")) for value in growth.get("unlocks", [])
+    }
+    result.update(
+        points=int(growth.get("points", 0)),
+        homeCardiganUnlocked="outfit:home-cardigan" in unlock_keys,
+        livingCornerUnlocked="world:living-corner" in unlock_keys,
+    )
+
+    # A reached stage never regresses when a task is reopened and its points
+    # are compensated.  Recreate that authoritative projection directly in
+    # this isolated database: the QML must consume growthStatus.stage instead
+    # of deriving a lower stage from the score again.
+    with backend.database.connect() as connection:
+        connection.execute(
+            "UPDATE growth_state SET stage='熟悉' WHERE state_id='default'"
+        )
+    backend.productivityChanged.emit()
+    QTest.qWait(120)
+    authoritative = backend.growthStatus
+    result["authoritativeProjection"] = {
+        "backendStage": str(authoritative.get("stage", "")),
+        "qmlStage": str(work_panel.property("resonanceStage") or ""),
+        "backendNextStage": str(authoritative.get("nextStage", "")),
+        "qmlNextStage": str(work_panel.property("resonanceNextStage") or ""),
+        "backendNextAt": authoritative.get("nextAt"),
+        "qmlNextAt": work_panel.property("resonanceNextAt"),
+        "backendProgress": float(authoritative.get("progress", 0.0)),
+        "qmlProgress": float(work_panel.property("resonanceProgress") or 0.0),
+    }
+
+    reminder_title = "Daily loop reminder"
+    reminder_typed = _replace_text(
+        work_panel, "workPanelReminderTitleInput", reminder_title
+    )
+    reminder_created = reminder_typed and _click_named_item(
+        work_panel, "workPanelReminderCreateButton"
+    )
+    pending = [
+        value
+        for value in backend.reminderItems
+        if str(value.get("title", "")) == reminder_title
+    ]
+    reminder_id = str(pending[0].get("id", "")) if pending else ""
+    reminder_dismissed = bool(reminder_id) and _click_named_item(
+        work_panel, f"workPanelReminderDismiss_{reminder_id}"
+    )
+    snooze = (
+        _named_item(work_panel, f"workPanelReminderSnooze_{reminder_id}")
+        if reminder_id
+        else None
+    )
+    result["reminder"] = {
+        "createdByClick": bool(reminder_created and reminder_id),
+        "dismissedByClick": reminder_dismissed,
+        "pendingProjectionEmpty": not any(
+            str(value.get("id", "")) == reminder_id
+            for value in backend.reminderItems
+        ),
+        "endedSnoozeUnavailable": snooze is None
+        or not snooze.isVisible()
+        or not snooze.isEnabled(),
+    }
+    return result
+
+
 def _seed_companion_bubble(backend: Backend) -> None:
     backend.companion._bubble = {
         "id": "box-world-click-path-bubble",
@@ -681,6 +819,7 @@ def _run_verification(app: QApplication, backend: Backend) -> tuple[bool, dict[s
     work_route["opened"] = bool(backend.workPanelOpen and work_panel.isVisible())
     work_route["section"] = str(backend.workPanelSection)
     work_route["exposed"] = bool(work_panel.isExposed())
+    work_route["dailyLoop"] = _exercise_daily_loop(backend, work_panel)
     backend.setWorkPanelOpen(False)
     QTest.qWait(100)
     report["functionLibraryAction"] = work_route
@@ -795,6 +934,25 @@ def _run_verification(app: QApplication, backend: Backend) -> tuple[bool, dict[s
             work_route["opened"],
             work_route["section"] == "work",
             work_route["exposed"],
+            work_route["dailyLoop"]["categoryFound"],
+            work_route["dailyLoop"]["categoryDefault"] == "日常",
+            work_route["dailyLoop"]["createdByClick"] == 3,
+            work_route["dailyLoop"]["completedByClick"] == 3,
+            work_route["dailyLoop"]["points"] == 30,
+            work_route["dailyLoop"]["homeCardiganUnlocked"],
+            work_route["dailyLoop"]["livingCornerUnlocked"],
+            work_route["dailyLoop"]["authoritativeProjection"]["backendStage"]
+            == work_route["dailyLoop"]["authoritativeProjection"]["qmlStage"],
+            work_route["dailyLoop"]["authoritativeProjection"]["backendNextStage"]
+            == work_route["dailyLoop"]["authoritativeProjection"]["qmlNextStage"],
+            work_route["dailyLoop"]["authoritativeProjection"]["backendNextAt"]
+            == work_route["dailyLoop"]["authoritativeProjection"]["qmlNextAt"],
+            abs(
+                work_route["dailyLoop"]["authoritativeProjection"]["backendProgress"]
+                - work_route["dailyLoop"]["authoritativeProjection"]["qmlProgress"]
+            )
+            < 0.0001,
+            *work_route["dailyLoop"]["reminder"].values(),
         )
     )
     companion_ok = menu_ok(companion_route) and action_ok(companion_route) and all(

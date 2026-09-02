@@ -201,6 +201,51 @@ def test_proactive_generation_receipt_is_linked_and_strictly_content_safe(
     assert nonboolean["generation"]["imageGrounded"] is False
     assert nonboolean["generation"]["evidenceConfidence"] == "none"
 
+    database.save_proactive_session(
+        session_id="session-retained-anchor",
+        bubble={
+            "id": "bubble-retained-anchor",
+            "category": "科普",
+            # Visible generated prose remains ordinary local history.  The
+            # hidden structured anchor below is a separate ephemeral field.
+            "summary": "右侧细灰线把留白分成了两种节奏。",
+            "detail": "右侧细灰线仍是这次解释唯一沿用的画面关系。",
+            "sceneLabel": "论文阅读",
+            "createdAt": datetime.now(UTC).isoformat(),
+        },
+        generation={
+            "contextType": "retained-image-anchor",
+            "imageGrounded": False,
+            "model": "gpt-5.6-luna",
+            "evidenceConfidence": "retained",
+            "anchor": "never-persist-this-visual-anchor",
+        },
+    )
+    retained = database.proactive_session("session-retained-anchor")
+    assert retained is not None
+    assert retained["summary"] == "右侧细灰线把留白分成了两种节奏。"
+    assert retained["detail"] == "右侧细灰线仍是这次解释唯一沿用的画面关系。"
+    assert retained["generation"] == {
+        "schemaVersion": 1,
+        "contextType": "retained-image-anchor",
+        "imageGrounded": False,
+        "model": "gpt-5.6-luna",
+        "evidenceConfidence": "none",
+    }
+    with database.connect() as db:
+        row = db.execute(
+            "SELECT generation_json FROM proactive_sessions "
+            "WHERE session_id='session-retained-anchor'"
+        ).fetchone()
+        columns = {
+            str(value["name"])
+            for value in db.execute("PRAGMA table_info(proactive_sessions)").fetchall()
+        }
+        retained_raw = str(row["generation_json"])
+    assert "anchor" not in columns
+    assert '"anchor"' not in retained_raw
+    assert "never-persist-this-visual-anchor" not in retained_raw
+
 
 def test_content_cache_round_trip_keeps_metadata_only(tmp_path) -> None:
     database = Database(tmp_path / "lilies.db")

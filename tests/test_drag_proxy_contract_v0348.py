@@ -173,7 +173,12 @@ def test_system_move_attempts_cached_proxy_before_the_real_window() -> None:
     event_filter = CompactPointerEventFilter(root)
     calls: list[str] = []
 
-    def prepare_proxy(snapshot_key: str, geometry_key: str) -> bool:
+    def prepare_proxy(
+        session_id: int,
+        snapshot_key: str,
+        geometry_key: str,
+    ) -> bool:
+        assert session_id > 0
         calls.append(f"proxy:{snapshot_key}:{geometry_key}")
         return True
 
@@ -185,7 +190,7 @@ def test_system_move_attempts_cached_proxy_before_the_real_window() -> None:
     event_filter.acknowledgeSystemMoveFinished(4801)
 
 
-def test_proxy_cache_failure_explicitly_falls_back_to_system_move(
+def test_proxy_cache_failure_explicitly_falls_back_to_frame_animation(
     monkeypatch,
 ) -> None:
     root = _MoveRoot()
@@ -200,15 +205,16 @@ def test_proxy_cache_failure_explicitly_falls_back_to_system_move(
         4802,
         "latched-pose",
         "latched-geometry",
-    ) is True
+    ) is False
     assert cache.gesture_started is True
     assert cache.prepare_calls == [
         ("latched-pose", root_rect, "latched-geometry")
     ]
     assert event_filter._proxy_fallback_reason == "stale-key"
     assert event_filter._diagnostic_proxy_used is False
-    assert root.system_move_starts == 1
-    event_filter.acknowledgeSystemMoveFinished(4802)
+    assert root.system_move_starts == 0
+    assert event_filter.native_system_move_active is False
+    event_filter.endDragProxyGesture()
 
 
 def test_app_bridge_exposes_geometry_and_visual_staleness_contract() -> None:

@@ -759,8 +759,8 @@ def test_image_quality_skip_is_quiet_and_does_not_spend_observation_gate(
     )
     feedback_before = controller.activityStatus["requestFeedback"]
     observation_before = controller.activity._last_observation_at
+    retry_gate_before = controller._generation_attempt_not_before
     try:
-        started_at = time.monotonic()
         controller._accept_generation(
             {
                 "result": {
@@ -782,7 +782,7 @@ def test_image_quality_skip_is_quiet_and_does_not_spend_observation_gate(
         )
         assert controller.bubble == {}
         assert controller.activity._last_observation_at == observation_before
-        assert controller._generation_attempt_not_before >= started_at + 29.0
+        assert controller._generation_attempt_not_before == retry_gate_before
         if force:
             assert "没有弹出气泡" in controller.activityStatus["requestFeedback"]
             assert controller.activityStatus["requestFeedbackKind"] == "quiet"
@@ -1197,6 +1197,11 @@ def test_successful_capture_authorization_revoke_releases_retained_capture(
     capture.retain_in_memory()
     controller._capture = capture
     controller._bubble = {"hasCapture": True}
+    controller._bubble_evidence = {
+        "anchor": "右侧细灰线",
+        "contextType": "active-window-image",
+        "sceneLabel": "论文阅读",
+    }
     bubble_changed_count = 0
 
     def on_bubble_changed() -> None:
@@ -1211,6 +1216,7 @@ def test_successful_capture_authorization_revoke_releases_retained_capture(
         assert controller.activityStatus["smartObservationEnabled"] is False
         assert controller._capture is None
         assert capture._image_bytes is None
+        assert controller._bubble_evidence == {}
         assert controller.bubble["hasCapture"] is False
         assert bubble_changed_count == 1
     finally:
@@ -2196,7 +2202,7 @@ def test_runtime_truth_skips_stay_quiet_without_spending_success_gate(
     controller._generation_cancel_event = threading.Event()
     controller._busy = True
     before_observation = controller.activity._last_observation_at
-    started_at = time.monotonic()
+    retry_gate_before = controller._generation_attempt_not_before
     try:
         controller._accept_generation(
             {
@@ -2218,7 +2224,7 @@ def test_runtime_truth_skips_stay_quiet_without_spending_success_gate(
         assert controller.busy is False
         assert controller.bubble == {}
         assert controller.activity._last_observation_at == before_observation
-        assert controller._generation_attempt_not_before >= started_at + 1799
+        assert controller._generation_attempt_not_before == retry_gate_before
     finally:
         controller.shutdown()
     assert app is not None
@@ -3229,6 +3235,11 @@ def _seed_pending_capture_bubble(
     capture = StagedCapture(capture_path, tmp_path / "capture-library")
     capture.retain_in_memory()
     controller._capture = capture
+    controller._bubble_evidence = {
+        "anchor": "右侧细灰线",
+        "contextType": "active-window-image",
+        "sceneLabel": "论文阅读",
+    }
     controller._bubble.update(
         {
             "contextType": "active-window-image",
@@ -3272,6 +3283,9 @@ def test_capture_bubble_privacy_pause_safe_resume_then_ack(tmp_path) -> None:
         controller.setPresentationSuppressed(True)
         status = controller.activityStatus
         assert controller.bubble["deliveryState"] == "suppressed"
+        assert controller.bubble["hasCapture"] is False
+        assert _capture._image_bytes is None
+        assert controller._bubble_evidence == {}
         assert status["lastCapturePresentationOutcome"] == "pending"
         assert status["lastCapturePresentationReason"] == "privacy-suppressed"
 
@@ -3556,6 +3570,457 @@ def test_another_preserves_the_visible_bubble_category(tmp_path, monkeypatch) ->
         controller.another(bubble.id)
         assert requested == [ContentCategory.PHILOSOPHY]
         assert controller.deliveryStatus["unreadCount"] == 0
+    finally:
+        controller.shutdown()
+    assert app is not None
+
+
+def test_visual_another_and_category_reuse_the_same_anchor_not_app_fallback(
+    tmp_path, monkeypatch
+) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    controller = CompanionController(
+        Database(tmp_path / "lilies.db"),
+        tmp_path,
+        active=False,
+        status_sink=lambda _message: None,
+        move_to_box=lambda _payload: None,
+    )
+    bubble = controller.engine.emit(
+        category=ContentCategory.SCIENCE,
+        summary="右侧细灰线像一条安静的边界。",
+        detail="它把留白分成两种尺度。",
+        scene_label="论文阅读",
+        force=True,
+    )
+    assert bubble is not None
+    controller._bubble_object = bubble
+    controller._bubble = {
+        **bubble.to_mapping(),
+        "visible": True,
+        "busy": False,
+        "contextType": "active-window-image",
+    }
+    controller._bubble_evidence = {
+        "anchor": "右侧细灰线",
+        "contextType": "active-window-image",
+        "sceneLabel": "论文阅读",
+    }
+    calls: list[dict[str, str]] = []
+
+    def start(**kwargs) -> bool:
+        calls.append(dict(kwargs))
+        return True
+
+    monkeypatch.setattr(controller, "_start_manual_generation", start)
+    try:
+        controller.another(bubble.id)
+        assert calls[-1] == {
+            "continuation_anchor": "右侧细灰线",
+            "continuation_kind": "same-image-another",
+            "continuation_scene_label": "论文阅读",
+        }
+        assert controller._requested_category is ContentCategory.SCIENCE
+
+        assert controller.requestCategory(ContentCategory.ROAST.value) is True
+        assert calls[-1] == {
+            "continuation_anchor": "右侧细灰线",
+            "continuation_kind": "same-image-category",
+            "continuation_scene_label": "论文阅读",
+        }
+        assert controller._requested_category is ContentCategory.ROAST
+    finally:
+        controller.shutdown()
+    assert app is not None
+
+
+def test_visual_follow_up_keeps_original_bubble_when_anchor_was_cleared(
+    tmp_path, monkeypatch
+) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    controller = CompanionController(
+        Database(tmp_path / "lilies.db"),
+        tmp_path,
+        active=False,
+        status_sink=lambda _message: None,
+        move_to_box=lambda _payload: None,
+    )
+    bubble = controller.engine.emit(
+        category=ContentCategory.SCIENCE,
+        summary="原画面气泡应继续保留。",
+        force=True,
+    )
+    assert bubble is not None
+    controller._bubble_object = bubble
+    controller._bubble = {
+        **bubble.to_mapping(),
+        "visible": True,
+        "busy": False,
+        "contextType": "active-window-image",
+    }
+    monkeypatch.setattr(
+        controller,
+        "_start_manual_generation",
+        lambda **_kwargs: pytest.fail("cleared evidence must not fall back"),
+    )
+    try:
+        controller.another(bubble.id)
+        assert controller.bubble["id"] == bubble.id
+        assert "没有改用应用类别套话" in controller.activityStatus["requestFeedback"]
+    finally:
+        controller.shutdown()
+    assert app is not None
+
+
+def test_anchor_only_acceptance_releases_pixels_but_preserves_live_anchor(
+    tmp_path,
+) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    controller = CompanionController(
+        Database(tmp_path / "lilies.db"),
+        tmp_path,
+        active=False,
+        status_sink=lambda _message: None,
+        move_to_box=lambda _payload: None,
+        foreground_provider=lambda: 0,
+    )
+    capture_path = tmp_path / "capture-staging" / "old-frame.png"
+    capture_path.parent.mkdir(parents=True, exist_ok=True)
+    capture_path.write_bytes(b"synthetic")
+    capture = StagedCapture(capture_path, tmp_path / "capture-library")
+    capture.retain_in_memory()
+    controller._capture = capture
+    controller._bubble_evidence = {
+        "anchor": "右侧细灰线",
+        "contextType": "active-window-image",
+        "sceneLabel": "论文阅读",
+    }
+    controller._generation_serial = 17
+    controller._active_generation_token = 17
+    controller._busy = True
+    try:
+        controller._accept_generation(
+            {
+                "generationToken": 17,
+                "result": {
+                    "summary": "右侧细灰线换了一个解释。",
+                    "detail": "右侧细灰线仍是唯一的视觉关系线索。",
+                    "model": LUNA_MODEL,
+                    "contextType": "retained-image-anchor",
+                    "anchor": "右侧细灰线",
+                    "evidenceConfidence": "retained",
+                    "imageGrounded": False,
+                    "anchorGrounded": True,
+                },
+                "category": ContentCategory.SCIENCE,
+                "sceneLabel": "论文阅读",
+                "force": True,
+                "capture": None,
+                "contextIdentity": controller.activity.context_identity,
+            }
+        )
+        assert controller.bubble["contextType"] == "retained-image-anchor"
+        assert controller.bubble["hasCapture"] is False
+        assert capture._image_bytes is None
+        assert controller._capture is None
+        assert controller._bubble_evidence == {
+            "anchor": "右侧细灰线",
+            "contextType": "retained-image-anchor",
+            "sceneLabel": "论文阅读",
+        }
+        assert "没有再次发送截图像素" in controller.activityStatus["requestFeedback"]
+    finally:
+        controller.shutdown()
+    assert app is not None
+
+
+@pytest.mark.parametrize("cleanup", ["dismiss", "expire"])
+def test_dismiss_and_expire_clear_pixels_and_visual_anchor(tmp_path, cleanup) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    controller = CompanionController(
+        Database(tmp_path / "lilies.db"),
+        tmp_path,
+        active=False,
+        status_sink=lambda _message: None,
+        move_to_box=lambda _payload: None,
+    )
+    capture_path = tmp_path / "capture-staging" / f"{cleanup}.png"
+    capture_path.parent.mkdir(parents=True, exist_ok=True)
+    capture_path.write_bytes(b"synthetic")
+    capture = StagedCapture(capture_path, tmp_path / "capture-library")
+    capture.retain_in_memory()
+    now = datetime.now(UTC)
+    controller._capture = capture
+    controller._bubble_evidence = {
+        "anchor": "右侧细灰线",
+        "contextType": "active-window-image",
+        "sceneLabel": "论文阅读",
+    }
+    controller._bubble = {
+        "id": cleanup,
+        "visible": True,
+        "hasCapture": True,
+        "expiresAt": (now - timedelta(seconds=1)).isoformat(),
+    }
+    try:
+        if cleanup == "dismiss":
+            controller.dismissExplicit()
+        else:
+            controller._bubble_interacted = True
+            controller._expire_bubble()
+        assert controller.bubble == {}
+        assert capture._image_bytes is None
+        assert controller._capture is None
+        assert controller._bubble_evidence == {}
+    finally:
+        controller.shutdown()
+    assert app is not None
+
+
+def test_expiry_invalidates_anchor_continuation_and_rejects_its_late_result(
+    tmp_path,
+) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    controller = CompanionController(
+        Database(tmp_path / "lilies.db"),
+        tmp_path,
+        active=False,
+        status_sink=lambda _message: None,
+        move_to_box=lambda _payload: None,
+        foreground_provider=lambda: 0,
+    )
+    bubble = controller.engine.emit(
+        category=ContentCategory.SCIENCE,
+        summary="右侧细灰线仍在当前气泡里。",
+        scene_label="论文阅读",
+        force=True,
+    )
+    assert bubble is not None
+    now = datetime.now(UTC)
+    controller._bubble_object = bubble
+    controller._bubble = {
+        **bubble.to_mapping(),
+        "visible": True,
+        "busy": True,
+        "contextType": "active-window-image",
+        "expiresAt": (now - timedelta(seconds=1)).isoformat(),
+    }
+    controller._bubble_evidence = {
+        "anchor": "右侧细灰线",
+        "contextType": "active-window-image",
+        "sceneLabel": "论文阅读",
+    }
+    cancel_event = threading.Event()
+    controller._generation_serial = 41
+    controller._active_generation_token = 41
+    controller._active_generation_user_requested = True
+    controller._active_generation_is_anchor_continuation = True
+    controller._generation_cancel_event = cancel_event
+    controller._busy = True
+    controller._bubble_interacted = True
+    try:
+        controller._expire_bubble()
+        assert cancel_event.is_set()
+        assert controller._active_generation_token == 0
+        assert controller._active_generation_is_anchor_continuation is False
+        assert controller.bubble == {}
+        assert controller._bubble_evidence == {}
+
+        controller._accept_generation(
+            {
+                "generationToken": 41,
+                "result": {
+                    "summary": "右侧细灰线试图从迟到结果回来。",
+                    "detail": "这个结果必须被 token 栅栏拒绝。",
+                    "model": LUNA_MODEL,
+                    "contextType": "retained-image-anchor",
+                    "anchor": "右侧细灰线",
+                    "evidenceConfidence": "retained",
+                    "imageGrounded": False,
+                    "anchorGrounded": True,
+                },
+                "category": ContentCategory.SCIENCE,
+                "sceneLabel": "论文阅读",
+                "force": True,
+                "capture": None,
+                "contextIdentity": controller.activity.context_identity,
+            }
+        )
+        assert controller.bubble == {}
+        assert controller._bubble_evidence == {}
+    finally:
+        controller.shutdown()
+    assert app is not None
+
+
+def test_expiry_cancels_only_anchor_continuation_model_task(tmp_path) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    broker = ModelTaskBroker()
+    controller = CompanionController(
+        Database(tmp_path / "lilies.db"),
+        tmp_path,
+        active=False,
+        status_sink=lambda _message: None,
+        move_to_box=lambda _payload: None,
+        model_broker=broker,
+    )
+    anchor_task_id = controller._submit_model_task(
+        LUNA_MODEL,
+        ModelTaskKind.PROACTIVE,
+        {"requestId": "anchor-continuation"},
+        context_bound=False,
+        ttl_seconds=30,
+    )
+    archive_task_id = controller._submit_model_task(
+        LUNA_MODEL,
+        ModelTaskKind.MEMORY_ARCHIVE,
+        {"requestId": "memory-archive"},
+        context_bound=False,
+        ttl_seconds=30,
+    )
+    controller._active_generation_token = 47
+    controller._active_generation_is_anchor_continuation = True
+    controller._active_generation_model_task_id = anchor_task_id
+    controller._generation_cancel_event = threading.Event()
+    controller._busy = True
+    controller._bubble = {
+        "id": "visual-bubble",
+        "visible": True,
+        "contextType": "retained-image-anchor",
+    }
+    controller._bubble_evidence = {
+        "anchor": "右侧细灰线",
+        "contextType": "retained-image-anchor",
+        "sceneLabel": "论文阅读",
+    }
+    try:
+        controller._clear_bubble(reason="expired", mark_read=False)
+        assert broker.get(anchor_task_id).state is ModelTaskState.CANCELLED
+        assert broker.get(archive_task_id).terminal is False
+        assert controller._active_generation_model_task_id == ""
+    finally:
+        controller.shutdown()
+    assert app is not None
+
+
+def test_expiry_cancels_queued_visual_reply_before_anchor_reaches_runtime(
+    tmp_path,
+) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    broker = ModelTaskBroker()
+    blocker = broker.submit(
+        LUNA_MODEL,
+        ModelTaskKind.EXPLICIT_CHAT_REPLY,
+        {"requestId": "blocker"},
+        context_bound=False,
+        expires_at=time.monotonic() + 30,
+    )
+    controller = CompanionController(
+        Database(tmp_path / "lilies.db"),
+        tmp_path,
+        active=False,
+        status_sink=lambda _message: None,
+        move_to_box=lambda _payload: None,
+        model_broker=broker,
+    )
+    controller.runtime.shutdown()
+
+    class Runtime:
+        modality_status = {"checked": True, "imageModel": ""}
+
+        def __init__(self) -> None:
+            self.reply_calls = 0
+
+        def reply(self, *_args, **_kwargs):
+            self.reply_calls += 1
+            return "不应生成"
+
+        def abort_model(self, _model_id):
+            pass
+
+        def shutdown(self):
+            pass
+
+    runtime = Runtime()
+    controller.runtime = runtime
+    bubble = controller.engine.emit(
+        category=ContentCategory.SCIENCE,
+        summary="右侧细灰线还在。",
+        scene_label="论文阅读",
+        force=True,
+    )
+    assert bubble is not None
+    controller._bubble_object = bubble
+    controller._bubble = {
+        **bubble.to_mapping(),
+        "visible": True,
+        "busy": False,
+        "contextType": "active-window-image",
+        "expiresAt": (datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+    }
+    controller._bubble_evidence = {
+        "anchor": "右侧细灰线",
+        "contextType": "active-window-image",
+        "sceneLabel": "论文阅读",
+    }
+    try:
+        controller.reply(bubble.id, "再解释一点")
+        task_id = controller._visual_reply_model_task_id
+        assert task_id
+        assert broker.get(task_id).state is ModelTaskState.QUEUED
+
+        controller._expire_bubble()
+        assert controller.bubble == {}
+        assert controller._bubble_evidence == {}
+        assert broker.get(task_id).state is ModelTaskState.CANCELLED
+        assert _wait_for(
+            app, lambda: not controller._worker_threads, timeout=2.0
+        )
+        assert runtime.reply_calls == 0
+    finally:
+        if not broker.get(blocker.id).terminal:
+            broker.cancel(blocker.id, reason="test-finished")
+        controller.shutdown()
+    assert app is not None
+
+
+def test_quality_rejection_does_not_open_controller_global_cooldown(
+    tmp_path,
+) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    controller = CompanionController(
+        Database(tmp_path / "lilies.db"),
+        tmp_path,
+        active=False,
+        status_sink=lambda _message: None,
+        move_to_box=lambda _payload: None,
+    )
+    controller._generation_serial = 53
+    controller._active_generation_token = 53
+    controller._busy = True
+    before = controller._generation_attempt_not_before
+    try:
+        controller._accept_generation(
+            {
+                "generationToken": 53,
+                "result": {
+                    "summary": "",
+                    "detail": "",
+                    "model": LUNA_MODEL,
+                    "contextType": "application-signal",
+                    "skip": True,
+                    "skipReason": "philosophy-quality-invalid",
+                    "degraded": True,
+                    "retryAfterSeconds": 1800.0,
+                },
+                "category": ContentCategory.PHILOSOPHY,
+                "sceneLabel": "论文阅读",
+                "force": False,
+                "capture": None,
+            }
+        )
+        assert controller._generation_attempt_not_before == before
+        assert controller.busy is False
     finally:
         controller.shutdown()
     assert app is not None

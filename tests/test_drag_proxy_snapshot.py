@@ -18,7 +18,12 @@ from lilies.drag_proxy_snapshot import (
     DragProxySnapshotMetadata,
     alpha_bounds,
 )
-from lilies.windows_drag_proxy import DragDelta, DragProxyFinal, WindowRect
+from lilies.windows_drag_proxy import (
+    DragDelta,
+    DragProxyFinal,
+    WindowRect,
+    WindowsDragProxyError,
+)
 
 
 class _Root:
@@ -162,6 +167,144 @@ def test_exact_cache_key_prepares_tight_proxy_and_reports_physical_delta() -> No
     cache.complete()
     assert cache.active is False
     assert proxy.hide_count == 1
+
+
+def test_poison_destroy_invalidates_same_key_metadata_and_allows_reupload() -> None:
+    class PoisonedProxy(_Proxy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_count = 0
+
+        def start_move(self) -> bool:
+            self.start_count += 1
+            self.handle = None
+            self.bitmap = None
+            return False
+
+        def close(self) -> bool:
+            self.close_count += 1
+            return True
+
+    parent = QObject()
+    item = _SizedItem()
+    cache = DragProxySnapshotCache(_Root(), item, parent)
+    failed_proxy = PoisonedProxy()
+    cache._proxy = failed_proxy
+    cache._metadata = DragProxySnapshotMetadata(
+        key="same-key",
+        captured_at=cache._monotonic(),
+        device_pixel_ratio=1.5,
+        crop_origin=QPoint(),
+        pixel_size=QSize(40, 50),
+        geometry_key="same-geometry",
+        source_pixel_size=QSize(384, 363),
+    )
+    cache._uniform_screen_dpr = lambda: True
+    cache._pending_key = "same-key"
+    cache._pending_geometry_key = "same-geometry"
+
+    assert cache.prepare(
+        "same-key",
+        WindowRect(0, 0, 256, 242),
+        "same-geometry",
+    )
+    assert cache.start_move() is False
+    assert cache._proxy is None
+    assert cache.metadata is None
+    assert failed_proxy.close_count == 1
+    assert cache.request("same-key", "same-geometry") is True
+
+    replacement = _Proxy()
+    cache._proxy = replacement
+    cache._metadata = DragProxySnapshotMetadata(
+        key="same-key",
+        captured_at=cache._monotonic(),
+        device_pixel_ratio=1.5,
+        crop_origin=QPoint(),
+        pixel_size=QSize(40, 50),
+        geometry_key="same-geometry",
+        source_pixel_size=QSize(384, 363),
+    )
+    assert cache.prepare(
+        "same-key",
+        WindowRect(0, 0, 256, 242),
+        "same-geometry",
+    ) == replacement.handle
+    cache.close()
+
+
+def test_cache_close_prefers_proxy_close_for_observer_shutdown() -> None:
+    class ClosableProxy(_Proxy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_count = 0
+
+        def close(self) -> bool:
+            self.close_count += 1
+            self.handle = None
+            return True
+
+    parent = QObject()
+    cache = DragProxySnapshotCache(_Root(), _SizedItem(), parent)
+    proxy = ClosableProxy()
+    cache._proxy = proxy
+
+    cache.close()
+
+    assert proxy.close_count == 1
+    assert proxy.handle is None
+
+
+def test_repeated_first_upload_failures_close_every_new_proxy_candidate() -> None:
+    class ImageResult:
+        def __init__(self) -> None:
+            self.frame = QImage(
+                24, 24, QImage.Format.Format_ARGB32_Premultiplied
+            )
+            self.frame.fill(QColor(255, 255, 255, 255))
+
+        def image(self) -> QImage:
+            return self.frame
+
+    class FailingProxy:
+        handle = 73
+
+        def __init__(self) -> None:
+            self.close_count = 0
+
+        def upload_bitmap(self, _bitmap) -> None:
+            raise WindowsDragProxyError("first upload failed")
+
+        def close(self) -> bool:
+            self.close_count += 1
+            self.handle = None
+            return True
+
+    candidates: list[FailingProxy] = []
+
+    def factory() -> FailingProxy:
+        candidate = FailingProxy()
+        candidates.append(candidate)
+        return candidate
+
+    parent = QObject()
+    cache = DragProxySnapshotCache(
+        _Root(), _SizedItem(width=24, height=24), parent, proxy_factory=factory
+    )
+
+    for generation in range(1, 4):
+        cache._grab_generation = generation
+        cache._grab_key = f"attempt-{generation}"
+        cache._grab_geometry_key = "24x24"
+        cache._grab_pointer = object()
+        cache._grab_result = ImageResult()
+        cache._finish_grab(generation, 1.0)
+
+    assert len(candidates) == 3
+    assert [candidate.close_count for candidate in candidates] == [1, 1, 1]
+    assert all(candidate.handle is None for candidate in candidates)
+    assert cache._proxy is None
+    assert cache.metadata is None
 
 
 def test_stale_visual_reuses_any_revision_with_same_source_size_and_dpr() -> None:

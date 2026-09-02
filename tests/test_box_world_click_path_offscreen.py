@@ -78,6 +78,29 @@ def test_qml_pet_click_routes_reach_all_surfaces_offscreen() -> None:
     assert report["settings"]["functionLibrary"]["lastOptionalCannotMoveDown"] is True
     assert report["functionLibraryAction"]["opened"] is True
     assert report["functionLibraryAction"]["section"] == "work"
+    daily_loop = report["functionLibraryAction"]["dailyLoop"]
+    assert daily_loop["categoryDefault"] == "日常"
+    assert daily_loop["createdByClick"] == 3
+    assert daily_loop["completedByClick"] == 3
+    assert daily_loop["points"] == 30
+    assert daily_loop["homeCardiganUnlocked"] is True
+    assert daily_loop["livingCornerUnlocked"] is True
+    assert daily_loop["authoritativeProjection"] == {
+        "backendStage": "熟悉",
+        "qmlStage": "熟悉",
+        "backendNextStage": "信赖",
+        "qmlNextStage": "信赖",
+        "backendNextAt": 300,
+        "qmlNextAt": 300,
+        "backendProgress": 0.0,
+        "qmlProgress": 0.0,
+    }
+    assert daily_loop["reminder"] == {
+        "createdByClick": True,
+        "dismissedByClick": True,
+        "pendingProjectionEmpty": True,
+        "endedSnoozeUnavailable": True,
+    }
 
     main_source = (PROJECT_ROOT / "qml" / "Main.qml").read_text(encoding="utf-8")
     assert "readonly property bool actionsInteractive: actionsVisible" in main_source

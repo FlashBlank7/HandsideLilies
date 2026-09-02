@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -127,6 +128,489 @@ def test_proxy_uses_layered_tool_noactivate_style_and_fake_lifecycle() -> None:
     assert [call[0] for call in api.calls[-2:]] == ["hide", "destroy"]
 
 
+def test_release_sentinel_cancels_posted_move_after_quick_button_up() -> None:
+    button_down = threading.Event()
+    button_down.set()
+    cancelled = threading.Event()
+    calls: list[int] = []
+
+    def post_cancel(handle: int) -> bool:
+        calls.append(int(handle))
+        cancelled.set()
+        return True
+
+    sentinel = proxy_module._NativeMoveReleaseSentinel(
+        left_button_is_down=button_down.is_set,
+        post_cancel=post_cancel,
+    )
+    sentinel._POLL_SECONDS = 0.001
+
+    ticket = sentinel.arm(73)
+    assert ticket > 0
+    button_down.clear()
+
+    assert cancelled.wait(0.5) is True
+    assert calls == [73]
+    # CANCEL_POSTED owns the generation until GUI-side commit/restore retires
+    # it, so a same-HWND session cannot start behind an unprocessed cancel.
+    assert sentinel.active is True
+    assert sentinel.reserve(73) == 0
+    assert sentinel.retire(73, ticket) is True
+    assert sentinel.active is False
+    assert sentinel.close() is True
+
+
+def test_release_sentinel_retired_generation_never_cancels_new_session() -> None:
+    button_down = threading.Event()
+    button_down.set()
+    cancelled = threading.Event()
+    calls: list[int] = []
+
+    def post_cancel(handle: int) -> bool:
+        calls.append(int(handle))
+        cancelled.set()
+        return True
+
+    sentinel = proxy_module._NativeMoveReleaseSentinel(
+        left_button_is_down=button_down.is_set,
+        post_cancel=post_cancel,
+    )
+    sentinel._POLL_SECONDS = 0.001
+
+    first = sentinel.arm(73)
+    assert first > 0
+    assert sentinel.retire(73, first) is True
+    second = sentinel.arm(73)
+    assert second > first
+    # A delayed terminal call from generation 1 cannot touch generation 2,
+    # even though the production proxy deliberately reuses this exact HWND.
+    assert sentinel.cancel(73, first) is False
+    assert sentinel.retire(73, first) is False
+    button_down.clear()
+
+    assert cancelled.wait(0.5) is True
+    assert calls == [73]
+    assert sentinel.retire(73, second) is True
+    assert sentinel.active is False
+    assert sentinel.close() is True
+
+
+def test_explicit_sentinel_cancel_retires_worker_without_duplicate_post() -> None:
+    button_down = threading.Event()
+    button_down.set()
+    calls: list[int] = []
+
+    def post_cancel(handle: int) -> bool:
+        calls.append(int(handle))
+        return True
+
+    sentinel = proxy_module._NativeMoveReleaseSentinel(
+        left_button_is_down=button_down.is_set,
+        post_cancel=post_cancel,
+    )
+    sentinel._POLL_SECONDS = 0.001
+
+    ticket = sentinel.arm(73)
+    assert ticket > 0
+    assert sentinel.cancel(73, ticket) is True
+    button_down.clear()
+    threading.Event().wait(0.03)
+
+    assert calls == [73]
+    assert sentinel.retire(73, ticket) is True
+    assert sentinel.active is False
+    assert sentinel.close() is True
+
+
+def test_release_sentinel_must_be_prewarmed_before_reservation() -> None:
+    sentinel = proxy_module._NativeMoveReleaseSentinel(
+        left_button_is_down=lambda: True,
+        post_cancel=lambda _handle: True,
+    )
+
+    assert sentinel.reserve(73) == 0
+    assert sentinel.ensure_worker() is True
+    assert sentinel.worker_ready is True
+    ticket = sentinel.reserve(73)
+    assert ticket > 0
+    assert sentinel.abort(73, ticket) is True
+    assert sentinel.close() is True
+    assert sentinel.worker_ready is False
+
+
+def test_poisoned_sentinel_requires_exact_retire_before_next_generation() -> None:
+    sentinel = proxy_module._NativeMoveReleaseSentinel(
+        left_button_is_down=lambda: True,
+        post_cancel=lambda _handle: False,
+    )
+    assert sentinel.ensure_worker() is True
+    ticket = sentinel.reserve(73)
+    assert ticket > 0
+    # Model the only poison case that remains: the prewarmed worker vanished
+    # between reserve/Post DOWN and commit, and the synchronous fallback post
+    # also failed. Exact GUI terminal identity must still be able to recover.
+    with sentinel._condition:
+        sentinel._state = sentinel._POISONED
+    assert sentinel.poisoned is True
+    assert sentinel.retire(73, ticket + 1) is False
+    assert sentinel.retire(74, ticket) is False
+    assert sentinel.retire() is False
+    assert sentinel.retire(73, ticket) is True
+    next_ticket = sentinel.reserve(73)
+    assert next_ticket > ticket
+    assert sentinel.abort(73, next_ticket) is True
+    assert sentinel.close() is True
+
+
+def test_release_sentinel_retries_transient_post_failures_until_cancelled() -> None:
+    attempts = 0
+    cancelled = threading.Event()
+
+    def post_cancel(_handle: int) -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 5:
+            return False
+        cancelled.set()
+        return True
+
+    sentinel = proxy_module._NativeMoveReleaseSentinel(
+        left_button_is_down=lambda: False,
+        post_cancel=post_cancel,
+        target_is_valid=lambda _handle: True,
+    )
+    sentinel._POLL_SECONDS = 0.001
+    sentinel._CANCEL_RETRY_INITIAL_SECONDS = 0.001
+    sentinel._CANCEL_RETRY_MAX_SECONDS = 0.003
+
+    ticket = sentinel.arm(73)
+    assert ticket > 0
+    assert cancelled.wait(0.5) is True
+    assert attempts == 5
+    assert sentinel.state_for(73, ticket) == sentinel._CANCEL_POSTED
+    assert sentinel.poisoned is False
+    assert sentinel.retire(73, ticket) is True
+    assert sentinel.close() is True
+
+
+def test_release_sentinel_uses_bounded_force_cancel_after_queue_pressure() -> None:
+    forced = threading.Event()
+    force_calls: list[int] = []
+
+    def force_cancel(handle: int) -> bool:
+        force_calls.append(int(handle))
+        forced.set()
+        return True
+
+    sentinel = proxy_module._NativeMoveReleaseSentinel(
+        left_button_is_down=lambda: False,
+        post_cancel=lambda _handle: False,
+        target_is_valid=lambda _handle: True,
+        force_cancel=force_cancel,
+    )
+    sentinel._POLL_SECONDS = 0.001
+    sentinel._CANCEL_RETRY_INITIAL_SECONDS = 0.001
+    sentinel._CANCEL_RETRY_MAX_SECONDS = 0.002
+    sentinel._FORCE_CANCEL_AFTER_SECONDS = 0.005
+
+    ticket = sentinel.arm(73)
+    assert ticket > 0
+    assert forced.wait(0.5) is True
+    assert force_calls == [73]
+    assert sentinel.state_for(73, ticket) == sentinel._CANCEL_POSTED
+    assert sentinel.retire(73, ticket) is True
+    assert sentinel.close() is True
+
+
+def test_exact_retire_cannot_stop_cancel_posting_before_ordered_post() -> None:
+    allow_cancel = threading.Event()
+    cancelled = threading.Event()
+    calls: list[int] = []
+
+    def post_cancel(handle: int) -> bool:
+        calls.append(int(handle))
+        if not allow_cancel.is_set():
+            return False
+        cancelled.set()
+        return True
+
+    sentinel = proxy_module._NativeMoveReleaseSentinel(
+        left_button_is_down=lambda: True,
+        post_cancel=post_cancel,
+        target_is_valid=lambda _handle: True,
+    )
+    sentinel._CANCEL_RETRY_INITIAL_SECONDS = 0.001
+    sentinel._CANCEL_RETRY_MAX_SECONDS = 0.002
+    ticket = sentinel.arm(73)
+    assert ticket > 0
+
+    assert sentinel.cancel(73, ticket) is False
+    assert sentinel.state_for(73, ticket) == sentinel._CANCEL_POSTING
+    assert sentinel.retire(73, ticket) is True
+    assert sentinel.reserve(73) == 0
+    allow_cancel.set()
+
+    assert cancelled.wait(0.5) is True
+    for _ in range(100):
+        next_ticket = sentinel.reserve(73)
+        if next_ticket > 0:
+            break
+        threading.Event().wait(0.002)
+    assert next_ticket > ticket
+    assert len(calls) >= 3
+    assert sentinel.abort(73, next_ticket) is True
+    assert sentinel.close() is True
+
+
+def test_native_request_reserves_before_down_and_arms_before_release_capture() -> None:
+    events: list[tuple[object, ...]] = []
+    large_handle = 2**48 + 73
+
+    class User32:
+        def PostMessageW(self, handle, message, wparam, lparam):
+            events.append(("post", int(handle), int(message), int(wparam), int(lparam)))
+            return True
+
+        def ReleaseCapture(self):
+            events.append(("release-capture",))
+            return True
+
+    class Sentinel:
+        def reserve(self, handle):
+            events.append(("reserve", int(handle)))
+            return 901
+
+        def commit(self, handle, generation):
+            events.append(("commit", int(handle), int(generation)))
+            return True
+
+        def abort(self, handle, generation):
+            events.append(("abort", int(handle), int(generation)))
+            return True
+
+    api = object.__new__(proxy_module.NativeWin32DragProxyApi)
+    api._user32 = User32()
+    api._owner_thread = None
+    api._move_release_sentinel = Sentinel()
+    api._move_tickets = {}
+
+    result = api.request_move(large_handle, cursor_position=(-120, 340))
+
+    assert result == 901
+    assert [event[0] for event in events] == [
+        "reserve",
+        "post",
+        "commit",
+        "release-capture",
+    ]
+    assert events[0] == ("reserve", large_handle)
+    assert events[1][1] == large_handle
+    assert api._move_tickets[large_handle] == 901
+
+
+def test_native_request_never_posts_when_prewarmed_worker_is_unavailable() -> None:
+    events: list[str] = []
+
+    class User32:
+        def PostMessageW(self, *_args):
+            events.append("post")
+            return True
+
+        def ReleaseCapture(self):
+            events.append("release-capture")
+            return True
+
+    class Sentinel:
+        def reserve(self, _handle):
+            events.append("reserve-refused")
+            return 0
+
+    api = object.__new__(proxy_module.NativeWin32DragProxyApi)
+    api._user32 = User32()
+    api._owner_thread = None
+    api._move_release_sentinel = Sentinel()
+    api._move_tickets = {}
+
+    assert api.request_move(73, cursor_position=(1, 2)) is False
+    assert events == ["reserve-refused"]
+
+
+def test_native_request_accepts_only_confirmed_cancel_posted_commit_failure() -> None:
+    events: list[tuple[object, ...]] = []
+
+    class User32:
+        def PostMessageW(self, handle, message, wparam, lparam):
+            events.append(("post", int(message)))
+            return True
+
+        def ReleaseCapture(self):
+            events.append(("release-capture",))
+            return True
+
+    class Sentinel:
+        _CANCEL_POSTED = "cancel-posted"
+
+        def reserve(self, _handle):
+            return 902
+
+        def commit(self, _handle, _generation):
+            events.append(("commit-failed",))
+            return False
+
+        def state_for(self, _handle, _generation):
+            return self._CANCEL_POSTED
+
+    api = object.__new__(proxy_module.NativeWin32DragProxyApi)
+    api._user32 = User32()
+    api._owner_thread = None
+    api._move_release_sentinel = Sentinel()
+    api._move_tickets = {}
+
+    result = api.request_move(73, cursor_position=(10, 20))
+
+    assert result == 902
+    assert events == [
+        ("post", proxy_module.WM_NCLBUTTONDOWN),
+        ("commit-failed",),
+        ("release-capture",),
+    ]
+    assert api._move_tickets == {73: 902}
+
+
+def test_native_request_retracts_poisoned_down_without_releasing_capture() -> None:
+    events: list[tuple[object, ...]] = []
+
+    class User32:
+        def PostMessageW(self, _handle, message, _wparam, _lparam):
+            events.append(("post", int(message)))
+            return True
+
+        def PeekMessageW(self, _message, handle, first, last, flags):
+            events.append(
+                (
+                    "retract",
+                    int(handle),
+                    int(first),
+                    int(last),
+                    int(flags),
+                )
+            )
+            return True
+
+        def ReleaseCapture(self):
+            events.append(("release-capture",))
+            return True
+
+        def DestroyWindow(self, _handle):
+            events.append(("destroy",))
+            return True
+
+    class Sentinel:
+        _CANCEL_POSTED = "cancel-posted"
+
+        def reserve(self, _handle):
+            return 903
+
+        def commit(self, _handle, _generation):
+            return False
+
+        def state_for(self, _handle, _generation):
+            return "poisoned"
+
+        def discard_failed_post(self, handle, generation):
+            events.append(("discard", int(handle), int(generation)))
+            return True
+
+    api = object.__new__(proxy_module.NativeWin32DragProxyApi)
+    api._user32 = User32()
+    api._owner_thread = None
+    api._move_release_sentinel = Sentinel()
+    api._move_tickets = {}
+    api._handles = {73}
+    api._invalidated_handles = set()
+
+    result = api.request_move(73, cursor_position=(10, 20))
+
+    assert result is False
+    assert events == [
+        ("post", proxy_module.WM_NCLBUTTONDOWN),
+        (
+            "retract",
+            73,
+            proxy_module.WM_NCLBUTTONDOWN,
+            proxy_module.WM_NCLBUTTONDOWN,
+            proxy_module.PM_REMOVE,
+        ),
+        ("discard", 73, 903),
+    ]
+    assert api._move_tickets == {}
+
+
+def test_native_request_destroys_unretractable_poisoned_target_for_rebuild() -> None:
+    events: list[str] = []
+
+    class User32:
+        def PostMessageW(self, _handle, _message, _wparam, _lparam):
+            return True
+
+        def PeekMessageW(self, *_args):
+            events.append("retract-failed")
+            return False
+
+        def DestroyWindow(self, _handle):
+            events.append("destroy")
+            return True
+
+        def UnregisterClassW(self, class_name, instance):
+            events.append(f"unregister:{class_name}:{int(instance)}")
+            return True
+
+        def ReleaseCapture(self):
+            events.append("release-capture")
+            return True
+
+    class Sentinel:
+        _CANCEL_POSTED = "cancel-posted"
+
+        def reserve(self, _handle):
+            return 904
+
+        def commit(self, _handle, _generation):
+            return False
+
+        def state_for(self, _handle, _generation):
+            return "poisoned"
+
+        def discard_failed_post(self, _handle, _generation):
+            events.append("discard")
+            return True
+
+    api = object.__new__(proxy_module.NativeWin32DragProxyApi)
+    api._user32 = User32()
+    api._owner_thread = None
+    api._move_release_sentinel = Sentinel()
+    api._move_tickets = {}
+    api._handles = {73}
+    api._invalidated_handles = set()
+    api._registered = True
+    api._class_name = "LiliesPoisonTest"
+    api._instance = 17
+    api._window_proc = object()
+
+    assert api.request_move(73, cursor_position=(10, 20)) is False
+    assert events == [
+        "retract-failed",
+        "destroy",
+        "unregister:LiliesPoisonTest:17",
+        "discard",
+    ]
+    assert api.consume_invalidated_handle(73) is True
+    assert api.consume_invalidated_handle(73) is False
+    assert 73 not in api._handles
+    assert api._registered is False
+    assert api._class_name is None
+
+
 def test_bitmap_update_uses_current_proxy_position_and_can_be_reused_hidden() -> None:
     api = FakeWin32Api()
     proxy = WindowsDragProxy(api)
@@ -145,6 +629,27 @@ def test_bitmap_update_uses_current_proxy_position_and_can_be_reused_hidden() ->
     assert proxy.handle == 73
     assert proxy.is_visible is False
     assert proxy.destroy() is True
+
+
+def test_proxy_close_shuts_api_even_after_native_handle_is_gone() -> None:
+    class ClosableApi(FakeWin32Api):
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed = False
+
+        def close(self, timeout: float = 0.25) -> bool:
+            self.calls.append(("close", float(timeout)))
+            self.closed = True
+            return True
+
+    api = ClosableApi()
+    proxy = WindowsDragProxy(api)
+    proxy.upload_bitmap(_bitmap())
+    assert proxy.destroy() is True
+
+    assert proxy.close() is True
+    assert api.closed is True
+    assert api.calls[-1] == ("close", 0.25)
 
 
 def test_rgba_conversion_premultiplies_and_padding_is_removed() -> None:

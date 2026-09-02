@@ -2446,6 +2446,89 @@ def test_manual_content_free_skip_reports_accurate_state_without_bubble(
     assert app is not None
 
 
+def test_verified_source_metadata_reports_non_model_provenance(tmp_path) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    controller = CompanionController(
+        Database(tmp_path / "lilies.db"),
+        tmp_path,
+        active=False,
+        status_sink=lambda _message: None,
+        move_to_box=lambda _payload: None,
+        foreground_provider=lambda: 0,
+    )
+    source_item = ContentItem.create(
+        category=ContentCategory.RESEARCH,
+        title="Source-backed research item",
+        summary="A verified metadata summary.",
+        source="Research Journal",
+        published_at=datetime(2026, 8, 30, tzinfo=UTC),
+        url="https://example.test/research-item",
+        stable_id="test:verified-source-metadata",
+    )
+    try:
+        controller._busy = True
+        controller._accept_generation(
+            {
+                "result": {
+                    "summary": "Research Journal · Source-backed research item",
+                    "detail": "Published 2026-08-30 · A verified metadata summary.",
+                    "model": "verified-source-metadata",
+                    "contextType": "application-signal",
+                },
+                "category": ContentCategory.RESEARCH,
+                "contentItem": source_item,
+                "sceneLabel": "Research",
+                "force": True,
+            }
+        )
+        status = controller.activityStatus
+        assert controller.bubble["model"] == "verified-source-metadata"
+        assert controller.bubble["source"]["name"] == "Research Journal"
+        assert status["generationMode"] == "verified-source-metadata"
+        assert status["generationLabel"] == "已核验来源元数据（未调用模型）"
+        assert "订阅模型" not in status["generationLabel"]
+    finally:
+        controller.shutdown()
+    assert app is not None
+
+
+def test_legacy_local_safe_generation_is_quietly_rejected(tmp_path) -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    controller = CompanionController(
+        Database(tmp_path / "lilies.db"),
+        tmp_path,
+        active=False,
+        status_sink=lambda _message: None,
+        move_to_box=lambda _payload: None,
+        foreground_provider=lambda: 0,
+    )
+    try:
+        controller._busy = True
+        controller._accept_generation(
+            {
+                "result": {
+                    "summary": "This legacy canned sentence must stay quiet.",
+                    "detail": "Legacy synthetic detail.",
+                    "model": "local-safe-fallback",
+                    "contextType": "application-signal",
+                },
+                "category": ContentCategory.LORE,
+                "sceneLabel": "Synthetic",
+                "force": True,
+            }
+        )
+        status = controller.activityStatus
+        assert controller.bubble == {}
+        assert controller.busy is False
+        assert status["generationMode"] == "not-used"
+        assert status["generationLabel"] == "尚未生成"
+        assert status["requestFeedbackKind"] == "quiet"
+        assert "固定文案" in status["requestFeedback"]
+    finally:
+        controller.shutdown()
+    assert app is not None
+
+
 def test_request_now_rejects_while_generation_is_busy(tmp_path, monkeypatch) -> None:
     app = QCoreApplication.instance() or QCoreApplication([])
     statuses: list[str] = []
@@ -2748,7 +2831,7 @@ def test_generation_result_rechecks_live_sensitive_foreground_before_bubble(
                 "result": {
                     "summary": "这句话不应出现。",
                     "detail": "synthetic",
-                    "model": "local-safe-fallback",
+                    "model": LUNA_MODEL,
                     "contextType": "application-signal",
                 },
                 "category": ContentCategory.LORE,
@@ -3620,7 +3703,7 @@ def _accept_delivery_test_bubble(
             "result": {
                 "summary": summary,
                 "detail": summary + " detail",
-                "model": "local-safe-fallback",
+                "model": LUNA_MODEL,
                 "contextType": "application-signal",
             },
             "category": ContentCategory.LORE,

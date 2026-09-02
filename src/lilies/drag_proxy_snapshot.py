@@ -3,8 +3,9 @@ from __future__ import annotations
 """Idle snapshot cache for the Windows layered drag proxy.
 
 The GPU-to-CPU grab is deliberately separated from the press path.  A press
-can use only an already uploaded, geometry-compatible image; every real
-geometry miss falls back to the ordinary Qt/Windows move path.
+can use only an already uploaded image whose physical source size and DPR are
+still compatible.  A transient pose/content revision may reuse that static
+visual for the held gesture instead of falling back to a live Quick window.
 """
 
 import math
@@ -263,13 +264,20 @@ class DragProxySnapshotCache(QObject):
             return
         try:
             dpr = max(0.25, float(self.root.devicePixelRatio() or 1.0))
+            item_width = float(self.item.width())
+            item_height = float(self.item.height())
+            # QML can briefly report 0x0 while the first component frame is
+            # being polished. Never cache that transient frame as a 1x1 proxy.
+            if item_width < 16.0 or item_height < 16.0:
+                self._last_failure = "source-not-ready"
+                return
             # QQuickItem.grabToImage() accepts a logical target size and Qt
             # applies the window DPR to the returned QImage itself.  Passing
             # width*dpr here therefore scales twice (DPR²): at 150% the proxy
             # becomes 1.5x too large and carries 2.25x the pixel area.
             target = QSize(
-                self._qt_round_positive(float(self.item.width())),
-                self._qt_round_positive(float(self.item.height())),
+                self._qt_round_positive(item_width),
+                self._qt_round_positive(item_height),
             )
             pointer = self.item.grabToImage(target)
             result = pointer.data()
@@ -396,30 +404,22 @@ class DragProxySnapshotCache(QObject):
             return False
         requested_key = str(key or "")
         requested_geometry = str(geometry_key or "")
-        if metadata.key != requested_key:
-            current_source_size = self._current_source_pixel_size()
-            geometry_compatible = bool(
-                requested_geometry
-                and metadata.geometry_key == requested_geometry
-                and not metadata.source_pixel_size.isEmpty()
-                and metadata.source_pixel_size == current_source_size
-            )
-            if not geometry_compatible:
-                self._last_failure = "stale-key"
-                return False
-            # A breathing/pose/content revision may change just before press.
-            # Moving the most recent same-geometry static sprite is preferable
-            # to falling back to a live 165 Hz QQuickWindow; the real scene is
-            # restored immediately on release.
-            self._last_prepare_used_stale_visual = True
         current_dpr = max(0.25, float(self.root.devicePixelRatio() or 1.0))
         if abs(current_dpr - metadata.device_pixel_ratio) > 0.001:
             self._last_failure = "dpr-changed"
             return False
-        if (
-            not metadata.source_pixel_size.isEmpty()
-            and metadata.source_pixel_size != self._current_source_pixel_size()
-        ):
+        current_source_size = self._current_source_pixel_size()
+        visual_revision_changed = metadata.key != requested_key
+        geometry_revision_changed = bool(
+            requested_geometry and metadata.geometry_key != requested_geometry
+        )
+        if metadata.source_pixel_size.isEmpty():
+            # Old/exact metadata remains usable, but a changed visual cannot be
+            # proven physically compatible without its recorded source size.
+            if visual_revision_changed or geometry_revision_changed:
+                self._last_failure = "stale-key"
+                return False
+        elif metadata.source_pixel_size != current_source_size:
             self._last_failure = "source-size-changed"
             return False
         # The hidden proxy bitmap is uploaded on its current monitor.  Until
@@ -428,6 +428,12 @@ class DragProxySnapshotCache(QObject):
         if not self._uniform_screen_dpr():
             self._last_failure = "mixed-dpr"
             return False
+        if visual_revision_changed or geometry_revision_changed:
+            # Pose, outfit, breathing and anchor revisions can race the press
+            # while the physical compact canvas stays unchanged. This static
+            # visual is shown only during the held drag; the live scene returns
+            # on release, avoiding the expensive live-window fallback.
+            self._last_prepare_used_stale_visual = True
         return True
 
     def prepare(

@@ -38,6 +38,11 @@ from .core.shell import restore_from_backup
 from .core.socket_server import (
     LocalSocketServer,
     PRIMARY_SOCKET_PORT,
+    RUNTIME_DRAG_PROXY_BITMAP_EDGE_MAX,
+    RUNTIME_DRAG_PROXY_CACHE_AGE_MAX_MS,
+    RUNTIME_DRAG_PROXY_COUNTER_MAX,
+    RUNTIME_DRAG_PROXY_MODES,
+    RUNTIME_DRAG_PROXY_REASONS,
     request_existing_instance,
 )
 from .paths import (
@@ -653,6 +658,11 @@ class CompactPointerEventFilter(QObject):
     desktop coordinate specifically provided for moving windows.
     """
 
+    # Carries only the fixed, content-free schema returned by
+    # system.runtime_snapshot.  The Backend copies it under a lock; the socket
+    # worker never reaches back into this QObject or its QQuickWindow.
+    dragProxyRuntimeStateChanged = Signal(object)
+
     _MOUSE_EVENTS = frozenset(
         {
             QEvent.Type.MouseButtonPress,
@@ -662,15 +672,18 @@ class CompactPointerEventFilter(QObject):
         }
     )
     _SYSTEM_MOVE_MAX_HOLD_SECONDS = 180.0
-    # The live QQuickWindow needs one composition frame after its opacity is
-    # restored.  Derive that bridge from refresh rate at commit time instead
-    # of keeping the proxy above the desktop for a fixed 34 ms (six frames on
-    # the current 165 Hz display).
-    _PROXY_PREVIEW_FALLBACK_HIDE_DELAY_MS = 17
+    # The live QQuickWindow needs a short composition bridge after it is
+    # restored. Derive that bridge from refresh rate at commit time instead
+    # of keeping the proxy above the desktop for a fixed delay.
+    _PROXY_PREVIEW_FALLBACK_HIDE_DELAY_MS = 34
     _SWP_NOSIZE = 0x0001
     _SWP_NOZORDER = 0x0004
     _SWP_NOACTIVATE = 0x0010
     _SWP_NOOWNERZORDER = 0x0200
+    _SWP_SHOWWINDOW = 0x0040
+    _SWP_HIDEWINDOW = 0x0080
+    _SW_HIDE = 0
+    _SW_SHOWNOACTIVATE = 4
     _LOCAL_GESTURE_SURFACES = frozenset({"resize", "accessory", "action"})
     _LOCAL_GESTURE_COUNTER_LIMIT = 1_000_000_000
 
@@ -731,12 +744,24 @@ class CompactPointerEventFilter(QObject):
         self._proxy_move_active = False
         self._proxy_root_origin_physical: WindowRect | None = None
         self._proxy_root_opacity = 1.0
+        self._proxy_root_opacity_hidden = False
+        # Opacity zero still leaves a QQuickWindow exposed.  Qt Quick may keep
+        # submitting the otherwise invisible scene while DWM is moving the
+        # static proxy, which defeats the purpose of taking the live renderer
+        # out of the drag hot path.  Hide only the native HWND instead: Win32
+        # stops presenting it while QWindow/QML retain their logical visible
+        # state and therefore do not tear down the desktop-pet interaction.
+        self._proxy_root_native_hidden = False
+        self._proxy_root_native_window_id = 0
+        self._proxy_root_restore_attempts = 0
+        self._diagnostic_native_hide_used = False
         self._proxy_preview_hide_pending = False
         self._proxy_session_generation = 0
         self._proxy_preview_hide_generation = 0
         self._proxy_preview_hide_deadline = 0.0
         self._diagnostic_proxy_used = False
         self._proxy_fallback_reason = "not-configured"
+        self._proxy_runtime_last_mode = "none"
         self._proxy_real_geometry_commits = 0
         self._proxy_bitmap_width = 0
         self._proxy_bitmap_height = 0
@@ -769,6 +794,11 @@ class CompactPointerEventFilter(QObject):
         self._proxy_preview_hide_timer.timeout.connect(
             self._on_proxy_preview_hide_timeout
         )
+        self._proxy_root_restore_timer = QTimer(self)
+        self._proxy_root_restore_timer.setSingleShot(True)
+        self._proxy_root_restore_timer.timeout.connect(
+            self._restore_proxy_root_presentation
+        )
         self._drag_diagnostics_timer = QTimer(self)
         self._drag_diagnostics_timer.setSingleShot(True)
         self._drag_diagnostics_timer.setInterval(180)
@@ -781,6 +811,134 @@ class CompactPointerEventFilter(QObject):
         """Whether Windows currently owns the pointer/window move pair."""
 
         return self._active_system_move_serial > 0
+
+    def _publish_drag_proxy_runtime_state(
+        self,
+        *,
+        last_mode: str | None = None,
+        fallback_reason: str | None = None,
+    ) -> None:
+        """Publish the tiny proxy state only at existing lifecycle edges."""
+
+        if last_mode is not None:
+            normalized_mode = str(last_mode).strip().casefold()
+            self._proxy_runtime_last_mode = (
+                normalized_mode
+                if normalized_mode in RUNTIME_DRAG_PROXY_MODES
+                else "none"
+            )
+        if fallback_reason is not None:
+            normalized_reason = str(fallback_reason).strip().casefold()
+            self._proxy_fallback_reason = (
+                normalized_reason
+                if normalized_reason in RUNTIME_DRAG_PROXY_REASONS
+                else "unknown"
+            )
+        cache = self._drag_proxy_cache
+        configured = bool(cache is not None and not self._closing_drag_bridge)
+        try:
+            ready = bool(
+                configured
+                and cache is not None
+                and cache.metadata is not None
+                and int(cache.proxy_handle) > 0
+            )
+            active = bool(configured and cache is not None and cache.active)
+            metadata = cache.metadata if cache is not None else None
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            ready = False
+            active = False
+            metadata = None
+        bitmap_width = int(self._proxy_bitmap_width)
+        bitmap_height = int(self._proxy_bitmap_height)
+        cache_age_ms = float(self._proxy_cache_age_ms)
+        if metadata is not None and cache is not None:
+            try:
+                bitmap_width = int(metadata.pixel_size.width())
+                bitmap_height = int(metadata.pixel_size.height())
+                cache_age_ms = float(cache.cache_age_ms)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+        if not math.isfinite(cache_age_ms):
+            cache_age_ms = 0.0
+        self.dragProxyRuntimeStateChanged.emit(
+            {
+                "configured": configured,
+                "ready": ready,
+                "active": active,
+                "rootNativeHidden": bool(
+                    self._proxy_root_native_hidden
+                ),
+                "directMoveCommits": max(
+                    0,
+                    min(
+                        int(self._direct_move_commits),
+                        RUNTIME_DRAG_PROXY_COUNTER_MAX,
+                    ),
+                ),
+                "proxyRealGeometryCommits": max(
+                    0,
+                    min(
+                        int(self._proxy_real_geometry_commits),
+                        RUNTIME_DRAG_PROXY_COUNTER_MAX,
+                    ),
+                ),
+                "proxyBitmapWidth": max(
+                    0,
+                    min(
+                        bitmap_width,
+                        RUNTIME_DRAG_PROXY_BITMAP_EDGE_MAX,
+                    ),
+                ),
+                "proxyBitmapHeight": max(
+                    0,
+                    min(
+                        bitmap_height,
+                        RUNTIME_DRAG_PROXY_BITMAP_EDGE_MAX,
+                    ),
+                ),
+                "proxyCacheAgeMs": round(
+                    max(
+                        0.0,
+                        min(
+                            cache_age_ms,
+                            RUNTIME_DRAG_PROXY_CACHE_AGE_MAX_MS,
+                        ),
+                    ),
+                    1,
+                ),
+                "proxyVisualStale": bool(self._proxy_visual_stale),
+                "lastMode": self._proxy_runtime_last_mode,
+                "fallbackReason": (
+                    self._proxy_fallback_reason
+                    if self._proxy_fallback_reason
+                    in RUNTIME_DRAG_PROXY_REASONS
+                    else "unknown"
+                ),
+            }
+        )
+
+    def publishDragProxyRuntimeState(self) -> None:
+        """Seed or refresh Backend's cache without exposing Qt-owned state."""
+
+        cache = self._drag_proxy_cache
+        ready = False
+        try:
+            ready = bool(
+                cache is not None
+                and cache.metadata is not None
+                and int(cache.proxy_handle) > 0
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        self._publish_drag_proxy_runtime_state(
+            # Before the first gesture, distinguish a genuinely missing cache
+            # from the now-ready startup snapshot. Gesture outcomes retain
+            # their own reason until the next gesture publishes its result.
+            fallback_reason=(
+                "" if ready and self._proxy_runtime_last_mode == "none" else None
+            )
+        )
 
     def configure_native_drag_filter(
         self,
@@ -818,6 +976,9 @@ class CompactPointerEventFilter(QObject):
         """Attach the idle-only snapshot cache used by the Windows proxy path."""
 
         if os.name != "nt" or self._closing_drag_bridge:
+            self._publish_drag_proxy_runtime_state(
+                fallback_reason="not-configured"
+            )
             return False
         try:
             self._drag_proxy_cache = DragProxySnapshotCache(
@@ -827,9 +988,41 @@ class CompactPointerEventFilter(QObject):
             )
         except (AttributeError, RuntimeError, TypeError, ValueError):
             self._drag_proxy_cache = None
+            self._publish_drag_proxy_runtime_state(
+                fallback_reason="not-configured"
+            )
             return False
-        self._proxy_fallback_reason = "cache-miss"
+        self._publish_drag_proxy_runtime_state(fallback_reason="cache-miss")
+        # QML's normal revision debounce remains the long-term refresh owner,
+        # but it intentionally waits 180 ms. Warm the first usable frame at
+        # startup so an early user drag cannot silently enter the live-window
+        # fallback merely because that debounce has not fired yet. Repeated
+        # requests coalesce inside the cache and never run on the press path.
+        for delay_ms in (0, 80, 240):
+            QTimer.singleShot(delay_ms, self._prewarm_drag_proxy_snapshot)
         return True
+
+    def _prewarm_drag_proxy_snapshot(self) -> None:
+        cache = self._drag_proxy_cache
+        if cache is None or self._closing_drag_bridge:
+            return
+        try:
+            if not bool(self.root.isVisible()):
+                return
+            if bool(self.root.property("compactExpanded")):
+                return
+            if self._drag_proxy_gesture_active or cache.active:
+                return
+            semantic_key = str(
+                self.root.property("compactDragSnapshotKey") or ""
+            )
+            geometry_key = str(
+                self.root.property("compactDragGeometryKey") or ""
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+        if semantic_key:
+            self.requestDragProxySnapshot(semantic_key, geometry_key)
 
     @Slot(str, result=bool)
     @Slot(str, str, result=bool)
@@ -840,16 +1033,33 @@ class CompactPointerEventFilter(QObject):
     ) -> bool:
         cache = self._drag_proxy_cache
         if cache is None or self._closing_drag_bridge:
+            self._publish_drag_proxy_runtime_state(
+                fallback_reason="not-configured"
+            )
             return False
         try:
-            return bool(
+            accepted = bool(
                 cache.request(
                     str(semantic_key or ""),
                     str(geometry_key or ""),
                 )
             )
         except (AttributeError, RuntimeError, TypeError, ValueError):
+            self._publish_drag_proxy_runtime_state(
+                fallback_reason="unknown"
+            )
             return False
+        self._publish_drag_proxy_runtime_state(
+            fallback_reason=cache.last_failure or ""
+            if cache.metadata is not None
+            else cache.last_failure or "cache-miss"
+        )
+        if accepted and cache.metadata is None:
+            # grabToImage finishes asynchronously. One bounded idle refresh
+            # makes readiness observable without polling or touching the
+            # press/move hot path.
+            QTimer.singleShot(250, self.publishDragProxyRuntimeState)
+        return accepted
 
     def _suspend_qt_pointer_filter(self) -> None:
         if self._qt_pointer_filter_suspended:
@@ -999,11 +1209,165 @@ class CompactPointerEventFilter(QObject):
         except (AttributeError, OSError, TypeError, ValueError):
             return False
 
-    def _restore_proxy_root_opacity(self) -> None:
+    @classmethod
+    def _set_native_window_shown(cls, window_id: int, shown: bool) -> bool:
+        """Hide/show our own HWND without mutating QWindow.visible.
+
+        ``ShowWindow`` reports the *previous* state rather than success, so the
+        post-condition is verified with ``IsWindowVisible``.  This operation
+        is used only for the already-materialized compact-pet HWND.
+        """
+
+        if os.name != "nt" or int(window_id) <= 0:
+            return False
         try:
-            self.root.setOpacity(float(self._proxy_root_opacity))
+            user32 = ctypes.windll.user32
+            handle = wintypes.HWND(int(window_id))
+            if not user32.IsWindow(handle):
+                return False
+            user32.ShowWindow(
+                handle,
+                cls._SW_SHOWNOACTIVATE if shown else cls._SW_HIDE,
+            )
+            reached = bool(user32.IsWindowVisible(handle)) is bool(shown)
+            if not reached:
+                user32.SetWindowPos(
+                    handle,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    cls._SWP_NOSIZE
+                    | cls._SWP_NOZORDER
+                    | cls._SWP_NOACTIVATE
+                    | cls._SWP_NOOWNERZORDER
+                    | (cls._SWP_SHOWWINDOW if shown else cls._SWP_HIDEWINDOW),
+                )
+                reached = bool(user32.IsWindowVisible(handle)) is bool(shown)
+            return reached
+        except (AttributeError, OSError, TypeError, ValueError):
+            return False
+
+    def _hide_proxy_root_presentation(self, window_id: int) -> bool:
+        """Remove the live Qt surface while the static native proxy moves."""
+
+        self._proxy_root_restore_timer.stop()
+        self._proxy_root_restore_attempts = 0
+        self._proxy_root_opacity_hidden = False
+        try:
+            self._proxy_root_opacity = float(self.root.opacity())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            self._proxy_root_opacity = 1.0
+        if self._set_native_window_shown(window_id, False):
+            self._proxy_root_native_hidden = True
+            self._proxy_root_native_window_id = int(window_id)
+            self._diagnostic_native_hide_used = True
+            self._publish_drag_proxy_runtime_state(
+                last_mode="layered-proxy"
+            )
+            return True
+        # Unsupported/test platforms keep the established opacity fallback.
+        try:
+            self.root.setOpacity(0.0)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        self._proxy_root_opacity_hidden = True
+        self._proxy_root_native_hidden = False
+        self._proxy_root_native_window_id = 0
+        self._publish_drag_proxy_runtime_state(
+            last_mode="layered-proxy"
+        )
+        return True
+
+    def _restore_proxy_root_presentation(self) -> bool:
+        native_hidden = self._proxy_root_native_hidden
+        native_window_id = self._proxy_root_native_window_id
+        try:
+            logical_visible = bool(self.root.isVisible())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            logical_visible = True
+        if self._proxy_root_opacity_hidden:
+            try:
+                self.root.setOpacity(float(self._proxy_root_opacity))
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                self._proxy_root_restore_attempts += 1
+                if not self._closing_drag_bridge:
+                    self._proxy_root_restore_timer.start(
+                        16 if self._proxy_root_restore_attempts < 8 else 250
+                    )
+                return False
+            self._proxy_root_opacity_hidden = False
+        if not native_hidden:
+            self._proxy_root_restore_attempts = 0
+            self._proxy_root_restore_timer.stop()
+            self._publish_drag_proxy_runtime_state()
+            return True
+        if not logical_visible:
+            # Privacy/full-screen suppression may legitimately hide the QML
+            # pet while the proxy owns capture.  Never override that logical
+            # state with a raw ShowWindow during cancellation; Qt will show
+            # the HWND normally if and when the binding becomes true again.
+            self._proxy_root_native_hidden = False
+            self._proxy_root_native_window_id = 0
+            self._proxy_root_restore_attempts = 0
+            self._proxy_root_restore_timer.stop()
+            self._publish_drag_proxy_runtime_state()
+            return True
+
+        restored_native = False
+        attempted_ids: set[int] = set()
+        if native_window_id > 0:
+            attempted_ids.add(native_window_id)
+            restored_native = self._set_native_window_shown(
+                native_window_id,
+                True,
+            )
+        if not restored_native:
+            try:
+                current_window_id = int(self.root.winId())
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                current_window_id = 0
+            if current_window_id > 0 and current_window_id not in attempted_ids:
+                restored_native = self._set_native_window_shown(
+                    current_window_id,
+                    True,
+                )
+        if not restored_native:
+            # A WinId recreation can make the first show fail transiently.
+            # Retain ownership and retry instead of leaving QML logically
+            # visible while its native surface remains absent forever.
+            self._proxy_root_restore_attempts += 1
+            if not self._closing_drag_bridge:
+                self._proxy_root_restore_timer.start(
+                    16 if self._proxy_root_restore_attempts < 8 else 250
+                )
+            self._publish_drag_proxy_runtime_state()
+            return False
+
+        self._proxy_root_native_hidden = False
+        self._proxy_root_native_window_id = 0
+        self._proxy_root_restore_attempts = 0
+        self._proxy_root_restore_timer.stop()
+        try:
+            # Showing a natively hidden QQuickWindow preserves the QML
+            # visibility binding, but it still needs a fresh render request
+            # at the committed position before the timer retires the proxy.
+            self.root.requestUpdate()
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
+        if self._proxy_preview_hide_pending:
+            # A transient HWND/show failure may outlive the deadline chosen by
+            # _commit_proxy_geometry(). Give the newly restored surface its
+            # full composition bridge instead of immediately hiding the only
+            # visible proxy on the retry turn.
+            hide_delay_ms = self._proxy_preview_hide_delay_ms()
+            self._proxy_preview_hide_deadline = (
+                time.perf_counter() + hide_delay_ms / 1000.0
+            )
+            self._proxy_preview_hide_timer.start(hide_delay_ms)
+        self._publish_drag_proxy_runtime_state()
+        return True
 
     def _proxy_preview_hide_delay_ms(self) -> int:
         try:
@@ -1025,9 +1389,11 @@ class CompactPointerEventFilter(QObject):
             refresh_rate = 0.0
         if not math.isfinite(refresh_rate) or refresh_rate < 30.0:
             return self._PROXY_PREVIEW_FALLBACK_HIDE_DELAY_MS
-        # One display period is enough for Qt Quick to replace the static
-        # proxy.  Clamp unusual driver reports to a small, non-sticky bridge.
-        return max(6, min(17, math.ceil(1000.0 / refresh_rate)))
+        # Two display periods leave a bounded bridge for a temporarily busy
+        # render thread and keep the static preview short on every supported
+        # refresh rate. A frameSwapped signal is deliberately not used here:
+        # a queued frame from drag N cannot be attributed safely to drag N+1.
+        return max(12, min(34, math.ceil(2000.0 / refresh_rate)))
 
     def _reset_proxy_watcher_target(self) -> None:
         watcher = self._system_move_end_watcher
@@ -1062,6 +1428,7 @@ class CompactPointerEventFilter(QObject):
         if cache is not None:
             cache.complete()
         self._end_drag_proxy_gesture()
+        self._publish_drag_proxy_runtime_state()
         return True
 
     def _on_proxy_preview_hide_timeout(self) -> None:
@@ -1071,6 +1438,11 @@ class CompactPointerEventFilter(QObject):
             or generation <= 0
             or generation != self._proxy_session_generation
         ):
+            return
+        if self._proxy_root_native_hidden:
+            # The real surface has not recovered yet. Its retry path will arm
+            # a fresh, generation-bound bridge after ShowWindow succeeds; the
+            # proxy must remain the visible fail-safe meanwhile.
             return
         # Stopping and restarting a member QTimer cancels its old timer id.
         # The deadline check additionally makes a stale queued timeout benign
@@ -1096,10 +1468,11 @@ class CompactPointerEventFilter(QObject):
         if cache is not None:
             cache.cancel()
         self._end_drag_proxy_gesture()
-        self._restore_proxy_root_opacity()
+        self._restore_proxy_root_presentation()
         self._proxy_move_active = False
         self._proxy_root_origin_physical = None
         self._reset_proxy_watcher_target()
+        self._publish_drag_proxy_runtime_state()
 
     def _request_proxy_native_cancel(self) -> bool:
         """End an invisible/interrupted User32 move without input injection."""
@@ -1157,6 +1530,9 @@ class CompactPointerEventFilter(QObject):
         self._proxy_session_generation += 1
         if cache is None or root_window_id <= 0:
             self._proxy_fallback_reason = "not-configured"
+            self._publish_drag_proxy_runtime_state(
+                fallback_reason=self._proxy_fallback_reason
+            )
             return False
         self._begin_drag_proxy_gesture()
         if not semantic_key:
@@ -1176,17 +1552,23 @@ class CompactPointerEventFilter(QObject):
         root_rect = self._native_window_rect(root_window_id)
         if root_rect is None:
             self._proxy_fallback_reason = "root-rect-unavailable"
+            self._publish_drag_proxy_runtime_state(
+                fallback_reason=self._proxy_fallback_reason
+            )
             return False
         proxy_window_id = cache.prepare(semantic_key, root_rect, geometry_key)
         if proxy_window_id <= 0:
             self._proxy_fallback_reason = cache.last_failure or "cache-miss"
+            self._publish_drag_proxy_runtime_state(
+                fallback_reason=self._proxy_fallback_reason
+            )
             return False
-        try:
-            self._proxy_root_opacity = float(self.root.opacity())
-            self.root.setOpacity(0.0)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
+        if not self._hide_proxy_root_presentation(root_window_id):
             cache.cancel()
-            self._proxy_fallback_reason = "opacity-unavailable"
+            self._proxy_fallback_reason = "root-presentation-unavailable"
+            self._publish_drag_proxy_runtime_state(
+                fallback_reason=self._proxy_fallback_reason
+            )
             return False
         watcher = self._system_move_end_watcher
         if watcher is not None:
@@ -1201,7 +1583,7 @@ class CompactPointerEventFilter(QObject):
             )
         if not cache.start_move():
             cache.cancel()
-            self._restore_proxy_root_opacity()
+            self._restore_proxy_root_presentation()
             self._reset_proxy_watcher_target()
             self._active_system_move_window_id = root_window_id
             self._proxy_root_origin_physical = None
@@ -1211,6 +1593,9 @@ class CompactPointerEventFilter(QObject):
             )
             self._proxy_fallback_reason = (
                 cache.last_failure or "move-request-failed"
+            )
+            self._publish_drag_proxy_runtime_state(
+                fallback_reason=self._proxy_fallback_reason
             )
             return False
         metadata = cache.metadata
@@ -1222,6 +1607,10 @@ class CompactPointerEventFilter(QObject):
         if metadata is not None:
             self._proxy_bitmap_width = metadata.pixel_size.width()
             self._proxy_bitmap_height = metadata.pixel_size.height()
+        self._publish_drag_proxy_runtime_state(
+            last_mode="layered-proxy",
+            fallback_reason="",
+        )
         return True
 
     def _commit_proxy_geometry(self) -> bool:
@@ -1245,11 +1634,23 @@ class CompactPointerEventFilter(QObject):
             )
         if committed:
             self._proxy_real_geometry_commits += 1
-        self._restore_proxy_root_opacity()
+        root_restored = self._restore_proxy_root_presentation()
         self._proxy_move_active = False
         self._proxy_root_origin_physical = None
         self._reset_proxy_watcher_target()
         if cache is not None:
+            try:
+                logically_visible = bool(self.root.isVisible())
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logically_visible = True
+            if not logically_visible:
+                # A privacy/presence transition is an immediate terminal
+                # state. Do not leave the static proxy visible over a window
+                # for two additional frames after QML has suppressed the pet.
+                cache.complete()
+                self._end_drag_proxy_gesture()
+                self._publish_drag_proxy_runtime_state()
+                return committed
             hide_delay_ms = self._proxy_preview_hide_delay_ms()
             self._proxy_preview_hide_pending = True
             self._proxy_preview_hide_generation = (
@@ -1259,7 +1660,9 @@ class CompactPointerEventFilter(QObject):
                 time.perf_counter()
                 + hide_delay_ms / 1000.0
             )
-            self._proxy_preview_hide_timer.start(hide_delay_ms)
+            if root_restored:
+                self._proxy_preview_hide_timer.start(hide_delay_ms)
+        self._publish_drag_proxy_runtime_state()
         return committed
 
     def _sample_system_window_position(self) -> None:
@@ -1319,6 +1722,7 @@ class CompactPointerEventFilter(QObject):
         self._proxy_bitmap_height = 0
         self._proxy_cache_age_ms = 0.0
         self._proxy_visual_stale = False
+        self._diagnostic_native_hide_used = False
         self._diagnostic_phase = "pressed"
         self._last_drag_diagnostics = {}
 
@@ -1600,6 +2004,7 @@ class CompactPointerEventFilter(QObject):
             str(semantic_key or ""),
             str(geometry_key or ""),
         )
+        proxy_started = bool(started)
         if not started:
             try:
                 started = bool(self.root.startSystemMove())
@@ -1608,6 +2013,13 @@ class CompactPointerEventFilter(QObject):
                 self._active_system_move_window_id = 0
                 self._system_move_watchdog_started_at = 0.0
                 self._resume_native_drag_filter()
+                self._publish_drag_proxy_runtime_state(
+                    last_mode="direct-fallback",
+                    fallback_reason=(
+                        self._proxy_fallback_reason
+                        or "native-move-unavailable"
+                    ),
+                )
                 return False
         self._system_move_start_returned = started
         self._active_system_move_serial = gesture_serial if started else 0
@@ -1628,6 +2040,20 @@ class CompactPointerEventFilter(QObject):
             self._system_move_watchdog_started_at = 0.0
             self._system_move_release_timer.stop()
             self._resume_native_drag_filter()
+        self._publish_drag_proxy_runtime_state(
+            last_mode=(
+                "layered-proxy"
+                if proxy_started
+                else "native"
+                if started
+                else "direct-fallback"
+            ),
+            fallback_reason=(
+                self._proxy_fallback_reason
+                if self._proxy_fallback_reason
+                else "" if started else "native-move-unavailable"
+            ),
+        )
         return started
 
     @Slot(float, float, result=bool)
@@ -1812,6 +2238,7 @@ class CompactPointerEventFilter(QObject):
             "proxyBitmapHeight": self._proxy_bitmap_height,
             "proxyCacheAgeMs": round(self._proxy_cache_age_ms, 3),
             "proxyVisualStale": bool(self._proxy_visual_stale),
+            "proxyRootNativeHidden": bool(self._diagnostic_native_hide_used),
             "proxyFallbackReason": self._proxy_fallback_reason,
             "completionWatchdogPolls": self._completion_watchdog_polls,
             "completionQueuedBy": self._completion_queued_by,
@@ -1828,6 +2255,10 @@ class CompactPointerEventFilter(QObject):
         }
         self._schedule_drag_diagnostics_write()
         self._end_drag_proxy_gesture()
+        self._publish_drag_proxy_runtime_state(
+            last_mode=mode,
+            fallback_reason=self._proxy_fallback_reason,
+        )
 
     @Slot(result="QVariantMap")
     def dragDiagnosticsSnapshot(self) -> dict[str, object]:
@@ -1891,7 +2322,7 @@ class CompactPointerEventFilter(QObject):
         if self._proxy_move_active:
             self._request_proxy_native_cancel()
             self._commit_proxy_geometry()
-        self._restore_proxy_root_opacity()
+        self._restore_proxy_root_presentation()
         self._invalidate_proxy_preview_hide()
         proxy_cache = self._drag_proxy_cache
         if proxy_cache is not None:
@@ -1899,6 +2330,10 @@ class CompactPointerEventFilter(QObject):
             self._drag_proxy_cache = None
         self._drag_proxy_gesture_active = False
         self._closing_drag_bridge = True
+        self._publish_drag_proxy_runtime_state(
+            fallback_reason="not-configured"
+        )
+        self._proxy_root_restore_timer.stop()
         self._active_system_move_serial = 0
         self._active_system_move_window_id = 0
         self._system_move_watchdog_started_at = 0.0
@@ -3260,7 +3695,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.49")
+    app.setApplicationVersion("0.3.50")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:
@@ -3440,6 +3875,10 @@ def main(argv: list[str] | None = None) -> int:
             backend.data_directory / "runtime" / "pet-drag-latest.json"
         ),
     )
+    pointer_event_filter.dragProxyRuntimeStateChanged.connect(
+        backend.reportDragProxyRuntimeState
+    )
+    pointer_event_filter.publishDragProxyRuntimeState()
     pet_window.setProperty("nativeMoveController", pointer_event_filter)
     pet_window.installEventFilter(pointer_event_filter)
     app._lilies_pointer_event_filter = pointer_event_filter

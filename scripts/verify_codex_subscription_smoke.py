@@ -37,7 +37,7 @@ class DiagnosticClient(CodexSubscriptionClient):
 
 
 def main() -> int:
-    client = DiagnosticClient(Path(".codex-subscription-smoke-v0349"), max_output_chars=200)
+    client = DiagnosticClient(Path(".codex-subscription-smoke-v0350"), max_output_chars=200)
     tool_spec = MemoryService.dynamic_tool_spec()
     nonce = secrets.token_hex(8)
     result: dict[str, Any] = {

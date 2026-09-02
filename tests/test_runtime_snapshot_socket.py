@@ -25,6 +25,8 @@ from lilies.core.database import Database
 from lilies.core.permissions import PermissionBroker
 from lilies.core.socket_server import (
     LocalSocketServer,
+    RUNTIME_DRAG_PROXY_MODES,
+    RUNTIME_DRAG_PROXY_REASONS,
     RUNTIME_MODULE_ALLOWLIST,
 )
 import lilies.core.socket_server as socket_server_module
@@ -46,6 +48,25 @@ def audit_count(database: Database) -> int:
     with database.connect() as connection:
         row = connection.execute("SELECT COUNT(*) AS count FROM audit_log").fetchone()
     return int(row["count"])
+
+
+def drag_proxy_state(**overrides: object) -> dict[str, object]:
+    state: dict[str, object] = {
+        "configured": False,
+        "ready": False,
+        "active": False,
+        "rootNativeHidden": False,
+        "directMoveCommits": 0,
+        "proxyRealGeometryCommits": 0,
+        "proxyBitmapWidth": 0,
+        "proxyBitmapHeight": 0,
+        "proxyCacheAgeMs": 0.0,
+        "proxyVisualStale": False,
+        "lastMode": "none",
+        "fallbackReason": "not-configured",
+    }
+    state.update(overrides)
+    return state
 
 
 def request_over_loopback(server: LocalSocketServer, request: dict[str, object]) -> dict:
@@ -91,6 +112,21 @@ def test_runtime_snapshot_is_authenticated_strict_projected_and_zero_audit(
                 "expiresInSeconds": 0.0,
                 "forbiddenContent": "must-not-leak",
             },
+            "dragProxy": drag_proxy_state(
+                configured=True,
+                ready=True,
+                active=True,
+                rootNativeHidden=True,
+                directMoveCommits=0,
+                proxyRealGeometryCommits=1,
+                proxyBitmapWidth=640,
+                proxyBitmapHeight=720,
+                proxyCacheAgeMs=18.25,
+                proxyVisualStale=False,
+                lastMode="layered-proxy",
+                fallbackReason="",
+                forbiddenCoordinates=[123, 456],
+            ),
             "forbiddenTopLevelField": "must-not-leak",
         }
 
@@ -184,6 +220,20 @@ def test_runtime_snapshot_is_authenticated_strict_projected_and_zero_audit(
                     "reason": "generated",
                     "expiresInSeconds": 0.0,
                 },
+                "dragProxy": {
+                    "configured": True,
+                    "ready": True,
+                    "active": True,
+                    "rootNativeHidden": True,
+                    "proxyVisualStale": False,
+                    "directMoveCommits": 0,
+                    "proxyRealGeometryCommits": 1,
+                    "proxyBitmapWidth": 640,
+                    "proxyBitmapHeight": 720,
+                    "proxyCacheAgeMs": 18.2,
+                    "lastMode": "layered-proxy",
+                    "fallbackReason": "",
+                },
                 "loadedModules": {
                     "Qt6Multimedia.dll": True,
                     "Qt6MultimediaQuick.dll": False,
@@ -230,6 +280,7 @@ def test_runtime_snapshot_fails_closed_on_invalid_provider_schema(tmp_path) -> N
                 "reason": "",
                 "expiresInSeconds": 0.0,
             },
+            "dragProxy": drag_proxy_state(),
         },
     )
     baseline_audits = audit_count(database)
@@ -271,6 +322,7 @@ def test_runtime_snapshot_uses_the_shared_fixed_delivery_contract() -> None:
             "reason": "",
             "expiresInSeconds": 0.0,
         },
+        "dragProxy": drag_proxy_state(),
     }
 
     for state in COMPANION_DELIVERY_STATES:
@@ -295,6 +347,25 @@ def test_runtime_snapshot_uses_the_shared_fixed_delivery_contract() -> None:
         raise AssertionError("arbitrary companion delivery reasons must fail closed")
 
     snapshot["companion"]["reason"] = ""
+    for mode in RUNTIME_DRAG_PROXY_MODES:
+        snapshot["dragProxy"]["lastMode"] = mode
+        assert socket_server_module._runtime_snapshot_result(snapshot)[
+            "dragProxy"
+        ]["lastMode"] == mode
+
+    snapshot["dragProxy"]["lastMode"] = "none"
+    for reason in RUNTIME_DRAG_PROXY_REASONS:
+        snapshot["dragProxy"]["fallbackReason"] = reason
+        assert socket_server_module._runtime_snapshot_result(snapshot)[
+            "dragProxy"
+        ]["fallbackReason"] == reason
+
+    snapshot["dragProxy"]["fallbackReason"] = r"unexpected F:\private\pet.png"
+    with pytest.raises(
+        RuntimeError, match="runtime snapshot drag proxy reason is invalid"
+    ):
+        socket_server_module._runtime_snapshot_result(snapshot)
+    snapshot["dragProxy"]["fallbackReason"] = "not-configured"
     snapshot["qtHeartbeatAgeMs"] = 2_001
     snapshot["qtResponsive"] = True
     with pytest.raises(
@@ -319,7 +390,11 @@ def test_backend_runtime_snapshot_cache_is_defensive_and_thread_safe(
             backend.metaObject().method(index).name().data().decode("utf-8")
             for index in range(backend.metaObject().methodCount())
         }
-        assert {"reportSceneRuntimeState", "runtimeSnapshot"} <= methods
+        assert {
+            "reportSceneRuntimeState",
+            "reportDragProxyRuntimeState",
+            "runtimeSnapshot",
+        } <= methods
         assert backend._runtime_heartbeat_timer.thread() == backend.thread()
         assert backend._runtime_heartbeat_timer.isActive() is True
         assert backend._runtime_heartbeat_timer.interval() == 250
@@ -354,9 +429,26 @@ def test_backend_runtime_snapshot_cache_is_defensive_and_thread_safe(
                 "reason": "",
                 "expiresInSeconds": 0.0,
             },
+            "dragProxy": drag_proxy_state(),
         }
 
         backend.reportSceneRuntimeState(False, True, "PLAYING")
+        backend.reportDragProxyRuntimeState(
+            drag_proxy_state(
+                configured=True,
+                ready=True,
+                active=True,
+                rootNativeHidden=True,
+                directMoveCommits=0,
+                proxyRealGeometryCommits=1,
+                proxyBitmapWidth=512,
+                proxyBitmapHeight=640,
+                proxyCacheAgeMs=12.34,
+                proxyVisualStale=True,
+                lastMode="layered-proxy",
+                fallbackReason="",
+            )
+        )
         backend.shell.mode = "visual"
         backend._renderer = "video"
         backend._scene_active = False
@@ -393,11 +485,27 @@ def test_backend_runtime_snapshot_cache_is_defensive_and_thread_safe(
                 "reason": "",
                 "expiresInSeconds": 0.0,
             },
+            "dragProxy": drag_proxy_state(
+                configured=True,
+                ready=True,
+                active=True,
+                rootNativeHidden=True,
+                directMoveCommits=0,
+                proxyRealGeometryCommits=1,
+                proxyBitmapWidth=512,
+                proxyBitmapHeight=640,
+                proxyCacheAgeMs=12.3,
+                proxyVisualStale=True,
+                lastMode="layered-proxy",
+                fallbackReason="",
+            ),
         }
 
         updated["scene"]["videoPlaybackState"] = "tampered"
+        updated["dragProxy"]["fallbackReason"] = r"F:\private\leak.png"
         updated["shellMode"] = "tampered"
         assert backend.runtimeSnapshot()["scene"]["videoPlaybackState"] == "playing"
+        assert backend.runtimeSnapshot()["dragProxy"]["fallbackReason"] == ""
         assert backend.runtimeSnapshot()["shellMode"] == "visual"
 
         backend.reportSceneRuntimeState(True, False, "future-state")
@@ -416,6 +524,7 @@ def test_backend_runtime_snapshot_cache_is_defensive_and_thread_safe(
                     "qtResponsive",
                     "scene",
                     "companion",
+                    "dragProxy",
                 }:
                     errors.append(value)
                     return
@@ -442,6 +551,22 @@ def test_backend_runtime_snapshot_cache_is_defensive_and_thread_safe(
                 }:
                     errors.append(value)
                     return
+                if set(value["dragProxy"]) != {
+                    "configured",
+                    "ready",
+                    "active",
+                    "rootNativeHidden",
+                    "directMoveCommits",
+                    "proxyRealGeometryCommits",
+                    "proxyBitmapWidth",
+                    "proxyBitmapHeight",
+                    "proxyCacheAgeMs",
+                    "proxyVisualStale",
+                    "lastMode",
+                    "fallbackReason",
+                }:
+                    errors.append(value)
+                    return
 
         readers = [threading.Thread(target=reader) for _ in range(4)]
         for thread in readers:
@@ -451,6 +576,22 @@ def test_backend_runtime_snapshot_cache_is_defensive_and_thread_safe(
                 index % 2 == 0,
                 index % 2 == 1,
                 "playing" if index % 2 else "paused",
+            )
+            backend.reportDragProxyRuntimeState(
+                drag_proxy_state(
+                    configured=True,
+                    ready=index % 2 == 0,
+                    active=index % 3 == 0,
+                    rootNativeHidden=index % 3 == 0,
+                    directMoveCommits=index,
+                    proxyRealGeometryCommits=index // 2,
+                    proxyBitmapWidth=512,
+                    proxyBitmapHeight=640,
+                    proxyCacheAgeMs=float(index),
+                    proxyVisualStale=index % 2 == 1,
+                    lastMode="layered-proxy",
+                    fallbackReason="" if index % 2 == 0 else "stale-key",
+                )
             )
         for thread in readers:
             thread.join(timeout=3)
@@ -475,6 +616,7 @@ def test_backend_runtime_snapshot_cache_is_defensive_and_thread_safe(
             "qtResponsive",
             "scene",
             "companion",
+            "dragProxy",
             "loadedModules",
         }
         assert tuple(socket_response["result"]["loadedModules"]) == (
@@ -509,6 +651,7 @@ def test_backend_runtime_snapshot_reports_stale_qt_heartbeat_without_content(
             "qtResponsive",
             "scene",
             "companion",
+            "dragProxy",
         }
 
         response = backend.socket.dispatch(
@@ -556,7 +699,7 @@ def test_backend_runtime_snapshot_tracks_delivery_without_bubble_content(
                 "result": {
                     "summary": sensitive_probe,
                     "detail": sensitive_probe + " detail",
-                    "model": "local-safe-fallback",
+                    "model": "gpt-5.6-luna",
                     "contextType": "application-signal",
                 },
                 "category": ContentCategory.LORE,

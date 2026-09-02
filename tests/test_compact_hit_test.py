@@ -8,7 +8,16 @@ from ctypes import wintypes
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, QSize, Qt
+from PySide6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QObject,
+    QPoint,
+    QPointF,
+    QSize,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 
@@ -336,10 +345,15 @@ class _NativeMoveRoot(QObject):
 
 
 class _ProxyMoveRoot(_NativeMoveRoot):
+    frameSwapped = Signal()
+
     def __init__(self) -> None:
         super().__init__()
         self.opacity_value = 1.0
+        self.opacity_writes: list[float] = []
         self.system_move_starts = 0
+        self.update_requests = 0
+        self.logical_visible = True
 
     def property(self, key):
         if key == "compactDragSnapshotKey":
@@ -353,10 +367,17 @@ class _ProxyMoveRoot(_NativeMoveRoot):
 
     def setOpacity(self, value):
         self.opacity_value = float(value)
+        self.opacity_writes.append(float(value))
 
     def startSystemMove(self):
         self.system_move_starts += 1
         return True
+
+    def requestUpdate(self):
+        self.update_requests += 1
+
+    def isVisible(self):
+        return self.logical_visible
 
 
 class _ProxyCache:
@@ -376,6 +397,7 @@ class _ProxyCache:
         self.last_prepare_used_stale_visual = False
         self.cache_age_ms = 18.5
         self.metadata = SimpleNamespace(pixel_size=QSize(180, 240))
+        self.proxy_handle = 2**48 + 101
         self.active = False
         self.completed = 0
         self.cancelled = 0
@@ -425,6 +447,42 @@ class _ProxyCache:
 
     def close(self):
         self.active = False
+
+
+def test_startup_proxy_prewarm_uses_current_qml_keys_only_when_visible() -> None:
+    root = _ProxyMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._drag_proxy_cache = SimpleNamespace(active=False)
+    requests: list[tuple[str, str]] = []
+    event_filter.requestDragProxySnapshot = (
+        lambda semantic, geometry="": not requests.append(
+            (str(semantic), str(geometry))
+        )
+    )
+
+    event_filter._prewarm_drag_proxy_snapshot()
+    assert requests == [("pose|size|box", "body-geometry")]
+
+    root.logical_visible = False
+    event_filter._prewarm_drag_proxy_snapshot()
+    assert requests == [("pose|size|box", "body-geometry")]
+
+
+def test_ready_startup_proxy_publishes_bitmap_and_clears_cache_miss() -> None:
+    root = _ProxyMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._drag_proxy_cache = _ProxyCache()
+    event_filter._proxy_fallback_reason = "cache-miss"
+    states: list[dict[str, object]] = []
+    event_filter.dragProxyRuntimeStateChanged.connect(states.append)
+
+    event_filter.publishDragProxyRuntimeState()
+
+    assert states[-1]["ready"] is True
+    assert states[-1]["proxyBitmapWidth"] == 180
+    assert states[-1]["proxyBitmapHeight"] == 240
+    assert states[-1]["proxyCacheAgeMs"] == 18.5
+    assert states[-1]["fallbackReason"] == ""
 
 
 class _NativeFilterApp:
@@ -503,11 +561,21 @@ def test_cached_proxy_moves_only_preview_then_commits_real_window_once(
             (int(window_id), int(x), int(y))
         ),
     )
+    native_visibility: list[tuple[int, bool]] = []
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_shown",
+        lambda window_id, shown: not native_visibility.append(
+            (int(window_id), bool(shown))
+        ),
+    )
 
     event_filter._reset_drag_diagnostics()
     assert event_filter.tryStartSystemMove(361) is True
     assert root.system_move_starts == 0
-    assert root.opacity_value == 0.0
+    assert root.opacity_value == 1.0
+    assert root.opacity_writes == []
+    assert native_visibility == [(root_window_id, False)]
     assert event_filter._active_system_move_window_id == 2**48 + 101
 
     cache.final = SimpleNamespace(
@@ -517,6 +585,9 @@ def test_cached_proxy_moves_only_preview_then_commits_real_window_once(
     assert event_filter._commit_proxy_geometry() is True
     assert commits == [(root_window_id, 137, 229)]
     assert root.opacity_value == 1.0
+    assert root.opacity_writes == []
+    assert native_visibility == [(root_window_id, False), (root_window_id, True)]
+    assert root.update_requests == 1
     assert event_filter._proxy_real_geometry_commits == 1
     event_filter.acknowledgeSystemMoveFinished(361)
     assert cache.gesture_active is False
@@ -528,8 +599,152 @@ def test_cached_proxy_moves_only_preview_then_commits_real_window_once(
     assert report["proxyBitmapHeight"] == 240
     assert report["proxyCacheAgeMs"] == 18.5
     assert report["proxyVisualStale"] is True
-    event_filter._complete_proxy_preview()
+    assert report["proxyRootNativeHidden"] is True
+    # A queued frameSwapped from a previous restore cannot be attributed to
+    # this proxy generation, so only the generation-bound timer (or its exact
+    # completion helper in this test) may retire the preview.
+    root.frameSwapped.emit()
+    assert cache.completed == 0
+    assert event_filter._proxy_preview_hide_timer.isActive() is True
+    assert event_filter._complete_proxy_preview() is True
     assert cache.completed == 1
+    assert event_filter._proxy_preview_hide_timer.isActive() is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
+def test_native_restore_recovers_from_recreated_root_hwnd(monkeypatch) -> None:
+    root = _ProxyMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    stale_window_id = 2**48 + 74
+    event_filter._proxy_root_native_hidden = True
+    event_filter._proxy_root_native_window_id = stale_window_id
+    native_visibility: list[tuple[int, bool]] = []
+
+    def set_shown(window_id, shown):
+        native_visibility.append((int(window_id), bool(shown)))
+        return int(window_id) == int(root.winId())
+
+    monkeypatch.setattr(event_filter, "_set_native_window_shown", set_shown)
+
+    assert event_filter._restore_proxy_root_presentation() is True
+    assert native_visibility == [
+        (stale_window_id, True),
+        (int(root.winId()), True),
+    ]
+    assert event_filter._proxy_root_native_hidden is False
+    assert event_filter._proxy_root_native_window_id == 0
+    assert root.update_requests == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
+def test_failed_native_restore_retains_recoverable_state(monkeypatch) -> None:
+    root = _ProxyMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    hidden_window_id = 2**48 + 75
+    event_filter._native_drag_filter = SimpleNamespace(
+        native_window_id=hidden_window_id
+    )
+    cache = _ProxyCache()
+    event_filter._drag_proxy_cache = cache
+    monkeypatch.setattr(
+        event_filter,
+        "_native_window_rect",
+        lambda _window_id: SimpleNamespace(
+            left=100, top=200, right=520, bottom=596
+        ),
+    )
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_position",
+        lambda _window_id, _x, _y: True,
+    )
+    restore_allowed = False
+
+    def set_shown(_window_id, shown):
+        return not bool(shown) or restore_allowed
+
+    monkeypatch.setattr(event_filter, "_set_native_window_shown", set_shown)
+
+    event_filter._reset_drag_diagnostics()
+    assert event_filter.tryStartSystemMove(359) is True
+    assert event_filter._commit_proxy_geometry() is True
+    assert event_filter._proxy_root_native_hidden is True
+    assert event_filter._proxy_root_native_window_id == hidden_window_id
+    assert event_filter._proxy_root_restore_timer.isActive() is True
+    assert event_filter._proxy_preview_hide_pending is True
+    assert event_filter._proxy_preview_hide_timer.isActive() is False
+    assert cache.active is True
+    event_filter._on_proxy_preview_hide_timeout()
+    assert cache.active is True
+    assert root.update_requests == 0
+
+    restore_allowed = True
+    assert event_filter._restore_proxy_root_presentation() is True
+    assert event_filter._proxy_root_native_hidden is False
+    assert event_filter._proxy_root_restore_timer.isActive() is False
+    assert event_filter._proxy_preview_hide_timer.isActive() is True
+    assert root.update_requests == 1
+    assert event_filter._complete_proxy_preview() is True
+    assert cache.active is False
+    event_filter.acknowledgeSystemMoveFinished(359)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
+def test_opacity_is_used_only_when_native_hide_is_unavailable(monkeypatch) -> None:
+    root = _ProxyMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_shown",
+        lambda _window_id, _shown: False,
+    )
+
+    assert event_filter._hide_proxy_root_presentation(4321) is True
+    assert event_filter._proxy_root_native_hidden is False
+    assert event_filter._proxy_root_opacity_hidden is True
+    assert root.opacity_writes == [0.0]
+    assert event_filter._restore_proxy_root_presentation() is True
+    assert event_filter._proxy_root_opacity_hidden is False
+    assert root.opacity_writes == [0.0, 1.0]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
+def test_native_hide_start_failure_restores_before_live_fallback(monkeypatch) -> None:
+    root = _ProxyMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    root_window_id = 2**48 + 73
+    event_filter._native_drag_filter = SimpleNamespace(
+        native_window_id=root_window_id
+    )
+    cache = _ProxyCache(start_move_succeeds=False)
+    event_filter._drag_proxy_cache = cache
+    monkeypatch.setattr(
+        event_filter,
+        "_native_window_rect",
+        lambda _window_id: SimpleNamespace(
+            left=100, top=200, right=520, bottom=596
+        ),
+    )
+    native_visibility: list[tuple[int, bool]] = []
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_shown",
+        lambda window_id, shown: not native_visibility.append(
+            (int(window_id), bool(shown))
+        ),
+    )
+
+    event_filter._reset_drag_diagnostics()
+    assert event_filter.tryStartSystemMove(358) is True
+    assert native_visibility == [
+        (root_window_id, False),
+        (root_window_id, True),
+    ]
+    assert root.system_move_starts == 1
+    assert root.opacity_writes == []
+    assert event_filter._proxy_root_native_hidden is False
+    assert event_filter._active_system_move_window_id == root_window_id
+    event_filter.acknowledgeSystemMoveFinished(358)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
@@ -554,10 +769,19 @@ def test_interrupted_proxy_ack_cancels_native_loop_before_commit(monkeypatch) ->
         "_set_native_window_position",
         lambda _window_id, _x, _y: True,
     )
+    native_visibility: list[tuple[int, bool]] = []
+    monkeypatch.setattr(
+        event_filter,
+        "_set_native_window_shown",
+        lambda window_id, shown: not native_visibility.append(
+            (int(window_id), bool(shown))
+        ),
+    )
 
     event_filter._reset_drag_diagnostics()
     assert event_filter.tryStartSystemMove(360) is True
     assert cache.active is True
+    root.logical_visible = False
 
     # This is the route used when presence/privacy changes hide the QML pet
     # while the physical button is still held.
@@ -566,6 +790,11 @@ def test_interrupted_proxy_ack_cancels_native_loop_before_commit(monkeypatch) ->
     assert cache.native_move_cancels == 1
     assert event_filter._proxy_move_active is False
     assert root.opacity_value == 1.0
+    assert native_visibility == [(root_window_id, False)]
+    assert root.update_requests == 0
+    assert cache.active is False
+    assert cache.completed == 1
+    assert event_filter._proxy_preview_hide_pending is False
     assert cache.gesture_active is False
 
 

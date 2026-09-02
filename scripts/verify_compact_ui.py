@@ -1535,7 +1535,7 @@ def main() -> int:
         return {
             "summary": summary,
             "detail": detail,
-            "model": "local-safe-fallback",
+            "model": "gpt-5.6-luna",
             "contextType": "application-signal",
         }
 

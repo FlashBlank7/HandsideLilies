@@ -136,7 +136,7 @@ def test_exact_cache_key_prepares_tight_proxy_and_reports_physical_delta() -> No
     assert proxy.hide_count == 1
 
 
-def test_stale_semantic_key_reuses_only_same_geometry_and_source_size() -> None:
+def test_stale_visual_reuses_any_revision_with_same_source_size_and_dpr() -> None:
     parent = QObject()
     item = _SizedItem()
     cache = DragProxySnapshotCache(_Root(), item, parent)
@@ -169,10 +169,10 @@ def test_stale_semantic_key_reuses_only_same_geometry_and_source_size() -> None:
             WindowRect(0, 0, 100, 100),
             "different-geometry",
         )
-        == 0
+        == proxy.handle
     )
-    assert cache.last_failure == "stale-key"
-    assert cache.last_prepare_used_stale_visual is False
+    assert cache.last_prepare_used_stale_visual is True
+    cache.complete()
 
     item.width_value = 257
     assert (
@@ -183,7 +183,7 @@ def test_stale_semantic_key_reuses_only_same_geometry_and_source_size() -> None:
         )
         == 0
     )
-    assert cache.last_failure == "stale-key"
+    assert cache.last_failure == "source-size-changed"
 
     item.width_value = 256
     cache._uniform_screen_dpr = lambda: False
@@ -196,6 +196,37 @@ def test_stale_semantic_key_reuses_only_same_geometry_and_source_size() -> None:
         == 0
     )
     assert cache.last_failure == "mixed-dpr"
+
+
+def test_stale_visual_requires_recorded_source_size() -> None:
+    parent = QObject()
+    cache = DragProxySnapshotCache(_Root(), _SizedItem(), parent)
+    cache._proxy = _Proxy()
+    cache._metadata = DragProxySnapshotMetadata(
+        key="old",
+        captured_at=cache._monotonic(),
+        device_pixel_ratio=1.5,
+        crop_origin=QPoint(),
+        pixel_size=QSize(40, 50),
+        geometry_key="old-geometry",
+    )
+
+    assert (
+        cache.prepare("new", WindowRect(0, 0, 100, 100), "new-geometry") == 0
+    )
+    assert cache.last_failure == "stale-key"
+
+
+def test_zero_sized_first_frame_is_not_cached_as_one_pixel_snapshot() -> None:
+    parent = QObject()
+    cache = DragProxySnapshotCache(_Root(), _SizedItem(0, 0), parent)
+    cache._pending_key = "first-frame"
+
+    cache._begin_grab()
+
+    assert cache.metadata is None
+    assert cache._grab_result is None
+    assert cache.last_failure == "source-not-ready"
 
 
 def test_exact_key_request_refreshes_after_dpr_or_source_size_change() -> None:

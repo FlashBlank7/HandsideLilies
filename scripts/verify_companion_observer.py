@@ -12,6 +12,7 @@ import json
 import sys
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
@@ -24,6 +25,8 @@ if str(SRC_ROOT) not in sys.path:
 
 from lilies.companion_controller import CompanionController  # noqa: E402
 from lilies.core.activity import ForegroundContext  # noqa: E402
+from lilies.core.companion import ContentCategory  # noqa: E402
+from lilies.core.content import ContentItem  # noqa: E402
 from lilies.core.database import Database  # noqa: E402
 
 
@@ -107,11 +110,51 @@ def main() -> int:
                     "smartObservationEnabled"
                 ],
             }
+            controller._requested_category = ContentCategory.PHILOSOPHY
             controller._consider()
-            emitted = wait_for(app, lambda: bool(controller.bubble.get("visible")))
+            subjective_finished = wait_for(app, lambda: not controller.busy)
+            subjective_status = controller.activityStatus
+            subjective = {
+                "finished": subjective_finished,
+                "bubbleHidden": controller.bubble == {},
+                "generationMode": subjective_status["generationMode"],
+                "generationLabel": subjective_status["generationLabel"],
+            }
+            reconciled = controller.activity.current_context
+
+            published_at = datetime(2026, 8, 30, 9, 0, tzinfo=UTC)
+            verified_item = ContentItem.create(
+                category=ContentCategory.NEWS,
+                title="Verified observer headline",
+                summary="A source-backed observer summary.",
+                source="Observer Journal",
+                published_at=published_at,
+                url="https://example.test/observer-news",
+                stable_id="observer:verified-news",
+            )
+            controller._content_items = [verified_item]
+            controller._requested_category = ContentCategory.NEWS
+            verified_started = controller._start_generation(
+                controller.activity.current_context,
+                force=True,
+            )
+            verified_emitted = wait_for(
+                app,
+                lambda: not controller.busy
+                and bool(controller.bubble.get("visible")),
+            )
             bubble = controller.bubble
             emitted_status = controller.activityStatus
-            reconciled = controller.activity.current_context
+            verified = {
+                "started": verified_started,
+                "emitted": verified_emitted,
+                "model": bubble.get("model", ""),
+                "contextType": bubble.get("contextType", ""),
+                "generationMode": emitted_status["generationMode"],
+                "generationLabel": emitted_status["generationLabel"],
+                "sourceName": (bubble.get("source") or {}).get("name", ""),
+                "sourceDate": (bubble.get("source") or {}).get("publishedAt", ""),
+            }
             current_hwnd[0] = 303
             controller.updateForegroundContext(contexts[303])
             quiet = {
@@ -124,12 +167,19 @@ def main() -> int:
                     defaults["activityEnabled"]
                     and defaults["frequency"] == "balanced"
                     and defaults["smartObservationEnabled"] is False
-                    and emitted
-                    and bubble.get("model") == "local-safe-fallback"
-                    and bubble.get("contextType") == "application-signal"
-                    and emitted_status["generationMode"] == "local-safe-fallback"
-                    and emitted_status["generationLabel"] == "内置本地陪伴文案"
-                    and "主动陪伴仍在运行" in emitted_status["stateDetail"]
+                    and subjective["finished"]
+                    and subjective["bubbleHidden"]
+                    and subjective["generationMode"] == "not-used"
+                    and subjective["generationLabel"] == "尚未生成"
+                    and verified["started"]
+                    and verified["emitted"]
+                    and verified["model"] == "verified-source-metadata"
+                    and verified["contextType"] == "application-signal"
+                    and verified["generationMode"] == "verified-source-metadata"
+                    and verified["generationLabel"]
+                    == "已核验来源元数据（未调用模型）"
+                    and verified["sourceName"] == "Observer Journal"
+                    and verified["sourceDate"].startswith("2026-08-30")
                     and emitted_status["lastContextLabel"] == "应用级信号（未截图）"
                     and reconciled is not None
                     and reconciled.hwnd == 202
@@ -141,17 +191,8 @@ def main() -> int:
                 ),
                 "defaults": defaults,
                 "foregroundReconciledTo": reconciled.process_name if reconciled else "",
-                "bubble": {
-                    "visible": bool(bubble.get("visible")),
-                    "model": bubble.get("model", ""),
-                    "contextType": bubble.get("contextType", ""),
-                    "contextLabel": emitted_status["lastContextLabel"],
-                    "generationMode": emitted_status["generationMode"],
-                    "generationLabel": emitted_status["generationLabel"],
-                    "degradedButWorking": "主动陪伴仍在运行"
-                    in emitted_status["stateDetail"],
-                    "summary": bubble.get("summary", ""),
-                },
+                "subjectiveUnavailable": subjective,
+                "verifiedMetadata": verified,
                 "fullScreenPrivacy": quiet,
                 "captureStagingCreated": (data_root / "capture-staging").exists(),
             }

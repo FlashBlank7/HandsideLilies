@@ -80,6 +80,7 @@ _PROACTIVE_MODEL_IDS = frozenset(
         "gpt-5.6-luna",
         "gpt-5.6-terra",
         "verified-source-metadata",
+        # Legacy read compatibility only; current generation never emits it.
         "local-safe-fallback",
     }
 )

@@ -2598,7 +2598,8 @@ Window {
         // of Lilith's surfaces temporarily restores the 60 FPS
         // interaction cadence, matching the v0.3 active/idle animation budget.
         readonly property bool highMotion: expanded
-                                                 || petWindow.manualDragActive
+                                                 || (petWindow.manualDragActive
+                                                     && !petWindow.nativeSystemMoveUsesProxy)
                                                  || compactLilith.characterPressed
                                                  || compactLilith.poseTransitionRunning
                                                 || petPoseResolver.requiresHighMotion

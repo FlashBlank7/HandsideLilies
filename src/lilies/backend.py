@@ -79,6 +79,11 @@ from .core.shell import ShellController
 from .core.socket_server import (
     LocalSocketServer,
     PRIMARY_SOCKET_PORT,
+    RUNTIME_DRAG_PROXY_BITMAP_EDGE_MAX,
+    RUNTIME_DRAG_PROXY_CACHE_AGE_MAX_MS,
+    RUNTIME_DRAG_PROXY_COUNTER_MAX,
+    RUNTIME_DRAG_PROXY_MODES,
+    RUNTIME_DRAG_PROXY_REASONS,
     RUNTIME_QT_HEARTBEAT_MAX_AGE_MS,
     RUNTIME_QT_HEARTBEAT_STALE_MS,
 )
@@ -568,6 +573,20 @@ class Backend(QObject):
                 "state": "idle",
                 "reason": "",
                 "expiresInSeconds": 0.0,
+            },
+            "dragProxy": {
+                "configured": False,
+                "ready": False,
+                "active": False,
+                "rootNativeHidden": False,
+                "directMoveCommits": 0,
+                "proxyRealGeometryCommits": 0,
+                "proxyBitmapWidth": 0,
+                "proxyBitmapHeight": 0,
+                "proxyCacheAgeMs": 0.0,
+                "proxyVisualStale": False,
+                "lastMode": "none",
+                "fallbackReason": "not-configured",
             },
         }
         self._runtime_heartbeat_timer = QTimer(self)
@@ -3535,6 +3554,68 @@ class Backend(QObject):
             )
             self._runtime_snapshot_state["scene"] = scene
 
+    @Slot("QVariantMap")
+    def reportDragProxyRuntimeState(self, state: dict[str, Any]) -> None:
+        """Cache one content-free drag-proxy projection on the Qt thread.
+
+        The socket worker reads only this lock-protected dictionary.  It never
+        reaches through Backend to the QQuickWindow, pointer filter, cached
+        bitmap, HWND, coordinates, or any other Qt-owned object.
+        """
+
+        if not isinstance(state, dict):
+            return
+        booleans: dict[str, bool] = {}
+        for key in (
+            "configured",
+            "ready",
+            "active",
+            "rootNativeHidden",
+            "proxyVisualStale",
+        ):
+            value = state.get(key)
+            if not isinstance(value, bool):
+                return
+            booleans[key] = value
+        integers: dict[str, int] = {}
+        for key, maximum in (
+            ("directMoveCommits", RUNTIME_DRAG_PROXY_COUNTER_MAX),
+            ("proxyRealGeometryCommits", RUNTIME_DRAG_PROXY_COUNTER_MAX),
+            ("proxyBitmapWidth", RUNTIME_DRAG_PROXY_BITMAP_EDGE_MAX),
+            ("proxyBitmapHeight", RUNTIME_DRAG_PROXY_BITMAP_EDGE_MAX),
+        ):
+            value = state.get(key)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= maximum
+            ):
+                return
+            integers[key] = value
+        cache_age_ms = state.get("proxyCacheAgeMs")
+        if (
+            isinstance(cache_age_ms, bool)
+            or not isinstance(cache_age_ms, (int, float))
+            or not 0.0
+            <= float(cache_age_ms)
+            <= RUNTIME_DRAG_PROXY_CACHE_AGE_MAX_MS
+        ):
+            return
+        last_mode = str(state.get("lastMode", ""))
+        fallback_reason = str(state.get("fallbackReason", ""))
+        if last_mode not in RUNTIME_DRAG_PROXY_MODES:
+            return
+        if fallback_reason not in RUNTIME_DRAG_PROXY_REASONS:
+            return
+        with self._runtime_snapshot_lock:
+            self._runtime_snapshot_state["dragProxy"] = {
+                **booleans,
+                **integers,
+                "proxyCacheAgeMs": round(float(cache_age_ms), 1),
+                "lastMode": last_mode,
+                "fallbackReason": fallback_reason,
+            }
+
     @Slot()
     def _recordRuntimeHeartbeat(self) -> None:
         """Record one content-free pulse from the Qt object's own thread."""
@@ -3549,6 +3630,7 @@ class Backend(QObject):
         with self._runtime_snapshot_lock:
             scene = dict(self._runtime_snapshot_state["scene"])
             companion = dict(self._runtime_snapshot_state["companion"])
+            drag_proxy = dict(self._runtime_snapshot_state["dragProxy"])
             heartbeat_age_ms = round(
                 max(
                     0.0,
@@ -3594,6 +3676,34 @@ class Backend(QObject):
                     "expiresInSeconds": round(
                         max(0.0, float(companion["expiresInSeconds"])), 1
                     ),
+                },
+                "dragProxy": {
+                    "configured": bool(drag_proxy["configured"]),
+                    "ready": bool(drag_proxy["ready"]),
+                    "active": bool(drag_proxy["active"]),
+                    "rootNativeHidden": bool(
+                        drag_proxy["rootNativeHidden"]
+                    ),
+                    "directMoveCommits": int(
+                        drag_proxy["directMoveCommits"]
+                    ),
+                    "proxyRealGeometryCommits": int(
+                        drag_proxy["proxyRealGeometryCommits"]
+                    ),
+                    "proxyBitmapWidth": int(
+                        drag_proxy["proxyBitmapWidth"]
+                    ),
+                    "proxyBitmapHeight": int(
+                        drag_proxy["proxyBitmapHeight"]
+                    ),
+                    "proxyCacheAgeMs": round(
+                        float(drag_proxy["proxyCacheAgeMs"]), 1
+                    ),
+                    "proxyVisualStale": bool(
+                        drag_proxy["proxyVisualStale"]
+                    ),
+                    "lastMode": str(drag_proxy["lastMode"]),
+                    "fallbackReason": str(drag_proxy["fallbackReason"]),
                 },
             }
 

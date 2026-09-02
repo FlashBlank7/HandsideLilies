@@ -47,6 +47,37 @@ _RUNTIME_RENDERERS = frozenset({"scene2d", "video"})
 _RUNTIME_VIDEO_STATES = frozenset(
     {"unloaded", "playing", "paused", "stopped", "error", "unknown"}
 )
+RUNTIME_DRAG_PROXY_MODES = frozenset(
+    {"none", "layered-proxy", "native", "direct-fallback", "direct"}
+)
+RUNTIME_DRAG_PROXY_REASONS = frozenset(
+    {
+        "",
+        "not-configured",
+        "cache-miss",
+        "grab-rejected",
+        "grab-deferred-for-gesture",
+        "empty-alpha",
+        "upload-failed",
+        "closed",
+        "already-active",
+        "stale-key",
+        "dpr-changed",
+        "source-size-changed",
+        "source-not-ready",
+        "mixed-dpr",
+        "show-failed",
+        "move-request-failed",
+        "final-rect-unavailable",
+        "root-rect-unavailable",
+        "root-presentation-unavailable",
+        "native-move-unavailable",
+        "unknown",
+    }
+)
+RUNTIME_DRAG_PROXY_COUNTER_MAX = 1_000_000_000
+RUNTIME_DRAG_PROXY_BITMAP_EDGE_MAX = 65_535
+RUNTIME_DRAG_PROXY_CACHE_AGE_MAX_MS = 86_400_000.0
 
 
 def _module_loaded(name: str) -> bool:
@@ -73,6 +104,9 @@ def _runtime_snapshot_result(raw: Any) -> dict[str, Any]:
     companion = raw.get("companion")
     if not isinstance(companion, dict):
         raise RuntimeError("runtime snapshot companion state is unavailable")
+    drag_proxy = raw.get("dragProxy")
+    if not isinstance(drag_proxy, dict):
+        raise RuntimeError("runtime snapshot drag proxy state is unavailable")
 
     shell_mode = str(raw.get("shellMode", ""))
     renderer = str(raw.get("renderer", ""))
@@ -140,6 +174,55 @@ def _runtime_snapshot_result(raw: Any) -> dict[str, Any]:
     ):
         raise RuntimeError("runtime snapshot companion expiry is invalid")
 
+    drag_proxy_booleans: dict[str, bool] = {}
+    for key in (
+        "configured",
+        "ready",
+        "active",
+        "rootNativeHidden",
+        "proxyVisualStale",
+    ):
+        value = drag_proxy.get(key)
+        if not isinstance(value, bool):
+            raise RuntimeError(
+                f"runtime snapshot drag proxy field is invalid: {key}"
+            )
+        drag_proxy_booleans[key] = value
+    drag_proxy_integers: dict[str, int] = {}
+    for key, maximum in (
+        ("directMoveCommits", RUNTIME_DRAG_PROXY_COUNTER_MAX),
+        ("proxyRealGeometryCommits", RUNTIME_DRAG_PROXY_COUNTER_MAX),
+        ("proxyBitmapWidth", RUNTIME_DRAG_PROXY_BITMAP_EDGE_MAX),
+        ("proxyBitmapHeight", RUNTIME_DRAG_PROXY_BITMAP_EDGE_MAX),
+    ):
+        value = drag_proxy.get(key)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 <= value <= maximum
+        ):
+            raise RuntimeError(
+                f"runtime snapshot drag proxy field is invalid: {key}"
+            )
+        drag_proxy_integers[key] = value
+    cache_age_ms = drag_proxy.get("proxyCacheAgeMs")
+    if (
+        isinstance(cache_age_ms, bool)
+        or not isinstance(cache_age_ms, (int, float))
+        or not 0.0
+        <= float(cache_age_ms)
+        <= RUNTIME_DRAG_PROXY_CACHE_AGE_MAX_MS
+    ):
+        raise RuntimeError(
+            "runtime snapshot drag proxy field is invalid: proxyCacheAgeMs"
+        )
+    last_mode = str(drag_proxy.get("lastMode", ""))
+    fallback_reason = str(drag_proxy.get("fallbackReason", ""))
+    if last_mode not in RUNTIME_DRAG_PROXY_MODES:
+        raise RuntimeError("runtime snapshot drag proxy mode is invalid")
+    if fallback_reason not in RUNTIME_DRAG_PROXY_REASONS:
+        raise RuntimeError("runtime snapshot drag proxy reason is invalid")
+
     return {
         "schemaVersion": 1,
         "shellMode": shell_mode,
@@ -156,6 +239,13 @@ def _runtime_snapshot_result(raw: Any) -> dict[str, Any]:
             "state": delivery_state,
             "reason": reason,
             "expiresInSeconds": round(float(expires_in), 1),
+        },
+        "dragProxy": {
+            **drag_proxy_booleans,
+            **drag_proxy_integers,
+            "proxyCacheAgeMs": round(float(cache_age_ms), 1),
+            "lastMode": last_mode,
+            "fallbackReason": fallback_reason,
         },
         "loadedModules": {
             name: _module_loaded(name) for name in RUNTIME_MODULE_ALLOWLIST

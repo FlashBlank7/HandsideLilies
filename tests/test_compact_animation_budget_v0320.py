@@ -26,6 +26,8 @@ def test_compact_pet_uses_idle_and_interaction_animation_cadences() -> None:
     # press; the held press itself and real interactive surfaces still do.
     assert "compactLilith.characterHovered" not in high_motion
     assert "compactLilith.characterPressed" in high_motion
+    assert "petWindow.manualDragActive" in high_motion
+    assert "&& !petWindow.nativeSystemMoveUsesProxy" in high_motion
     assert "|| backend.boxWorldSceneOpen" in high_motion
     assert "|| !compactWindow.highMotion" in source
     assert "readonly property real quietBreath:" in source

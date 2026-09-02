@@ -1415,21 +1415,15 @@ class CompanionController(QObject):
         }
 
         generation_mode = (
-            "local-safe-fallback"
-            if self._last_generation_model == "local-safe-fallback"
+            "verified-source-metadata"
+            if self._last_generation_model == "verified-source-metadata"
             else ("subscription" if self._last_generation_model else "not-used")
         )
         generation_label = {
-            "local-safe-fallback": "内置本地陪伴文案",
+            "verified-source-metadata": "已核验来源元数据（未调用模型）",
             "subscription": "ChatGPT/Codex 订阅模型",
             "not-used": "尚未生成",
         }[generation_mode]
-        if (
-            state == "sent"
-            and generation_mode == "local-safe-fallback"
-            and not detail
-        ):
-            detail = "订阅或本机模型暂不可用；本次已使用内置本地文案，主动陪伴仍在运行"
 
         # The activity state answers whether a natural pause is safe.  The
         # persisted emission gate separately answers whether the user asked us
@@ -1447,19 +1441,6 @@ class CompanionController(QObject):
         ):
             effective_state_label = gate_labels.get(gate_reason, effective_state_label)
             effective_state_detail = gate_detail or effective_state_detail
-        if generation_mode == "local-safe-fallback" and (
-            state == "sent" or bool(self._bubble)
-        ):
-            fallback_detail = (
-                "订阅或本机模型暂不可用；本次已使用内置本地文案，"
-                "主动陪伴仍在运行"
-            )
-            if fallback_detail not in effective_state_detail:
-                effective_state_detail = (
-                    f"{effective_state_detail}；{fallback_detail}"
-                    if effective_state_detail
-                    else fallback_detail
-                )
 
         compact_state_labels = {
             "not-started": "陪伴 · 尚未启动",
@@ -3527,6 +3508,27 @@ class CompanionController(QObject):
             self.changed.emit()
             return
         result = dict(value.get("result") or {})
+        if str(result.get("model", "")).strip() == "local-safe-fallback":
+            # Older databases may still contain this provenance value, but a
+            # current generation result must never turn canned prose into an
+            # apparently model-backed proactive bubble.
+            if generation_token == self._active_generation_token:
+                self._active_generation_token = 0
+                self._generation_cancel_event = None
+                self._active_generation_model_id = ""
+            self._busy = False
+            capture = value.get("capture")
+            if isinstance(capture, StagedCapture):
+                capture.release()
+            record_presentation("quiet", "engine-rejected")
+            self._last_generation_model = ""
+            self._last_generation_error = ""
+            self._set_request_feedback(
+                "历史本地固定文案结果已忽略；当前主动陪伴不会使用固定文案",
+                "quiet",
+            )
+            self.changed.emit()
+            return
         skip_reason = str(result.get("skipReason", "") or "").strip()
         quality_skip = bool(result.get("skip")) and (
             skip_reason in _QUIET_GENERATION_SKIP_REASONS
@@ -3629,9 +3631,7 @@ class CompanionController(QObject):
         category = value.get("category")
         content_item = value.get("contentItem")
         source = content_item.source_attribution() if isinstance(content_item, ContentItem) else None
-        degraded = bool(result.get("degraded")) or str(
-            result.get("model", "")
-        ) == "local-safe-fallback"
+        degraded = bool(result.get("degraded"))
         try:
             degraded_retry_seconds = max(
                 15.0,
@@ -3640,9 +3640,7 @@ class CompanionController(QObject):
         except (TypeError, ValueError):
             degraded_retry_seconds = 60.0
         if degraded:
-            self._last_generation_model = str(
-                result.get("model", "local-safe-fallback")
-            )
+            self._last_generation_model = str(result.get("model", ""))
             self._last_generation_error = str(result.get("error", ""))
             self._generation_attempt_not_before = max(
                 self._generation_attempt_not_before,

@@ -25,11 +25,11 @@ def test_windows_version_resource_is_valid_and_complete() -> None:
     assert isinstance(version_info, VSVersionInfo)
 
     fixed = version_info.ffi
-    assert _version_tuple(fixed.fileVersionMS, fixed.fileVersionLS) == (0, 3, 46, 0)
+    assert _version_tuple(fixed.fileVersionMS, fixed.fileVersionLS) == (0, 3, 47, 0)
     assert _version_tuple(fixed.productVersionMS, fixed.productVersionLS) == (
         0,
         3,
-        46,
+        47,
         0,
     )
     assert fixed.fileOS == 0x40004
@@ -45,12 +45,12 @@ def test_windows_version_resource_is_valid_and_complete() -> None:
     assert strings == {
         "CompanyName": "Lilies in the box",
         "FileDescription": "Lilies in the box desktop companion",
-        "FileVersion": "0.3.46.0",
+        "FileVersion": "0.3.47.0",
         "InternalName": "LiliesInTheBox",
         "LegalCopyright": "Copyright (c) 2026 Lilies in the box",
         "OriginalFilename": "LiliesInTheBox.exe",
         "ProductName": "Lilies in the box",
-        "ProductVersion": "0.3.46",
+        "ProductVersion": "0.3.47",
     }
 
     variable_info = next(

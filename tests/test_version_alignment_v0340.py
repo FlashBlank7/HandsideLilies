@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-RELEASE_VERSION = "0.3.46"
+RELEASE_VERSION = "0.3.47"
 HISTORICAL_V0338_SHA256 = (
     "71222a2c88b4d54578e03cffd3298f3ddb8d3c3e064c2b29c97d69aa1b790692"
 )
@@ -32,6 +32,9 @@ HISTORICAL_V0344_SHA256 = (
 HISTORICAL_V0345_SHA256 = (
     "6e7b7563b65552b2463b34c0b9c5b96dd26829828871d5ea36a2884aa8a76489"
 )
+HISTORICAL_V0346_SHA256 = (
+    "6bbd72104c64774e09f64087adc2461fc5a3a844a8279b6d2fb1e639d93ac267"
+)
 
 
 def _read(relative: str) -> str:
@@ -52,18 +55,18 @@ def _release_file_sets(wrapper: str) -> tuple[set[str], set[str]]:
     return _quoted_paths(additional), _quoted_paths(fence)
 
 
-def test_v0346_active_version_points_are_aligned() -> None:
+def test_v0347_active_version_points_are_aligned() -> None:
     markers = {
-        "pyproject.toml": 'version = "0.3.46"',
-        "uv.lock": 'version = "0.3.46"',
-        "src/lilies_in_the_box.egg-info/PKG-INFO": "Version: 0.3.46",
-        "src/lilies/__init__.py": '__version__ = "0.3.46"',
-        "src/lilies/app.py": 'app.setApplicationVersion("0.3.46")',
-        "src/lilies/core/codex_subscription.py": 'CLIENT_VERSION = "0.3.46"',
+        "pyproject.toml": 'version = "0.3.47"',
+        "uv.lock": 'version = "0.3.47"',
+        "src/lilies_in_the_box.egg-info/PKG-INFO": "Version: 0.3.47",
+        "src/lilies/__init__.py": '__version__ = "0.3.47"',
+        "src/lilies/app.py": 'app.setApplicationVersion("0.3.47")',
+        "src/lilies/core/codex_subscription.py": 'CLIENT_VERSION = "0.3.47"',
         "src/lilies/connectors/slack_websocket.py": (
-            '_USER_AGENT = "lilies-in-the-box/0.3.46"'
+            '_USER_AGENT = "lilies-in-the-box/0.3.47"'
         ),
-        "scripts/install_windows.ps1": "version = '0.3.46'",
+        "scripts/install_windows.ps1": "version = '0.3.47'",
     }
     for relative, marker in markers.items():
         assert marker in _read(relative), relative
@@ -72,19 +75,19 @@ def test_v0346_active_version_points_are_aligned() -> None:
     assert theme["version"] == RELEASE_VERSION
 
     version_info = _read("packaging/windows_version_info.txt")
-    for marker in ("(0, 3, 46, 0)", '"0.3.46.0"', '"0.3.46"'):
+    for marker in ("(0, 3, 47, 0)", '"0.3.47.0"', '"0.3.47"'):
         assert marker in version_info
 
 
-def test_v0346_report_build_install_and_verify_pointers_are_aligned() -> None:
+def test_v0347_report_build_install_and_verify_pointers_are_aligned() -> None:
     pointers = {
-        "scripts/build_windows.ps1": "packaged-self-test-v0346.json",
-        "scripts/verify_codex_subscription_smoke.py": ".codex-subscription-smoke-v0346",
-        "scripts/verify_packaged_windows_startup.ps1": "packaged-windows-startup-v0346.json",
-        "scripts/verify_packaged_compact_resources.ps1": "packaged-compact-resource-v0346.json",
-        "scripts/verify_pose_click_masks.py": "pose-click-mask-v0346.json",
-        "tests/test_pose_click_mask_qml_v0329.py": "pose-click-mask-v0346.json",
-        "tests/test_windows_startup_probe_contract.py": "packaged-windows-startup-v0346.json",
+        "scripts/build_windows.ps1": "packaged-self-test-v0347.json",
+        "scripts/verify_codex_subscription_smoke.py": ".codex-subscription-smoke-v0347",
+        "scripts/verify_packaged_windows_startup.ps1": "packaged-windows-startup-v0347.json",
+        "scripts/verify_packaged_compact_resources.ps1": "packaged-compact-resource-v0347.json",
+        "scripts/verify_pose_click_masks.py": "pose-click-mask-v0347.json",
+        "tests/test_pose_click_mask_qml_v0329.py": "pose-click-mask-v0347.json",
+        "tests/test_windows_startup_probe_contract.py": "packaged-windows-startup-v0347.json",
     }
     for relative, marker in pointers.items():
         source = _read(relative)
@@ -108,6 +111,7 @@ def test_v0346_report_build_install_and_verify_pointers_are_aligned() -> None:
             "v0343",
             "v0344",
             "v0345",
+            "v0346",
         ):
             assert historical_marker not in _read(relative), relative
 
@@ -119,27 +123,28 @@ def test_v0346_report_build_install_and_verify_pointers_are_aligned() -> None:
     assert 'assert "packaged-windows-startup-v0343.json" in probe' not in startup_contract
     assert 'assert "packaged-windows-startup-v0344.json" in probe' not in startup_contract
     assert 'assert "packaged-windows-startup-v0345.json" in probe' not in startup_contract
+    assert 'assert "packaged-windows-startup-v0346.json" in probe' not in startup_contract
 
     build = _read("scripts/build_windows.ps1")
     for report in (
-        "packaged-self-test-v0346.json",
-        "packaged-compact-resource-v0346.json",
-        "packaged-windows-startup-v0346.json",
-        "pose-click-mask-v0346.json",
+        "packaged-self-test-v0347.json",
+        "packaged-compact-resource-v0347.json",
+        "packaged-windows-startup-v0347.json",
+        "pose-click-mask-v0347.json",
     ):
         assert report in build
-    assert "Built Lilies v0.3.46" in build
+    assert "Built Lilies v0.3.47" in build
 
     compact = _read("scripts/verify_packaged_compact_resources.ps1")
-    assert "$ExpectedApplicationVersion = '0.3.46'" in compact
-    assert "packaged-self-test-v0346.json" in compact
+    assert "$ExpectedApplicationVersion = '0.3.47'" in compact
+    assert "packaged-self-test-v0347.json" in compact
 
     installer = _read("scripts/install_windows.ps1")
-    assert "$ExpectedFileVersion = '0.3.46.0'" in installer
-    assert "$ExpectedProductVersion = '0.3.46'" in installer
+    assert "$ExpectedFileVersion = '0.3.47.0'" in installer
+    assert "$ExpectedProductVersion = '0.3.47'" in installer
 
 
-def test_v0346_release_evidence_is_bound_to_the_packaged_candidate() -> None:
+def test_v0347_release_evidence_is_bound_to_the_packaged_candidate() -> None:
     verifier = _read("scripts/verify_pose_click_masks.py")
     for argument in ("--executable", "--report-path", "--resource-root"):
         assert argument in verifier
@@ -160,7 +165,7 @@ def test_v0346_release_evidence_is_bound_to_the_packaged_candidate() -> None:
     assert "--report-path $PoseClickMask" in pose_invocation
     assert "--resource-root $InternalRoot" in pose_invocation
 
-    wrapper = _read("scripts/promote_v0346.ps1")
+    wrapper = _read("scripts/promote_v0347.ps1")
     assert "Get-RequiredJsonInteger $selfTest 'schemaVersion' 'selfTest'" in wrapper
     assert "Assert-JsonBoolean $selfTest 'passed' $true 'selfTest'" in wrapper
     assert "Get-RequiredJsonInteger $Report 'schemaVersion' 'poseClickMask'" in wrapper
@@ -174,9 +179,17 @@ def test_v0346_release_evidence_is_bound_to_the_packaged_candidate() -> None:
     ) in wrapper
     assert "packaged _internal directory" in wrapper
     assert "$windowsStartup, $poseClickMask" in wrapper
+    for marker in (
+        "systemMoveWatcherReady",
+        "systemMoveWatcherWindowMatches",
+        "systemMoveWatcherEventsObserved",
+        "systemMoveWatcherStartCount",
+        "systemMoveWatcherEndCount",
+    ):
+        assert marker in wrapper
 
 
-def test_v0346_wrapper_fences_all_immutable_historical_wrappers() -> None:
+def test_v0347_wrapper_fences_all_immutable_historical_wrappers() -> None:
     historical_v0338 = PROJECT_ROOT / "scripts" / "promote_v0338.ps1"
     historical_v0339 = PROJECT_ROOT / "scripts" / "promote_v0339.ps1"
     historical_v0340 = PROJECT_ROOT / "scripts" / "promote_v0340.ps1"
@@ -185,7 +198,8 @@ def test_v0346_wrapper_fences_all_immutable_historical_wrappers() -> None:
     historical_v0343 = PROJECT_ROOT / "scripts" / "promote_v0343.ps1"
     historical_v0344 = PROJECT_ROOT / "scripts" / "promote_v0344.ps1"
     historical_v0345 = PROJECT_ROOT / "scripts" / "promote_v0345.ps1"
-    wrapper = _read("scripts/promote_v0346.ps1")
+    historical_v0346 = PROJECT_ROOT / "scripts" / "promote_v0346.ps1"
+    wrapper = _read("scripts/promote_v0347.ps1")
 
     assert (
         hashlib.sha256(historical_v0338.read_bytes()).hexdigest()
@@ -219,6 +233,10 @@ def test_v0346_wrapper_fences_all_immutable_historical_wrappers() -> None:
         hashlib.sha256(historical_v0345.read_bytes()).hexdigest()
         == HISTORICAL_V0345_SHA256
     )
+    assert (
+        hashlib.sha256(historical_v0346.read_bytes()).hexdigest()
+        == HISTORICAL_V0346_SHA256
+    )
     assert HISTORICAL_V0338_SHA256 in wrapper
     assert HISTORICAL_V0339_SHA256 in wrapper
     assert HISTORICAL_V0340_SHA256 in wrapper
@@ -227,6 +245,7 @@ def test_v0346_wrapper_fences_all_immutable_historical_wrappers() -> None:
     assert HISTORICAL_V0343_SHA256 in wrapper
     assert HISTORICAL_V0344_SHA256 in wrapper
     assert HISTORICAL_V0345_SHA256 in wrapper
+    assert HISTORICAL_V0346_SHA256 in wrapper
     assert "$HistoricalV0338" in wrapper
     assert "$HistoricalV0339" in wrapper
     assert "$HistoricalV0340" in wrapper
@@ -235,18 +254,19 @@ def test_v0346_wrapper_fences_all_immutable_historical_wrappers() -> None:
     assert "$HistoricalV0343" in wrapper
     assert "$HistoricalV0344" in wrapper
     assert "$HistoricalV0345" in wrapper
-    assert "$ReleaseVersion = '0.3.46'" in wrapper
-    assert "$FileVersion = '0.3.46.0'" in wrapper
-    assert "packaged-self-test-v0346.json" in wrapper
-    assert "packaged-compact-resource-v0346.json" in wrapper
-    assert "packaged-windows-startup-v0346.json" in wrapper
-    assert "pose-click-mask-v0346.json" in wrapper
-    assert r"-PromotionScript 'scripts\promote_v0346.ps1'" in wrapper
-    assert r"-PackagedReport 'artifacts\packaged-self-test-v0346.json'" in wrapper
+    assert "$HistoricalV0346" in wrapper
+    assert "$ReleaseVersion = '0.3.47'" in wrapper
+    assert "$FileVersion = '0.3.47.0'" in wrapper
+    assert "packaged-self-test-v0347.json" in wrapper
+    assert "packaged-compact-resource-v0347.json" in wrapper
+    assert "packaged-windows-startup-v0347.json" in wrapper
+    assert "pose-click-mask-v0347.json" in wrapper
+    assert r"-PromotionScript 'scripts\promote_v0347.ps1'" in wrapper
+    assert r"-PackagedReport 'artifacts\packaged-self-test-v0347.json'" in wrapper
 
 
-def test_v0346_additional_files_and_checksum_fence_cover_release_delta() -> None:
-    additional, fence = _release_file_sets(_read("scripts/promote_v0346.ps1"))
+def test_v0347_additional_files_and_checksum_fence_cover_release_delta() -> None:
+    additional, fence = _release_file_sets(_read("scripts/promote_v0347.ps1"))
     required = {
         ".gitignore",
         "LiliesInTheBox.spec",
@@ -273,6 +293,7 @@ def test_v0346_additional_files_and_checksum_fence_cover_release_delta() -> None
         r"scripts\promote_v0344.ps1",
         r"scripts\promote_v0345.ps1",
         r"scripts\promote_v0346.ps1",
+        r"scripts\promote_v0347.ps1",
         r"scripts\verify_codex_subscription_smoke.py",
         r"scripts\verify_companion_bubbles.py",
         r"scripts\verify_companion_bubble_matrix.py",
@@ -296,6 +317,7 @@ def test_v0346_additional_files_and_checksum_fence_cover_release_delta() -> None
         r"src\lilies\core\data_migration.py",
         r"src\lilies\core\model.py",
         r"src\lilies\core\selection.py",
+        r"src\lilies\core\input_pulse.py",
         r"src\lilies\core\window_catalog.py",
         r"src\lilies\core\window_icons.py",
         r"src\lilies\core\windows.py",
@@ -323,6 +345,7 @@ def test_v0346_additional_files_and_checksum_fence_cover_release_delta() -> None
         r"tests\test_packaged_user_flow_self_test_contract.py",
         r"tests\test_packaging_qml_pruning_v0340.py",
         r"tests\test_idle_runtime_budget_v0340.py",
+        r"tests\test_input_pulse_v03.py",
         r"tests\test_qml_warning_release_gate_v0340.py",
         r"tests\test_quick_window_resource_lifecycle.py",
         r"tests\test_packaged_footprint_gate_v0340.py",
@@ -344,28 +367,29 @@ def test_v0346_additional_files_and_checksum_fence_cover_release_delta() -> None
     assert required <= fence
 
     reports = {
-        r"artifacts\packaged-self-test-v0346.json",
-        r"artifacts\packaged-compact-resource-v0346.json",
-        r"artifacts\packaged-windows-startup-v0346.json",
-        r"artifacts\pose-click-mask-v0346.json",
+        r"artifacts\packaged-self-test-v0347.json",
+        r"artifacts\packaged-compact-resource-v0347.json",
+        r"artifacts\packaged-windows-startup-v0347.json",
+        r"artifacts\pose-click-mask-v0347.json",
     }
     assert reports <= additional
     assert reports <= fence
 
 
-def test_v0346_readme_is_current_and_documents_release_gates() -> None:
+def test_v0347_readme_is_current_and_documents_release_gates() -> None:
     readme = _read("README.md")
-    assert readme.index("### v0.3.46") < readme.index("### v0.3.45")
-    current = readme[readme.index("### v0.3.46") : readme.index("### v0.3.45")]
+    assert readme.index("### v0.3.47") < readme.index("### v0.3.46")
+    current = readme[readme.index("### v0.3.47") : readme.index("### v0.3.46")]
     for marker in (
-        "交互屏障",
-        "截图",
-        "窗口目录",
-        "visibleChanged",
+        "EVENT_SYSTEM_MOVESIZESTART/END",
+        "64",
+        "6",
+        "QML",
+        "Win32",
         "pet-drag-latest.json",
-        "v0.3.46",
-        "SHA-256",
-        "v0.3.45",
+        "armed/native-active/finished",
+        "v0.3.47",
+        "promote_v0347.ps1 -ValidateOnly",
     ):
         assert marker in current
-    assert "promote_v0346.ps1 -ValidateOnly" in readme
+    assert "promote_v0347.ps1 -ValidateOnly" in readme

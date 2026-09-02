@@ -12,7 +12,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QSG_RHI_BACKEND"] = "software"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_REPORT_PATH = PROJECT_ROOT / "artifacts" / "pose-click-mask-v0346.json"
+DEFAULT_REPORT_PATH = PROJECT_ROOT / "artifacts" / "pose-click-mask-v0347.json"
 
 from PySide6.QtCore import QObject, QPointF, Property, QUrl, Signal, Slot
 from PySide6.QtQml import QQmlApplicationEngine
@@ -139,6 +139,21 @@ def _hit(pet: QQuickItem, frame: QQuickItem, nx: float, ny: float) -> bool:
     return bool(pet.containsCharacterPoint(float(point.x()), float(point.y())))
 
 
+def _interaction_hit(
+    pet: QQuickItem,
+    frame: QQuickItem,
+    nx: float,
+    ny: float,
+) -> bool:
+    point = frame.mapToItem(
+        pet,
+        QPointF(float(frame.width()) * nx, float(frame.height()) * ny),
+    )
+    return bool(
+        pet.containsCharacterInteractionPoint(float(point.x()), float(point.y()))
+    )
+
+
 def _hit_grid(pet: QQuickItem, frame: QQuickItem) -> dict[tuple[int, int], bool]:
     return {
         (column, row): _hit(pet, frame, column / 20.0, row / 20.0)
@@ -253,6 +268,41 @@ def main(argv: list[str] | None = None) -> int:
             ),
         }
         results[pose_id] = result
+
+    # A user should not need pixel-perfect aim at an anti-aliased hair or
+    # dress edge.  The perch fixture uses a declared ellipse with a known
+    # right-hand boundary; probe three logical pixels beyond it.  The exact
+    # asset mask must remain false there while the shared native/QML
+    # interaction mask accepts it.  Distant transparent corners must continue
+    # to pass through.
+    backend.set_pose("perch-prone")
+    QTest.qWait(330)
+    perch_mask = dict(specifications["posePerchProne"]["clickMask"])
+    center_x, center_y, radius_x, _radius_y = (
+        float(value) for value in perch_mask["ellipse"]
+    )
+    near_edge_x = center_x + radius_x + 3.0 / max(1.0, float(frame.width()))
+    exact_near_edge = _hit(pet, frame, near_edge_x, center_y)
+    interaction_near_edge = _interaction_hit(
+        pet, frame, near_edge_x, center_y
+    )
+    interaction_corner_hits = [
+        _interaction_hit(pet, frame, 0.001, 0.001),
+        _interaction_hit(pet, frame, 0.999, 0.001),
+        _interaction_hit(pet, frame, 0.001, 0.999),
+        _interaction_hit(pet, frame, 0.999, 0.999),
+    ]
+    interaction_tolerance_result = {
+        "probeDistanceLogicalPx": 3.0,
+        "exactNearEdgeHit": exact_near_edge,
+        "interactionNearEdgeHit": interaction_near_edge,
+        "transparentCornerHits": interaction_corner_hits,
+        "passed": (
+            not exact_near_edge
+            and interaction_near_edge
+            and not any(interaction_corner_hits)
+        ),
+    }
 
     backend.set_pose("edge-peek-live")
     backend.set_habitat({})
@@ -459,6 +509,7 @@ def main(argv: list[str] | None = None) -> int:
         "resourceRoot": str(resource_root),
         "platform": os.environ.get("QT_QPA_PLATFORM"),
         "poses": results,
+        "interactionTolerance": interaction_tolerance_result,
         "mirror": mirror_result,
         "transition": transition_result,
         "loadFailure": failure_result,
@@ -466,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:
         "passed": (
             bool(application_version)
             and all(bool(dict(value)["passed"]) for value in results.values())
+            and bool(interaction_tolerance_result["passed"])
             and bool(mirror_result["passed"])
             and bool(transition_result["passed"])
             and bool(failure_result["passed"])

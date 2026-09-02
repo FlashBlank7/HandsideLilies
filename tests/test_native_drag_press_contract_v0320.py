@@ -213,6 +213,36 @@ def test_pending_release_detach_is_committed_before_hidden_state_clears_it() -> 
     )
 
 
+def test_character_drag_uses_one_forgiving_shared_interaction_mask() -> None:
+    main_source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
+    body_source = (ROOT / "qml" / "V03PetBody.qml").read_text("utf-8")
+
+    assert (
+        "return compactLilith.containsCharacterInteractionPoint(localX, localY)"
+        in main_source
+    )
+    assert "function containsCharacterInteractionPoint(rootX, rootY)" in body_source
+    assert "readonly property real characterHitTolerance: 6.0" in body_source
+    assert "var tolerance = characterHitTolerance" in body_source
+    assert (
+        "return root.containsCharacterInteractionPoint(point.x, point.y)"
+        in body_source
+    )
+    # Keep the exact visual mask available to asset/geometry verifiers and
+    # ensure the interaction dilation delegates to it instead of accepting the
+    # whole transparent QQuickWindow rectangle.
+    assert "function containsCharacterPoint(rootX, rootY)" in body_source
+    interaction_start = body_source.index(
+        "function containsCharacterInteractionPoint(rootX, rootY)"
+    )
+    interaction_end = body_source.index(
+        "function normalizedCharacterGrab(rootX, rootY)", interaction_start
+    )
+    interaction = body_source[interaction_start:interaction_end]
+    assert interaction.count("containsCharacterPoint(") >= 2
+    assert "return true" not in interaction.split("containsCharacterPoint", 1)[0]
+
+
 def test_release_clamp_tracks_visible_figure_and_rechecks_after_pose_transition() -> None:
     source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
     clamp_start = source.index("function clampDraggedFigureToArea(")

@@ -1813,6 +1813,8 @@ Window {
         property real compactCharacterTop: compactLilith.figureTop
         property real compactCharacterWidth: compactLilith.figureWidth
         property real compactCharacterHeight: compactLilith.figureHeight
+        property real compactCharacterHitTolerance:
+            compactLilith.characterHitTolerance
         property real compactAccessoryLeft: compactBox.x
         property real compactAccessoryTop: compactBox.y
         property real compactAccessoryWidth: compactBox.width
@@ -1825,7 +1827,7 @@ Window {
                 compactLilith.interactionSnap = false
         }
         function characterContains(localX, localY) {
-            return compactLilith.containsCharacterPoint(localX, localY)
+            return compactLilith.containsCharacterInteractionPoint(localX, localY)
         }
         function detachForManualDrag() {
             compactLilith.interactionSnap = true

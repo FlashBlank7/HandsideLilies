@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 from lilies.core.input_pulse import InputPulseSource, NativeInputSample
 
 
@@ -85,3 +88,89 @@ def test_unavailable_provider_degrades_without_starting_a_thread() -> None:
     assert pulse.sample()["state"] == "unavailable"
     assert pulse.running is False
 
+
+def test_pointer_interaction_suspends_worker_without_recreating_thread() -> None:
+    class CountingProvider:
+        available = True
+
+        def __init__(self) -> None:
+            self.count = 0
+            self.sampled = threading.Event()
+
+        def read(self):
+            self.count += 1
+            self.sampled.set()
+            return NativeInputSample(
+                self.count,
+                self.count,
+                self.count,
+                self.count,
+            )
+
+    provider = CountingProvider()
+    pulse = InputPulseSource(provider, sample_interval_seconds=0.05)
+    assert pulse.start() is True
+    try:
+        assert provider.sampled.wait(0.5)
+        worker = pulse._thread
+        pulse.set_interaction_suspended(True)
+        # Allow one sample that may already have crossed the condition edge,
+        # then prove the same thread sleeps instead of polling or being joined.
+        time.sleep(0.08)
+        suspended_count = provider.count
+        time.sleep(0.14)
+        assert provider.count == suspended_count
+        assert pulse._thread is worker
+        assert pulse.running is True
+        assert pulse.snapshot()["eventCount"] == 0
+
+        pulse.set_interaction_suspended(False)
+        deadline = time.monotonic() + 0.5
+        while provider.count == suspended_count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert provider.count > suspended_count
+        assert pulse._thread is worker
+    finally:
+        pulse.stop()
+
+
+def test_sample_already_in_provider_is_discarded_across_suspend_generation() -> None:
+    class BlockingProvider:
+        available = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.second_read_started = threading.Event()
+            self.release_second_read = threading.Event()
+
+        def read(self):
+            self.calls += 1
+            if self.calls == 1:
+                return NativeInputSample(10, 10, 1, 1)
+            if self.calls == 2:
+                self.second_read_started.set()
+                assert self.release_second_read.wait(1.0)
+                return NativeInputSample(20, 20, 2, 2)
+            return NativeInputSample(20, 20, 2, 2)
+
+    provider = BlockingProvider()
+    pulse = InputPulseSource(provider, sample_interval_seconds=0.05)
+    assert pulse.start() is True
+    try:
+        assert provider.second_read_started.wait(0.5)
+        pulse.set_interaction_suspended(True)
+        provider.release_second_read.set()
+        time.sleep(0.08)
+
+        assert pulse.snapshot()["eventCount"] == 0
+        assert pulse._last_raw is None
+
+        pulse.set_interaction_suspended(False)
+        deadline = time.monotonic() + 0.5
+        while pulse._last_raw is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert pulse._last_raw is not None
+        assert pulse.snapshot()["eventCount"] == 0
+    finally:
+        provider.release_second_read.set()
+        pulse.stop()

@@ -121,6 +121,9 @@ class InputPulseSource:
         self._sampled_at = 0.0
         self._lock = threading.RLock()
         self._stop = threading.Event()
+        self._state_condition = threading.Condition()
+        self._interaction_suspended = False
+        self._interaction_generation = 0
         self._thread: threading.Thread | None = None
 
     @property
@@ -150,6 +153,8 @@ class InputPulseSource:
 
     def stop(self) -> None:
         self._stop.set()
+        with self._state_condition:
+            self._state_condition.notify_all()
         thread = self._thread
         if thread and thread is not threading.current_thread():
             thread.join(timeout=1.0)
@@ -169,6 +174,30 @@ class InputPulseSource:
         if self.suppressed:
             # BLOCKED/SILENT must erase even the short-lived pulse immediately.
             self.clear()
+
+    def set_interaction_suspended(self, value: bool) -> None:
+        """Pause sampling without joining/recreating the worker thread.
+
+        Dragging Lilith is itself a dense stream of pointer motion and must not
+        become a companionship signal.  More importantly, the 75 ms sampler
+        must not contend for Python's GIL while User32 owns the native move
+        loop.  A condition lets the worker sleep indefinitely after at most
+        one already-running sample and resume without adding press-time join
+        latency.
+        """
+
+        next_value = bool(value)
+        with self._state_condition:
+            if self._interaction_suspended == next_value:
+                return
+            self._interaction_suspended = next_value
+            self._interaction_generation += 1
+            self._state_condition.notify_all()
+        # Clear on both edges. If a provider read had already crossed the
+        # condition before suspension, the worker performs the same check
+        # after that read; clearing again on resume also guarantees no drag
+        # baseline can leak into the next ordinary sample.
+        self.clear()
 
     def clear(self) -> None:
         with self._lock:
@@ -207,7 +236,20 @@ class InputPulseSource:
 
     def _run(self) -> None:
         while not self._stop.is_set() and self.enabled and not self.suppressed:
+            with self._state_condition:
+                while self._interaction_suspended and not self._stop.is_set():
+                    self._state_condition.wait()
+                sample_generation = self._interaction_generation
+            if self._stop.is_set() or not self.enabled or self.suppressed:
+                break
             self.sample()
+            with self._state_condition:
+                sample_crossed_suspend_edge = (
+                    self._interaction_suspended
+                    or self._interaction_generation != sample_generation
+                )
+            if sample_crossed_suspend_edge:
+                self.clear()
             self._stop.wait(self.sample_interval_seconds)
 
     def _prune(self, current: float) -> None:

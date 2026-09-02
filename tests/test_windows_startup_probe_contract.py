@@ -83,6 +83,8 @@ def test_windows_probe_uses_qwindows_without_publishing_surfaces() -> None:
         '"nativeTransparentCornerPass": native_transparent_corner_pass'
         in app_source
     )
+    assert '"systemMoveWatcherReady": system_move_watcher_ready' in app_source
+    assert "NotifyWinEvent" in app_source
     assert '"visibleQuickWindowCount": len(visible_windows)' in app_source
     assert 'visible: !diagnosticWindowProbe && backend.shellMode !== "compact"' in qml_source
     assert (
@@ -100,7 +102,7 @@ def test_packaging_build_hard_runs_the_hidden_qwindows_probe() -> None:
     assert "verify_packaged_windows_startup.ps1" in build
     assert "-WindowStyle Hidden -PassThru" in probe
     assert "--windows-startup-probe" in probe
-    assert "packaged-windows-startup-v0346.json" in probe
+    assert "packaged-windows-startup-v0347.json" in probe
     assert "$env:LILIES_DATA_DIR = $diagnosticRoot" in probe
     assert "Stop-Process -Id $process.Id -Force" in probe
     assert "Get-Process -Name" not in probe
@@ -113,6 +115,11 @@ def test_packaging_build_hard_runs_the_hidden_qwindows_probe() -> None:
         "nativeDesktopModeTabHit",
         "nativeDesktopModeTabHitResult",
         "nativeTransparentCornerPass",
+        "systemMoveWatcherReady",
+        "systemMoveWatcherWindowMatches",
+        "systemMoveWatcherEventsObserved",
+        "systemMoveWatcherStartCount",
+        "systemMoveWatcherEndCount",
         "rootNoActivateStyle",
         "petNoActivateStyle",
         "eventLoopResponsive",
@@ -123,8 +130,8 @@ def test_packaging_build_hard_runs_the_hidden_qwindows_probe() -> None:
         assert field in probe
 
 
-def test_v0346_release_gate_requires_native_desktop_mode_tab_hit() -> None:
-    promotion = _read("scripts/promote_v0346.ps1")
+def test_v0347_release_gate_requires_native_desktop_mode_tab_hit() -> None:
+    promotion = _read("scripts/promote_v0347.ps1")
     probe = _read("scripts/verify_packaged_windows_startup.ps1")
 
     for source in (promotion, probe):

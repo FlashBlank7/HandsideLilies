@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lilies-in-the-box"
-version = "0.3.46"
+version = "0.3.47"
 description = "Lilies in the box — a recoverable Windows desktop shell and local Lilith agent."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

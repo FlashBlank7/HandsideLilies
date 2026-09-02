@@ -5,6 +5,7 @@ import json
 import os
 import threading
 from ctypes import wintypes
+from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, Qt
@@ -15,6 +16,7 @@ from lilies.app import (
     CompactHitTestFilter,
     CompactPointerEventFilter,
     _LatestJsonFileWriter,
+    _SystemMoveWatcher,
 )
 
 
@@ -27,6 +29,7 @@ class _Root:
             "compactCharacterTop": 80,
             "compactCharacterWidth": 120,
             "compactCharacterHeight": 300,
+            "compactCharacterHitTolerance": 6,
             "compactAccessoryLeft": 260,
             "compactAccessoryTop": 250,
             "compactAccessoryWidth": 80,
@@ -72,6 +75,41 @@ def test_native_hit_test_uses_character_silhouette_when_available():
     hit_test = CompactHitTestFilter(root, _Backend(), native_window_id=4242)
     assert hit_test.accepts_point(160, 200)
     assert not hit_test.accepts_point(105, 85)
+
+
+def test_native_character_broad_phase_includes_only_bounded_mask_tolerance():
+    root = _Root()
+    observed: list[tuple[float, float]] = []
+
+    def interaction_mask(x: float, y: float) -> bool:
+        observed.append((x, y))
+        return 94 <= x <= 226 and 74 <= y <= 386
+
+    root.characterContains = interaction_mask
+    hit_test = CompactHitTestFilter(root, _Backend(), native_window_id=4242)
+
+    assert hit_test.accepts_point(95, 200)
+    assert observed[-1] == (95, 200)
+    calls_after_near_edge = len(observed)
+    assert not hit_test.accepts_point(93, 200)
+    assert len(observed) == calls_after_near_edge
+    assert not hit_test.accepts_point(20, 20)
+
+    # The expanded rectangle is only a cheap prefilter. A transparent point
+    # within it must still pass through if the QML silhouette rejects it.
+    root.characterContains = lambda _x, _y: False
+    assert not hit_test.accepts_point(95, 200)
+
+
+def test_character_hit_tolerance_uses_logical_coordinates_at_high_dpi():
+    root = _Root()
+    root.characterContains = lambda x, y: 94 <= x <= 226 and 74 <= y <= 386
+    hit_test = CompactHitTestFilter(root, _Backend(), native_window_id=4242)
+
+    near = CompactHitTestFilter._logical_point(95 * 1.5, 200 * 1.5, 1.5)
+    beyond = CompactHitTestFilter._logical_point(93 * 1.5, 200 * 1.5, 1.5)
+    assert hit_test.accepts_point(*near)
+    assert not hit_test.accepts_point(*beyond)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="exercises the Windows MSG bridge")
@@ -452,6 +490,62 @@ def test_release_watchdog_has_bounded_native_move_fail_safe() -> None:
     assert event_filter._completion_queued_by == "native-move-timeout"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="uses Windows native move semantics")
+def test_process_move_events_replace_frame_rate_release_polling() -> None:
+    app_loop = QCoreApplication.instance() or QCoreApplication([])
+    root = _NativeMoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    native_window_id = 2**40 + 4321
+    event_filter._native_drag_filter = SimpleNamespace(
+        native_window_id=native_window_id
+    )
+    event_filter._system_move_end_watcher = SimpleNamespace(ready=True)
+
+    event_filter._reset_drag_diagnostics()
+    assert event_filter.tryStartSystemMove(391) is True
+    assert event_filter._system_move_release_timer.interval() == 24
+    assert event_filter._system_move_release_timer.isSingleShot() is False
+
+    event_filter._on_system_move_started(9999)
+    assert event_filter._system_move_entered is False
+    event_filter._on_system_move_started(native_window_id)
+    assert event_filter._system_move_entered is True
+    assert event_filter._system_move_release_timer.isSingleShot() is False
+    assert event_filter._system_move_release_timer.interval() == 24
+    event_filter.noteSystemMoveEntered(100, 100)
+    event_filter.noteSystemWindowMoving(112, 100)
+    event_filter._on_system_move_ended(9999)
+    assert event_filter.native_system_move_active is True
+
+    event_filter._on_system_move_ended(native_window_id)
+    app_loop.processEvents()
+
+    assert root.completions == [391]
+    assert event_filter.native_system_move_active is False
+    assert event_filter._system_move_exited is True
+    assert event_filter._completion_queued_by == "win-event-move-end"
+    assert event_filter._completion_watchdog_polls == 0
+    assert event_filter._last_drag_diagnostics["mode"] == "native"
+    assert event_filter._last_drag_diagnostics["moved"] is True
+    assert (
+        event_filter._last_drag_diagnostics["completionQueuedBy"]
+        == "win-event-move-end"
+    )
+
+
+def test_system_move_watcher_signal_preserves_pointer_sized_window_ids() -> None:
+    QCoreApplication.instance() or QCoreApplication([])
+    watcher = _SystemMoveWatcher(0)
+    observed: list[int] = []
+    large_window_id = 2**48 + 73
+    watcher.moveStarted.connect(lambda value: observed.append(int(value)))
+
+    watcher.moveStarted.emit(large_window_id)
+
+    assert observed == [large_window_id]
+    assert watcher.close() is True
+
+
 def test_drag_position_bridge_moves_both_axes_atomically_and_rejects_nan():
     root = _NativeMoveRoot()
     event_filter = CompactPointerEventFilter(root)
@@ -524,6 +618,9 @@ def test_drag_diagnostics_are_content_free_and_persist_after_release(tmp_path):
     assert event_filter.wait_for_drag_diagnostics_write(1.0) is True
 
     report = json.loads(report_path.read_text("utf-8"))
+    assert report["schemaVersion"] == 2
+    assert report["state"] == "finished"
+    assert report["surface"] == "character"
     assert report["mode"] == "native"
     assert report["moved"] is True
     assert report["systemMoveStartReturned"] is True
@@ -539,6 +636,33 @@ def test_drag_diagnostics_are_content_free_and_persist_after_release(tmp_path):
         key.casefold() in {"x", "y", "cursor", "title", "text"}
         for key in report
     )
+    event_filter.close_drag_diagnostics_writer()
+
+
+def test_drag_diagnostics_persist_armed_phase_before_release(tmp_path):
+    QCoreApplication.instance() or QCoreApplication([])
+    root = _NativeMoveRoot()
+    report_path = tmp_path / "runtime" / "pet-drag-latest.json"
+    event_filter = CompactPointerEventFilter(root, diagnostics_path=report_path)
+
+    event_filter._reset_drag_diagnostics()
+    assert event_filter.tryStartSystemMove(811) is True
+    assert event_filter.wait_for_drag_diagnostics_write(1.0) is True
+
+    armed = json.loads(report_path.read_text("utf-8"))
+    assert armed == {
+        "activeWindowLatched": False,
+        "gestureSerial": 811,
+        "recordedAt": armed["recordedAt"],
+        "schemaVersion": 2,
+        "state": "armed",
+        "surface": "character",
+        "systemMoveWatcherReady": False,
+    }
+
+    event_filter.acknowledgeSystemMoveFinished(811)
+    assert event_filter.wait_for_drag_diagnostics_write(1.0) is True
+    assert json.loads(report_path.read_text("utf-8"))["state"] == "finished"
     event_filter.close_drag_diagnostics_writer()
 
 

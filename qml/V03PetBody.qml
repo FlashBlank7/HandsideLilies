@@ -18,6 +18,7 @@ Item {
     property bool interactionSnap: false
     property bool geometryFrozenForInteraction: false
     property real characterHeight: height * 0.70
+    readonly property real characterHitTolerance: 6.0
     property color cordColor: "#9f3129"
     property color crackColor: "#e9ffff"
     property point cordStart: supportCordPoint
@@ -1278,8 +1279,8 @@ Item {
     }
 
     function containsCharacterPoint(rootX, rootY) {
-        // QML input and Main.qml's native hit-region publisher both call this
-        // function.  During either cross-fade, accept the union of the layers
+        // This is the exact artwork mask used by geometry/asset verification.
+        // During either cross-fade, accept the union of the layers
         // that actually contribute visible pixels.  A zero-opacity incoming
         // pose therefore cannot create a hit island, while the outgoing
         // silhouette remains draggable until it has really faded away.
@@ -1293,6 +1294,36 @@ Item {
         if (1.0 - renderedArtworkBlend > 0.001) {
             var point = figureFrame.mapFromItem(root, Number(rootX), Number(rootY))
             if (silhouetteMask.contains(point))
+                return true
+        }
+        return false
+    }
+
+    function containsCharacterInteractionPoint(rootX, rootY) {
+        // The artwork mask deliberately follows the visible silhouette, but
+        // its anti-aliased fringe is not a good physical grab boundary.  A
+        // small logical-pixel dilation makes hair, sleeves and skirt edges
+        // reliably draggable without turning the surrounding transparent
+        // window rectangle into an input shield.  Native WM_NCHITTEST and the
+        // QML MouseArea both use this exact function, so neither layer can
+        // accept a press that the other subsequently drops.
+        var x = Number(rootX)
+        var y = Number(rootY)
+        if (!isFinite(x) || !isFinite(y))
+            return false
+        if (containsCharacterPoint(x, y))
+            return true
+        var tolerance = characterHitTolerance
+        var diagonal = tolerance * 0.70710678118
+        var offsets = [
+            [-tolerance, 0.0], [tolerance, 0.0],
+            [0.0, -tolerance], [0.0, tolerance],
+            [-diagonal, -diagonal], [diagonal, -diagonal],
+            [-diagonal, diagonal], [diagonal, diagonal]
+        ]
+        for (var index = 0; index < offsets.length; ++index) {
+            if (containsCharacterPoint(
+                        x + offsets[index][0], y + offsets[index][1]))
                 return true
         }
         return false
@@ -2310,7 +2341,7 @@ Item {
     QtObject {
         id: unifiedCharacterMask
         function contains(point: point): bool {
-            return root.containsCharacterPoint(point.x, point.y)
+            return root.containsCharacterInteractionPoint(point.x, point.y)
         }
     }
 

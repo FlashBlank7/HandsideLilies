@@ -637,6 +637,8 @@ class Backend(QObject):
         self._pet_interaction_lock_reasons: set[str] = set()
         self._pet_interaction_locked = False
         self._pet_pointer_critical_locked = False
+        self._pet_pointer_paused_timers: dict[str, tuple[bool, int]] = {}
+        self._pet_pointer_input_pulse_suspended = False
         self._pet_interaction_grace_until = 0.0
         self.pet_habitat.set_floating_mode(self._pet_float_mode)
         initial_box = self.boxLayout()
@@ -1389,6 +1391,7 @@ class Backend(QObject):
             return
         self._pet_pointer_critical_locked = pointer_critical
         if pointer_critical:
+            self._pause_pointer_critical_runtime()
             self.companion.set_interaction_suspended(True)
             self._companion_interaction_suspended = True
             # A native catalogue walk consists of many short ctypes calls and
@@ -1409,6 +1412,79 @@ class Backend(QObject):
             # the radial menu lock active, and an explicit Companion action
             # from that menu must not reject itself as "suspended".
             self._resume_companion_after_pet_interaction()
+            self._resume_pointer_critical_runtime()
+
+    def _pause_pointer_critical_runtime(self) -> None:
+        """Remove recurring Python/Qt wakeups from a held native gesture."""
+
+        if self._pet_pointer_paused_timers:
+            return
+        # Keep the liveness heartbeat and recovery monitor running: a long,
+        # intentional drag must not be reported as a frozen GUI, and safety
+        # timers must retain their own cancellation/generation semantics.
+        # Only the recurring projection/productivity work that can compete
+        # with DWM is paused here.
+        for name in (
+            "_v03_timer",
+            "_productivity_timer",
+        ):
+            timer = getattr(self, name, None)
+            if timer is None:
+                continue
+            try:
+                active = bool(timer.isActive())
+            except (AttributeError, RuntimeError, TypeError):
+                active = False
+            if not active:
+                continue
+            try:
+                single_shot = bool(timer.isSingleShot())
+            except (AttributeError, RuntimeError, TypeError):
+                single_shot = False
+            try:
+                remaining = int(timer.remainingTime())
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                remaining = -1
+            self._pet_pointer_paused_timers[name] = (
+                single_shot,
+                max(1, remaining) if single_shot else 0,
+            )
+            try:
+                timer.stop()
+            except (AttributeError, RuntimeError):
+                self._pet_pointer_paused_timers.pop(name, None)
+        try:
+            self.input_pulse.set_interaction_suspended(True)
+            self._pet_pointer_input_pulse_suspended = True
+        except (AttributeError, RuntimeError):
+            self._pet_pointer_input_pulse_suspended = False
+
+    def _resume_pointer_critical_runtime(self) -> None:
+        """Resume paused services at full intervals, never with a catch-up burst."""
+
+        paused = self._pet_pointer_paused_timers
+        self._pet_pointer_paused_timers = {}
+        if self._shutdown_in_progress or self._shutdown_complete:
+            self._pet_pointer_input_pulse_suspended = False
+            return
+        if self._pet_pointer_input_pulse_suspended:
+            try:
+                self.input_pulse.set_interaction_suspended(False)
+            except (AttributeError, RuntimeError):
+                pass
+            self._pet_pointer_input_pulse_suspended = False
+        for name, (single_shot, remaining) in paused.items():
+            timer = getattr(self, name, None)
+            if timer is None:
+                continue
+            try:
+                if single_shot:
+                    timer.start(max(1, int(remaining)))
+                else:
+                    timer.start()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+        self._recordRuntimeHeartbeat()
 
     def _resume_companion_after_pet_interaction(self) -> None:
         """Resume companionship after the pointer-critical owner releases."""
@@ -2110,6 +2186,12 @@ class Backend(QObject):
         )
 
     def _pump_v03(self) -> None:
+        # Pointer-critical ownership normally stops this timer outright. Keep
+        # the guard first for direct test calls and an already-posted timeout:
+        # even draining WinEventHub here would invoke every Python subscriber
+        # inside User32's native move loop.
+        if self._pet_interaction_locked:
+            return
         now = time.monotonic()
         woke_from_sleep = now - self._last_v03_pump_at > 90.0
         self._last_v03_pump_at = now
@@ -2137,13 +2219,6 @@ class Backend(QObject):
                 )
             elif catalog_due and not committed_pending_catalog:
                 self._request_window_catalog_refresh(now)
-        # Keep the 75 ms timer out of the render-critical gesture. Foreground
-        # privacy transitions arrive through their event callbacks; the next
-        # ordinary tick safely projects habitat stability, avoidance and input
-        # pulse after release. Without this guard stableSeconds changed on
-        # every tick and emitted a large QVariantMap into the QML pose tree.
-        if self._pet_interaction_locked:
-            return
         habitat = self._sync_habitat_state()
         self._pump_pet_avoidance(now)
         # A producer may have completed while the state remained suppressed;

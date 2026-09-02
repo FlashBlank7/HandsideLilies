@@ -11,7 +11,7 @@ if ([string]::IsNullOrWhiteSpace($Executable)) {
     $Executable = Join-Path $ProjectRoot 'dist\LiliesInTheBox\LiliesInTheBox.exe'
 }
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
-    $ReportPath = Join-Path $ProjectRoot 'artifacts\packaged-windows-startup-v0346.json'
+    $ReportPath = Join-Path $ProjectRoot 'artifacts\packaged-windows-startup-v0347.json'
 }
 $Executable = [IO.Path]::GetFullPath($Executable)
 $ReportPath = [IO.Path]::GetFullPath($ReportPath)
@@ -182,6 +182,9 @@ foreach ($name in @(
     'nativeRadialWorldHit',
     'nativeDesktopModeTabHit',
     'nativeTransparentCornerPass',
+    'systemMoveWatcherReady',
+    'systemMoveWatcherWindowMatches',
+    'systemMoveWatcherEventsObserved',
     'rootNoActivateStyle',
     'petNoActivateStyle',
     'eventLoopResponsive',
@@ -196,6 +199,10 @@ if ((Get-RequiredJsonInteger $report 'nativeDesktopModeTabHitResult') -ne 1) {
 if ([int]$report.nativeHitTestCount -lt 1 -or
     [int]$report.nativeDispatchCount -lt [int]$report.nativeHitTestCount) {
     throw 'Windows startup probe did not traverse the native event filter.'
+}
+if ((Get-RequiredJsonInteger $report 'systemMoveWatcherStartCount') -lt 1 -or
+    (Get-RequiredJsonInteger $report 'systemMoveWatcherEndCount') -lt 1) {
+    throw 'Windows startup probe did not traverse the native move watcher.'
 }
 if ([int]$report.eventLoopTicks -lt 4) {
     throw 'Windows startup probe did not demonstrate a responsive Qt event loop.'

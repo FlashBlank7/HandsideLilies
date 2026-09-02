@@ -127,7 +127,9 @@ def test_75ms_projection_work_is_suspended_during_pet_drag(
         monkeypatch.setattr(
             backend.window_catalog,
             "pump",
-            lambda *_args, **_kwargs: False,
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("drag tick drained WinEventHub/window catalogue")
+            ),
         )
         backend.setPetInteractionLock("drag", True)
         monkeypatch.setattr(
@@ -154,6 +156,42 @@ def test_75ms_projection_work_is_suspended_during_pet_drag(
 
         backend._pump_v03()
     finally:
+        backend.shutdown()
+        app.processEvents()
+
+
+def test_pointer_critical_lock_stops_and_restores_recurring_qt_timers(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
+    app = QApplication.instance() or QApplication([])
+    backend = Backend(smoke=True, force_compact=True)
+    timer_names = (
+        "_v03_timer",
+        "_productivity_timer",
+    )
+    try:
+        assert all(getattr(backend, name).isActive() for name in timer_names)
+
+        backend.setPetInteractionLock("character", True)
+
+        assert backend._pet_pointer_critical_locked is True
+        assert all(not getattr(backend, name).isActive() for name in timer_names)
+        assert set(timer_names).issubset(backend._pet_pointer_paused_timers)
+        assert backend._pet_pointer_input_pulse_suspended is True
+        assert backend.input_pulse._interaction_suspended is True
+        assert backend._runtime_heartbeat_timer.isActive() is True
+        assert backend._shell_monitor.isActive() is True
+
+        backend.setPetInteractionLock("character", False)
+
+        assert backend._pet_pointer_critical_locked is False
+        assert all(getattr(backend, name).isActive() for name in timer_names)
+        assert backend._pet_pointer_paused_timers == {}
+        assert backend._pet_pointer_input_pulse_suspended is False
+        assert backend.input_pulse._interaction_suspended is False
+    finally:
+        backend.clearPetInteractionLocks()
         backend.shutdown()
         app.processEvents()
 

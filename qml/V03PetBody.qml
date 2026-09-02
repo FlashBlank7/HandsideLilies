@@ -1480,6 +1480,35 @@ Item {
             requestPaint()
         }
 
+        // A held local drag is already coalesced to one scene update per
+        // display frame. Reposition the existing nodes in place so moving the
+        // box or resize handle does not allocate a new JS rope twice per axis.
+        function reflowCord() {
+            var count = Math.max(12, Math.min(16, root.cordNodeCount))
+            if (nodes.length !== count) {
+                resetCord()
+                return
+            }
+            var start = startPoint()
+            var end = endPoint()
+            var dx = end.x - start.x
+            var dy = end.y - start.y
+            var straightLength = Math.max(1, Math.sqrt(dx * dx + dy * dy))
+            segmentLength = straightLength * 1.055 / (count - 1)
+            for (var i = 0; i < count; ++i) {
+                var ratio = i / (count - 1)
+                var sag = Math.sin(ratio * Math.PI) * Math.min(
+                    root.height * 0.045, straightLength * 0.11)
+                var px = start.x + dx * ratio
+                var py = start.y + dy * ratio + sag
+                nodes[i].x = px
+                nodes[i].y = py
+                nodes[i].oldX = px
+                nodes[i].oldY = py
+            }
+            requestPaint()
+        }
+
         function pinEndpoints() {
             if (nodes.length < 2)
                 return
@@ -1573,12 +1602,14 @@ Item {
         }
 
         Component.onCompleted: resetCord()
-        onWidthChanged: resetCord()
-        onHeightChanged: resetCord()
+        onWidthChanged: root.paused ? reflowCord() : resetCord()
+        onHeightChanged: root.paused ? reflowCord() : resetCord()
     }
 
-    onCordStartChanged: supportCord.resetCord()
-    onCordEndChanged: supportCord.resetCord()
+    onCordStartChanged: root.paused
+                        ? supportCord.reflowCord() : supportCord.resetCord()
+    onCordEndChanged: root.paused
+                      ? supportCord.reflowCord() : supportCord.resetCord()
     onCordNodeCountChanged: supportCord.resetCord()
 
     Item {

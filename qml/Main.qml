@@ -329,7 +329,9 @@ Window {
         // During a held resize the handle can enter another monitor before
         // the much larger window centre does.  Fit against the pointer's
         // screen so a mixed-DPI seam cannot resize one frame late.
-        var area = workAreaAt(areaX, areaY)
+        var area = petWindow.resizeDragActive
+                ? petWindow.dragWorkAreaAt(areaX, areaY)
+                : workAreaAt(areaX, areaY)
         var desired = compactBoxSize + Number(delta)
         preferredCompactBoxSize = Math.max(compactMinimumSize,
             Math.min(compactMaximumSize, desired))
@@ -1799,10 +1801,39 @@ Window {
         property real dragFallbackPointerY: 0
         property var dragWorkArea: ({})
         property bool dragWorkAreaValid: false
+        // Local controls keep their counters in QML and report them once on
+        // release. This removes both Python event filters from a held local
+        // gesture without replacing the saved work with per-packet telemetry.
+        property int localGestureDepth: 0
         // app.py installs a QObject bridge whose PySide slot preserves the
         // QWindow boolean independently of the QML method signature and owns
         // the matching WM_EXITSIZEMOVE gesture serial.
         property var nativeMoveController: null
+        readonly property string compactDragSnapshotKey: [
+            "proxy-v2",
+            Math.round(compactWindow.boxSize * 100),
+            Math.round(compactWindow.accessoryDx * 1000),
+            Math.round(compactWindow.accessoryDy * 1000),
+            Math.round(compactWindow.accessoryScale * 1000),
+            String(compactLilith.pose || ""),
+            String(compactLilith.outfitId || ""),
+            Math.round(compactLilith.renderedArtworkBlend * 100),
+            String(desktop.petPresenceState || "desktop"),
+            compactLilith.habitatLayoutActive ? 1 : 0,
+            String(compactLilith.habitatProfile || "desktop"),
+            String(compactLilith.habitatStrategy || "desktop"),
+            String(compactLilith.habitatPoseVariant || "desktop-prayer"),
+            compactLilith.habitatMirror ? 1 : 0,
+            Math.round(compactLilith.habitatCharacterScale * 10000),
+            Math.round(compactLilith.habitatAnchorNormX * 10000),
+            Math.round(compactLilith.habitatAnchorNormY * 10000),
+            Math.round(compactLilith.habitatContactX * 10000),
+            Math.round(compactLilith.habitatContactY * 10000),
+            String(compactLilith.habitatMotionStyle || "quiet-breathe"),
+            Math.round(compactLilith.habitatMotionPeriod * 1000),
+            Math.round(compactLilith.habitatPeekFraction * 10000),
+            compactWindow.expanded ? 1 : 0
+        ].join("|")
         property int consumedPointerEventSerial: 0
         property real lastCapturedPointerEventAt: -100000
         readonly property real presentationWindowX:
@@ -1828,6 +1859,35 @@ Window {
         }
         function characterContains(localX, localY) {
             return compactLilith.containsCharacterInteractionPoint(localX, localY)
+        }
+        function beginLocalGesture(surface) {
+            localGestureDepth += 1
+            try {
+                return Boolean(nativeMoveController
+                               && nativeMoveController.beginLocalGesture(surface))
+            } catch (error) {
+                return false
+            }
+        }
+        function endLocalGesture(surface, claimed, cancelled, rawEvents,
+                                 sceneCommits, nativeGeometryCommits) {
+            localGestureDepth = Math.max(0, localGestureDepth - 1)
+            Qt.callLater(scheduleDragProxySnapshot)
+            if (!claimed) return false
+            try {
+                return Boolean(nativeMoveController
+                    && nativeMoveController.endLocalGestureWithCounts(
+                        surface, Boolean(cancelled), Number(rawEvents),
+                        Number(sceneCommits), Number(nativeGeometryCommits)))
+            } catch (error) {
+                return false
+            }
+        }
+        function scheduleDragProxySnapshot() {
+            if (!visible || manualDragActive || resizeDragActive
+                    || localGestureDepth > 0 || compactWindow.expanded)
+                return
+            dragProxySnapshotDebounce.restart()
         }
         function detachForManualDrag() {
             compactLilith.interactionSnap = true
@@ -1878,6 +1938,7 @@ Window {
                         nativeSystemMoveGestureSerial)
                 manualDragActive = false
                 resizeDragActive = false
+                localGestureDepth = 0
                 nativeSystemMoveActive = false
                 nativeSystemMoveAttempted = false
                 nativeSystemMoveStartPending = false
@@ -2111,6 +2172,7 @@ Window {
                     compactWindow.expanded = dragMenuWasExpanded
             }
             backend.setPetInteractionLock("character", false)
+            Qt.callLater(scheduleDragProxySnapshot)
             desktop.scheduleCompactLayoutPersistence()
             if (actualMoved) {
                 Qt.callLater(function() {
@@ -2336,6 +2398,29 @@ Window {
             onTriggered: petWindow.followPointerFrame()
         }
         Timer {
+            id: dragProxySnapshotDebounce
+            interval: 850
+            repeat: false
+            onTriggered: {
+                if (!petWindow.visible || petWindow.manualDragActive
+                        || petWindow.resizeDragActive
+                        || petWindow.localGestureDepth > 0
+                        || compactWindow.expanded)
+                    return
+                try {
+                    if (petWindow.nativeMoveController
+                            && typeof petWindow.nativeMoveController
+                                .requestDragProxySnapshot === "function") {
+                        petWindow.nativeMoveController.requestDragProxySnapshot(
+                            petWindow.compactDragSnapshotKey)
+                    }
+                } catch (error) {
+                    // Cache failure is an explicit fallback, never a broken
+                    // click or a synchronous grab on the press path.
+                }
+            }
+        }
+        Timer {
             id: dragPresentationSettleTimer
             interval: 340
             repeat: false
@@ -2410,7 +2495,12 @@ Window {
                     desktop.constrainCompactPet(true)
             })
         }
-        onScreenChanged: scheduleScreenConstraint()
+        onScreenChanged: {
+            scheduleScreenConstraint()
+            scheduleDragProxySnapshot()
+        }
+        onCompactDragSnapshotKeyChanged: scheduleDragProxySnapshot()
+        Component.onCompleted: Qt.callLater(scheduleDragProxySnapshot)
 
         Item {
         id: compactWindow
@@ -2676,6 +2766,7 @@ Window {
                 pose: petPoseResolver.resolvedPose
                 paused: petWindow.manualDragActive
                         || petWindow.resizeDragActive
+                        || petWindow.localGestureDepth > 0
                         || !petWindow.visible
                         || backend.habitatState.state === "blocked"
                 lowPower: backend.habitatState.state === "silent"
@@ -2913,57 +3004,23 @@ Window {
                     property real startHandleGlobalY: 0
                     property real startFigureRight: 0
                     property real startFigureBottom: 0
-                    onActiveChanged: {
-                        backend.setPetInteractionLock("resize", active)
-                        if (active) {
-                            compactLayoutPersistTimer.stop()
-                            petWindow.resizeDragActive = true
-                            petWindow.cancelPositionAnimations()
-                            gestureStarted = true
-                            startSize = compactWindow.boxSize
-                            // scenePressPosition is stable for the whole
-                            // gesture and still refers to the press-time
-                            // window origin.  Unlike translation, it does not
-                            // reset to zero on the frame that takes the grab.
-                            startCursorX = petWindow.x
-                                    + centroid.scenePressPosition.x
-                            startCursorY = petWindow.y
-                                    + centroid.scenePressPosition.y
-                            startHandleGlobalX = petWindow.x
-                                    + petResizeHandle.x
-                                    + petResizeHandle.width / 2
-                            startHandleGlobalY = petWindow.y
-                                    + petResizeHandle.y
-                                    + petResizeHandle.height / 2
-                            startFigureRight = compactLilith.figureLeft
-                                    + compactLilith.figureWidth
-                            startFigureBottom = compactLilith.figureTop
-                                    + compactLilith.figureHeight
-                        } else if (gestureStarted) {
-                            gestureStarted = false
-                            var releaseCursor = backend.cursorPosition()
-                            var releaseArea = desktop.workAreaAt(
-                                Number(releaseCursor.x),
-                                Number(releaseCursor.y))
-                            desktop.clampDraggedFigureToArea(
-                                releaseArea, false)
-                            petWindow.resizeDragActive = false
-                            desktop.persistCompactLayout()
-                        } else {
-                            petWindow.resizeDragActive = false
-                        }
-                    }
-                    onTranslationChanged: {
-                        if (!active) return
-                        var cursor = backend.cursorPosition()
-                        var cursorX = Number(cursor.x)
-                        var cursorY = Number(cursor.y)
-                        if (!isFinite(cursorX))
-                            cursorX = startCursorX + translation.x
-                        if (!isFinite(cursorY))
-                            cursorY = startCursorY + translation.y
-                        var pointerDx = cursorX - startCursorX
-                        var pointerDy = cursorY - startCursorY
+                    property real latestTranslationX: 0
+                    property real latestTranslationY: 0
+                    property bool translationPending: false
+                    property bool nativeGestureClaimed: false
+                    property int rawEventCount: 0
+                    property int sceneCommitCount: 0
+                    property int nativeGeometryCommitCount: 0
+                    function flushPendingTranslation() {
+                        if (!translationPending)
+                            return false
+                        translationPending = false
+                        if (!gestureStarted)
+                            return false
+                        var pointerDx = latestTranslationX
+                        var pointerDy = latestTranslationY
+                        var cursorX = startCursorX + pointerDx
+                        var cursorY = startCursorY + pointerDy
                         var delta = (pointerDx + pointerDy) * 0.42
                         var desired = startSize + delta
                         desktop.resizeCompactPetForDrag(
@@ -2973,7 +3030,7 @@ Window {
                         // the figure-relative handle position.  Counter-move
                         // the window so the exact point grabbed by the user,
                         // rather than merely the old window origin, follows
-                        // the global cursor on every frame.
+                        // the coalesced global cursor once per frame.
                         var desiredHandleX = startHandleGlobalX + pointerDx
                         var desiredHandleY = startHandleGlobalY + pointerDy
                         // figureLeft/figureWidth ultimately depend on
@@ -2992,7 +3049,103 @@ Window {
                         petWindow.moveWindowForDrag(
                             desiredHandleX - nextHandleLocalX,
                             desiredHandleY - nextHandleLocalY)
+                        sceneCommitCount += 1
+                        // One bound size change and one atomic position
+                        // request are the maximum native submissions here.
+                        nativeGeometryCommitCount += 2
+                        return true
                     }
+                    onActiveChanged: {
+                        if (active) {
+                            backend.setPetInteractionLock("resize", true)
+                            compactLayoutPersistTimer.stop()
+                            petWindow.resizeDragActive = true
+                            petWindow.cancelPositionAnimations()
+                            gestureStarted = true
+                            startSize = compactWindow.boxSize
+                            // scenePressPosition is stable for the whole
+                            // gesture and still refers to the press-time
+                            // window origin.  Unlike translation, it does not
+                            // reset to zero on the frame that takes the grab.
+                            startCursorX = petWindow.x
+                                    + centroid.scenePressPosition.x
+                            startCursorY = petWindow.y
+                                    + centroid.scenePressPosition.y
+                            petWindow.dragWorkArea = desktop.workAreaAt(
+                                startCursorX, startCursorY)
+                            petWindow.dragWorkAreaValid = true
+                            startHandleGlobalX = petWindow.x
+                                    + petResizeHandle.x
+                                    + petResizeHandle.width / 2
+                            startHandleGlobalY = petWindow.y
+                                    + petResizeHandle.y
+                                    + petResizeHandle.height / 2
+                            startFigureRight = compactLilith.figureLeft
+                                    + compactLilith.figureWidth
+                            startFigureBottom = compactLilith.figureTop
+                                    + compactLilith.figureHeight
+                            // DragHandler.translation is scene-relative. Once
+                            // this gesture moves/resizes its own QWindow, Qt
+                            // can fold the changed window origin back into the
+                            // next translation and make the held corner race
+                            // ahead. Reconstruct the global logical pointer
+                            // from the current window + centroid instead; this
+                            // stays stable without a Python cursor poll.
+                            latestTranslationX = petWindow.x
+                                    + centroid.scenePosition.x - startCursorX
+                            latestTranslationY = petWindow.y
+                                    + centroid.scenePosition.y - startCursorY
+                            translationPending = true
+                            rawEventCount = 0
+                            sceneCommitCount = 0
+                            nativeGeometryCommitCount = 0
+                            nativeGestureClaimed = petWindow.beginLocalGesture(
+                                "resize")
+                        } else if (gestureStarted) {
+                            flushPendingTranslation()
+                            gestureStarted = false
+                            var releaseArea = petWindow.dragWorkAreaAt(
+                                startCursorX + latestTranslationX,
+                                startCursorY + latestTranslationY)
+                            desktop.clampDraggedFigureToArea(
+                                releaseArea, false)
+                            petWindow.resizeDragActive = false
+                            petWindow.dragWorkAreaValid = false
+                            desktop.persistCompactLayout()
+                            petWindow.endLocalGesture(
+                                "resize", nativeGestureClaimed, false,
+                                rawEventCount, sceneCommitCount,
+                                nativeGeometryCommitCount)
+                            nativeGestureClaimed = false
+                            backend.setPetInteractionLock("resize", false)
+                        } else {
+                            petWindow.resizeDragActive = false
+                            petWindow.dragWorkAreaValid = false
+                            backend.setPetInteractionLock("resize", false)
+                        }
+                    }
+                    onTranslationChanged: {
+                        if (!active) return
+                        latestTranslationX = petWindow.x
+                                + centroid.scenePosition.x - startCursorX
+                        latestTranslationY = petWindow.y
+                                + centroid.scenePosition.y - startCursorY
+                        translationPending = true
+                        rawEventCount += 1
+                    }
+                    Component.onDestruction: {
+                        if (nativeGestureClaimed) {
+                            petWindow.endLocalGesture(
+                                "resize", true, true, rawEventCount,
+                                sceneCommitCount, nativeGeometryCommitCount)
+                            nativeGestureClaimed = false
+                        }
+                    }
+                }
+                FrameAnimation {
+                    running: petResizeDrag.active
+                             && petResizeDrag.translationPending
+                    onTriggered: petResizeDrag.flushPendingTranslation()
                 }
                 WheelHandler {
                     onWheel: function(event) {
@@ -3158,25 +3311,85 @@ Window {
                         id: componentMoveDrag
                         target: null
                         dragThreshold: 4
+                        enabled: !compactWindow.actionGridMode
                         acceptedButtons: Qt.RightButton
+                        property real latestTranslationX: 0
+                        property real latestTranslationY: 0
+                        property bool translationPending: false
+                        property bool gestureStarted: false
+                        property bool nativeGestureClaimed: false
+                        property int rawEventCount: 0
+                        property int sceneCommitCount: 0
+                        function flushPendingTranslation() {
+                            if (!translationPending)
+                                return false
+                            translationPending = false
+                            componentButton.offsetX = Math.max(
+                                -1.32, Math.min(1.32,
+                                    componentButton.dragStartOffsetX
+                                    + latestTranslationX
+                                      / compactWindow.boxSize))
+                            componentButton.offsetY = Math.max(
+                                -1.26, Math.min(1.26,
+                                    componentButton.dragStartOffsetY
+                                    + latestTranslationY
+                                      / compactWindow.boxSize))
+                            sceneCommitCount += 1
+                            return true
+                        }
                         onActiveChanged: {
-                            backend.setPetInteractionLock(
-                                "component-" + String(modelData.action), active)
                             if (active) {
+                                backend.setPetInteractionLock(
+                                    "component-" + String(modelData.action), true)
                                 componentButton.dragStartOffsetX = componentButton.offsetX
                                 componentButton.dragStartOffsetY = componentButton.offsetY
-                            } else {
-                                backend.saveComponentLayout(modelData.action, componentButton.offsetX,
-                                                            componentButton.offsetY, componentButton.buttonScale)
+                                latestTranslationX = Number(translation.x)
+                                latestTranslationY = Number(translation.y)
+                                translationPending = true
+                                rawEventCount = 0
+                                sceneCommitCount = 0
+                                gestureStarted = true
+                                nativeGestureClaimed = petWindow.beginLocalGesture(
+                                    "action")
+                            } else if (gestureStarted) {
+                                flushPendingTranslation()
+                                if (!compactWindow.actionGridMode) {
+                                    backend.saveComponentLayout(
+                                        modelData.action,
+                                        componentButton.offsetX,
+                                        componentButton.offsetY,
+                                        componentButton.buttonScale)
+                                }
+                                gestureStarted = false
+                                petWindow.endLocalGesture(
+                                    "action", nativeGestureClaimed, false,
+                                    rawEventCount, sceneCommitCount, 0)
+                                nativeGestureClaimed = false
+                                backend.setPetInteractionLock(
+                                    "component-" + String(modelData.action), false)
                             }
                         }
                         onTranslationChanged: {
                             if (!active) return
-                            componentButton.offsetX = Math.max(-1.32, Math.min(1.32,
-                                componentButton.dragStartOffsetX + translation.x / compactWindow.boxSize))
-                            componentButton.offsetY = Math.max(-1.26, Math.min(1.26,
-                                componentButton.dragStartOffsetY + translation.y / compactWindow.boxSize))
+                            latestTranslationX = Number(translation.x)
+                            latestTranslationY = Number(translation.y)
+                            translationPending = true
+                            rawEventCount += 1
                         }
+                        Component.onDestruction: {
+                            if (nativeGestureClaimed) {
+                                petWindow.endLocalGesture(
+                                    "action", true, true, rawEventCount,
+                                    sceneCommitCount, 0)
+                                nativeGestureClaimed = false
+                            }
+                        }
+                    }
+                    FrameAnimation {
+                        running: componentMoveDrag.active
+                                 && componentMoveDrag.translationPending
+                        onTriggered:
+                            componentMoveDrag.flushPendingTranslation()
                     }
                     WheelHandler {
                         enabled: compactWindow.actionsInteractive && actionClick.containsMouse
@@ -3259,19 +3472,17 @@ Window {
                     dragThreshold: 4
                     property real startDx
                     property real startDy
-                    onActiveChanged: {
-                        backend.setPetInteractionLock("accessory-drag", active)
-                        if (active) {
-                            startDx = compactWindow.accessoryDx
-                            startDy = compactWindow.accessoryDy
-                        } else {
-                            backend.saveAccessoryBoxLayout(compactWindow.accessoryDx,
-                                                           compactWindow.accessoryDy,
-                                                           compactWindow.accessoryScale)
-                        }
-                    }
-                    onTranslationChanged: {
-                        if (!active) return
+                    property real latestTranslationX: 0
+                    property real latestTranslationY: 0
+                    property bool translationPending: false
+                    property bool gestureStarted: false
+                    property bool nativeGestureClaimed: false
+                    property int rawEventCount: 0
+                    property int sceneCommitCount: 0
+                    function flushPendingTranslation() {
+                        if (!translationPending)
+                            return false
+                        translationPending = false
                         // Keep the box within the real transparent window, but
                         // use all available room.  The old fixed +/-1.2 limits
                         // stopped a normally sized box tens of pixels before
@@ -3292,11 +3503,61 @@ Window {
                                          - halfHeight - margin) / scale
                         compactWindow.accessoryDx = Math.max(
                             minimumDx, Math.min(maximumDx,
-                                startDx + translation.x / scale))
+                                startDx + latestTranslationX / scale))
                         compactWindow.accessoryDy = Math.max(
                             minimumDy, Math.min(maximumDy,
-                                startDy + translation.y / scale))
+                                startDy + latestTranslationY / scale))
+                        sceneCommitCount += 1
+                        return true
                     }
+                    onActiveChanged: {
+                        if (active) {
+                            backend.setPetInteractionLock(
+                                "accessory-drag", true)
+                            startDx = compactWindow.accessoryDx
+                            startDy = compactWindow.accessoryDy
+                            latestTranslationX = Number(translation.x)
+                            latestTranslationY = Number(translation.y)
+                            translationPending = true
+                            rawEventCount = 0
+                            sceneCommitCount = 0
+                            gestureStarted = true
+                            nativeGestureClaimed = petWindow.beginLocalGesture(
+                                "accessory")
+                        } else if (gestureStarted) {
+                            flushPendingTranslation()
+                            backend.saveAccessoryBoxLayout(compactWindow.accessoryDx,
+                                                           compactWindow.accessoryDy,
+                                                           compactWindow.accessoryScale)
+                            gestureStarted = false
+                            petWindow.endLocalGesture(
+                                "accessory", nativeGestureClaimed, false,
+                                rawEventCount, sceneCommitCount, 0)
+                            nativeGestureClaimed = false
+                            backend.setPetInteractionLock(
+                                "accessory-drag", false)
+                        }
+                    }
+                    onTranslationChanged: {
+                        if (!active) return
+                        latestTranslationX = Number(translation.x)
+                        latestTranslationY = Number(translation.y)
+                        translationPending = true
+                        rawEventCount += 1
+                    }
+                    Component.onDestruction: {
+                        if (nativeGestureClaimed) {
+                            petWindow.endLocalGesture(
+                                "accessory", true, true, rawEventCount,
+                                sceneCommitCount, 0)
+                            nativeGestureClaimed = false
+                        }
+                    }
+                }
+                FrameAnimation {
+                    running: accessoryDrag.active
+                             && accessoryDrag.translationPending
+                    onTriggered: accessoryDrag.flushPendingTranslation()
                 }
                 WheelHandler {
                     onWheel: function(event) {

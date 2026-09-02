@@ -130,7 +130,13 @@ def test_resize_tracks_the_global_pointer_and_held_handle_across_screens() -> No
     handler = source[start:end]
 
     assert "centroid.scenePressPosition.x" in handler
-    assert "var cursor = backend.cursorPosition()" in handler
+    assert "centroid.scenePosition.x - startCursorX" in handler
+    assert "centroid.scenePosition.y - startCursorY" in handler
+    assert "backend.cursorPosition()" not in handler
+    assert "var cursorX = startCursorX + pointerDx" in handler
+    assert "var cursorY = startCursorY + pointerDy" in handler
+    assert "petWindow.dragWorkArea = desktop.workAreaAt(" in handler
+    assert "petWindow.dragWorkAreaAt(" in handler
     assert "startFigureRight" in handler and "startFigureBottom" in handler
     assert "var sizeRatio = desktop.compactBoxSize" in handler
     assert "desiredHandleX - nextHandleLocalX" in handler
@@ -143,8 +149,90 @@ def test_resize_tracks_the_global_pointer_and_held_handle_across_screens() -> No
     resize_end = source.index("function openWorkPanel(", resize_start)
     resize = source[resize_start:resize_end]
     assert "interactionGlobalX" in resize and "interactionGlobalY" in resize
-    assert "var area = workAreaAt(areaX, areaY)" in resize
+    assert "? petWindow.dragWorkAreaAt(areaX, areaY)" in resize
+    assert ": workAreaAt(areaX, areaY)" in resize
     assert "clampDuringResize === undefined" in resize
+
+
+def test_local_drag_events_only_stage_the_latest_translation_for_a_frame() -> None:
+    source = _main_source()
+    forbidden_commits = {
+        "petResizeDrag": (
+            "backend.cursorPosition()",
+            "desktop.resizeCompactPetForDrag(",
+            "petWindow.moveWindowForDrag(",
+        ),
+        "componentMoveDrag": (
+            "componentButton.offsetX =",
+            "componentButton.offsetY =",
+            "backend.saveComponentLayout(",
+        ),
+        "accessoryDrag": (
+            "compactWindow.accessoryDx =",
+            "compactWindow.accessoryDy =",
+            "backend.saveAccessoryBoxLayout(",
+        ),
+    }
+
+    for handler_id, forbidden in forbidden_commits.items():
+        start = source.index(f"id: {handler_id}")
+        end = source.index("WheelHandler {", start)
+        section = source[start:end]
+        raw_start = section.index("onTranslationChanged:")
+        raw_end = section.index("}", raw_start)
+        raw_handler = section[raw_start:raw_end]
+
+        if handler_id == "petResizeDrag":
+            assert "centroid.scenePosition.x - startCursorX" in raw_handler
+            assert "centroid.scenePosition.y - startCursorY" in raw_handler
+        else:
+            assert "latestTranslationX = Number(translation.x)" in raw_handler
+            assert "latestTranslationY = Number(translation.y)" in raw_handler
+        assert "translationPending = true" in raw_handler
+        for commit in forbidden:
+            assert commit not in raw_handler
+
+        frame_start = section.index("FrameAnimation {", raw_end)
+        frame = section[frame_start:]
+        assert f"{handler_id}.translationPending" in frame
+        assert f"{handler_id}.flushPendingTranslation()" in frame
+
+
+def test_local_drag_release_flushes_before_persistence_and_unlock() -> None:
+    source = _main_source()
+    finalizers = {
+        "petResizeDrag": "desktop.persistCompactLayout()",
+        "componentMoveDrag": "backend.saveComponentLayout(",
+        "accessoryDrag": "backend.saveAccessoryBoxLayout(",
+    }
+
+    for handler_id, finalizer in finalizers.items():
+        start = source.index(f"id: {handler_id}")
+        active_start = source.index("onActiveChanged:", start)
+        active_end = source.index("onTranslationChanged:", active_start)
+        active_handler = source[active_start:active_end]
+
+        assert active_handler.index("flushPendingTranslation()") < active_handler.index(
+            finalizer
+        )
+        assert active_handler.index("flushPendingTranslation()") < active_handler.rindex(
+            "setPetInteractionLock("
+        )
+
+
+def test_grid_packed_actions_do_not_accept_or_save_right_drag_layouts() -> None:
+    source = _main_source()
+    start = source.index("id: componentMoveDrag")
+    end = source.index("WheelHandler {", start)
+    handler = source[start:end]
+    active_start = handler.index("onActiveChanged:")
+    active_end = handler.index("onTranslationChanged:", active_start)
+    active_handler = handler[active_start:active_end]
+
+    assert "enabled: !compactWindow.actionGridMode" in handler
+    guard = active_handler.index("if (!compactWindow.actionGridMode)")
+    save = active_handler.index("backend.saveComponentLayout(")
+    assert guard < save
 
 
 def test_accessory_box_uses_the_visible_window_bounds_not_fixed_early_stops() -> None:

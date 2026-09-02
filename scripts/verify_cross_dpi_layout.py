@@ -678,6 +678,12 @@ def main() -> int:
         )
         backend.offscreen_cursor = {"x": target.x(), "y": target.y()}
         QTest.mouseMove(pet_window, pet_window.mapFromGlobal(target), 2)
+        # Production coalesces high-polling pointer packets onto the Qt Quick
+        # display clock. processEvents() alone does not guarantee a rendered
+        # frame in the offscreen plugin, so let one real frame elapse before
+        # measuring the visible control instead of expecting the pre-v0.3.48
+        # synchronous per-packet mutation.
+        QTest.qWait(20)
         app.processEvents()
         center = _item_global_center(accessory_box, pet_window)
         accessory_samples.append(
@@ -742,6 +748,10 @@ def main() -> int:
         )
         backend.offscreen_cursor = {"x": target.x(), "y": target.y()}
         QTest.mouseMove(pet_window, pet_window.mapFromGlobal(target), 2)
+        # Exercise the FrameAnimation coalescer itself. This remains much
+        # slower than a real 60/120 Hz event source only because the verifier
+        # records every injected sample rather than just the latest one.
+        QTest.qWait(20)
         app.processEvents()
         center = _item_global_center(resize_handle, pet_window)
         target_area = backend.screenWorkAreaAt(float(target.x()), float(target.y()))

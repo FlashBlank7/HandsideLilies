@@ -662,7 +662,11 @@ class CompactPointerEventFilter(QObject):
         }
     )
     _SYSTEM_MOVE_MAX_HOLD_SECONDS = 180.0
-    _PROXY_PREVIEW_HIDE_DELAY_MS = 34
+    # The live QQuickWindow needs one composition frame after its opacity is
+    # restored.  Derive that bridge from refresh rate at commit time instead
+    # of keeping the proxy above the desktop for a fixed 34 ms (six frames on
+    # the current 165 Hz display).
+    _PROXY_PREVIEW_FALLBACK_HIDE_DELAY_MS = 17
     _SWP_NOSIZE = 0x0001
     _SWP_NOZORDER = 0x0004
     _SWP_NOACTIVATE = 0x0010
@@ -737,6 +741,9 @@ class CompactPointerEventFilter(QObject):
         self._proxy_bitmap_width = 0
         self._proxy_bitmap_height = 0
         self._proxy_cache_age_ms = 0.0
+        self._proxy_visual_stale = False
+        self._drag_proxy_gesture_active = False
+        self._diagnostic_phase = "idle"
         self._last_drag_diagnostics: dict[str, object] = {}
         self._system_move_release_timer = QTimer(self)
         # EVENT_SYSTEM_MOVESIZEEND is the normal completion authority. A short
@@ -755,8 +762,9 @@ class CompactPointerEventFilter(QObject):
         )
         self._proxy_preview_hide_timer = QTimer(self)
         self._proxy_preview_hide_timer.setSingleShot(True)
+        self._proxy_preview_hide_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._proxy_preview_hide_timer.setInterval(
-            self._PROXY_PREVIEW_HIDE_DELAY_MS
+            self._PROXY_PREVIEW_FALLBACK_HIDE_DELAY_MS
         )
         self._proxy_preview_hide_timer.timeout.connect(
             self._on_proxy_preview_hide_timeout
@@ -824,12 +832,22 @@ class CompactPointerEventFilter(QObject):
         return True
 
     @Slot(str, result=bool)
-    def requestDragProxySnapshot(self, semantic_key: str) -> bool:
+    @Slot(str, str, result=bool)
+    def requestDragProxySnapshot(
+        self,
+        semantic_key: str,
+        geometry_key: str = "",
+    ) -> bool:
         cache = self._drag_proxy_cache
         if cache is None or self._closing_drag_bridge:
             return False
         try:
-            return bool(cache.request(str(semantic_key or "")))
+            return bool(
+                cache.request(
+                    str(semantic_key or ""),
+                    str(geometry_key or ""),
+                )
+            )
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return False
 
@@ -987,6 +1005,30 @@ class CompactPointerEventFilter(QObject):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
 
+    def _proxy_preview_hide_delay_ms(self) -> int:
+        try:
+            refresh_rates = [
+                float(screen.refreshRate())
+                for screen in QApplication.screens()
+                if float(screen.refreshRate()) >= 30.0
+            ]
+            if refresh_rates:
+                # Qt may update root.screen() one event turn after a cross-DPI
+                # native SetWindowPos.  One frame on the slowest connected
+                # display avoids hiding the proxy before the destination has
+                # composed the restored QQuickWindow.
+                refresh_rate = min(refresh_rates)
+            else:
+                screen = self.root.screen()
+                refresh_rate = float(screen.refreshRate()) if screen else 0.0
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            refresh_rate = 0.0
+        if not math.isfinite(refresh_rate) or refresh_rate < 30.0:
+            return self._PROXY_PREVIEW_FALLBACK_HIDE_DELAY_MS
+        # One display period is enough for Qt Quick to replace the static
+        # proxy.  Clamp unusual driver reports to a small, non-sticky bridge.
+        return max(6, min(17, math.ceil(1000.0 / refresh_rate)))
+
     def _reset_proxy_watcher_target(self) -> None:
         watcher = self._system_move_end_watcher
         native_filter = self._native_drag_filter
@@ -1019,6 +1061,7 @@ class CompactPointerEventFilter(QObject):
         self._proxy_preview_hide_deadline = 0.0
         if cache is not None:
             cache.complete()
+        self._end_drag_proxy_gesture()
         return True
 
     def _on_proxy_preview_hide_timeout(self) -> None:
@@ -1052,6 +1095,7 @@ class CompactPointerEventFilter(QObject):
         cache = self._drag_proxy_cache
         if cache is not None:
             cache.cancel()
+        self._end_drag_proxy_gesture()
         self._restore_proxy_root_opacity()
         self._proxy_move_active = False
         self._proxy_root_origin_physical = None
@@ -1071,7 +1115,35 @@ class CompactPointerEventFilter(QObject):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return False
 
-    def _prepare_proxy_system_move(self) -> bool:
+    def _begin_drag_proxy_gesture(self) -> None:
+        cache = self._drag_proxy_cache
+        if cache is None or self._drag_proxy_gesture_active:
+            return
+        cache.begin_gesture()
+        self._drag_proxy_gesture_active = True
+
+    def _end_drag_proxy_gesture(self) -> None:
+        cache = self._drag_proxy_cache
+        if cache is None or not self._drag_proxy_gesture_active:
+            return
+        self._drag_proxy_gesture_active = False
+        cache.end_gesture()
+
+    @Slot(result=bool)
+    def dragProxyActive(self) -> bool:
+        return bool(self._proxy_move_active)
+
+    @Slot()
+    def endDragProxyGesture(self) -> None:
+        """Release the snapshot fence for a QML hide/cancel terminal path."""
+
+        self._end_drag_proxy_gesture()
+
+    def _prepare_proxy_system_move(
+        self,
+        semantic_key: str = "",
+        geometry_key: str = "",
+    ) -> bool:
         cache = self._drag_proxy_cache
         native_filter = self._native_drag_filter
         root_window_id = int(
@@ -1086,17 +1158,26 @@ class CompactPointerEventFilter(QObject):
         if cache is None or root_window_id <= 0:
             self._proxy_fallback_reason = "not-configured"
             return False
-        try:
-            semantic_key = str(
-                self.root.property("compactDragSnapshotKey") or ""
-            )
-        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
-            semantic_key = ""
+        self._begin_drag_proxy_gesture()
+        if not semantic_key:
+            try:
+                semantic_key = str(
+                    self.root.property("compactDragSnapshotKey") or ""
+                )
+            except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+                semantic_key = ""
+        if not geometry_key:
+            try:
+                geometry_key = str(
+                    self.root.property("compactDragGeometryKey") or ""
+                )
+            except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+                geometry_key = ""
         root_rect = self._native_window_rect(root_window_id)
         if root_rect is None:
             self._proxy_fallback_reason = "root-rect-unavailable"
             return False
-        proxy_window_id = cache.prepare(semantic_key, root_rect)
+        proxy_window_id = cache.prepare(semantic_key, root_rect, geometry_key)
         if proxy_window_id <= 0:
             self._proxy_fallback_reason = cache.last_failure or "cache-miss"
             return False
@@ -1119,6 +1200,7 @@ class CompactPointerEventFilter(QObject):
                 preview.rect.top,
             )
         if not cache.start_move():
+            cache.cancel()
             self._restore_proxy_root_opacity()
             self._reset_proxy_watcher_target()
             self._active_system_move_window_id = root_window_id
@@ -1136,6 +1218,7 @@ class CompactPointerEventFilter(QObject):
         self._diagnostic_proxy_used = True
         self._proxy_fallback_reason = ""
         self._proxy_cache_age_ms = cache.cache_age_ms
+        self._proxy_visual_stale = cache.last_prepare_used_stale_visual
         if metadata is not None:
             self._proxy_bitmap_width = metadata.pixel_size.width()
             self._proxy_bitmap_height = metadata.pixel_size.height()
@@ -1167,17 +1250,16 @@ class CompactPointerEventFilter(QObject):
         self._proxy_root_origin_physical = None
         self._reset_proxy_watcher_target()
         if cache is not None:
+            hide_delay_ms = self._proxy_preview_hide_delay_ms()
             self._proxy_preview_hide_pending = True
             self._proxy_preview_hide_generation = (
                 self._proxy_session_generation
             )
             self._proxy_preview_hide_deadline = (
                 time.perf_counter()
-                + self._PROXY_PREVIEW_HIDE_DELAY_MS / 1000.0
+                + hide_delay_ms / 1000.0
             )
-            self._proxy_preview_hide_timer.start(
-                self._PROXY_PREVIEW_HIDE_DELAY_MS
-            )
+            self._proxy_preview_hide_timer.start(hide_delay_ms)
         return committed
 
     def _sample_system_window_position(self) -> None:
@@ -1207,7 +1289,9 @@ class CompactPointerEventFilter(QObject):
     def _reset_drag_diagnostics(self) -> None:
         if self._drag_diagnostics_timer.isActive():
             self._drag_diagnostics_timer.stop()
-            self._enqueue_drag_diagnostics_write()
+            # A rapid second press must never wake the disk worker in its hot
+            # path.  This file intentionally represents only the latest
+            # gesture, so the new release may supersede an unwritten sample.
         self._drag_started_at = time.perf_counter()
         self._diagnostic_gesture_serial = 0
         self._system_move_origin_physical = None
@@ -1234,6 +1318,8 @@ class CompactPointerEventFilter(QObject):
         self._proxy_bitmap_width = 0
         self._proxy_bitmap_height = 0
         self._proxy_cache_age_ms = 0.0
+        self._proxy_visual_stale = False
+        self._diagnostic_phase = "pressed"
         self._last_drag_diagnostics = {}
 
     @classmethod
@@ -1459,27 +1545,20 @@ class CompactPointerEventFilter(QObject):
         return True
 
     def _enqueue_drag_phase(self, gesture_serial: int, state: str) -> None:
-        """Persist a content-free phase even if the release path never runs."""
+        """Latch a content-free phase without waking disk during the press."""
 
-        writer = self._diagnostics_writer
-        if writer is None or self._closing_drag_bridge:
+        if self._closing_drag_bridge or int(gesture_serial) <= 0:
             return
-        payload = {
-            "schemaVersion": 3,
-            "recordedAt": datetime.now(UTC).isoformat(),
-            "state": str(state),
-            "surface": "character",
-            "gestureSerial": max(0, int(gesture_serial)),
-            "systemMoveWatcherReady": bool(
-                self._system_move_end_watcher is not None
-                and self._system_move_end_watcher.ready
-            ),
-            "activeWindowLatched": self._active_system_move_window_id > 0,
-        }
-        self._last_diagnostics_write_sequence = writer.submit(payload)
+        self._diagnostic_phase = str(state or "unknown")
 
     @Slot(int, result=bool)
-    def tryStartSystemMove(self, gesture_serial: int) -> bool:
+    @Slot(int, str, str, result=bool)
+    def tryStartSystemMove(
+        self,
+        gesture_serial: int,
+        semantic_key: str = "",
+        geometry_key: str = "",
+    ) -> bool:
         """Start the compositor-owned move and preserve its support result.
 
         Keeping this tiny bridge in Python gives QML one unambiguous boolean
@@ -1517,7 +1596,10 @@ class CompactPointerEventFilter(QObject):
         # has already established ownership, so remove that filter for the
         # held gesture and restore it at the first completion boundary.
         self._suspend_native_drag_filter()
-        started = self._prepare_proxy_system_move()
+        started = self._prepare_proxy_system_move(
+            str(semantic_key or ""),
+            str(geometry_key or ""),
+        )
         if not started:
             try:
                 started = bool(self.root.startSystemMove())
@@ -1729,10 +1811,12 @@ class CompactPointerEventFilter(QObject):
             "proxyBitmapWidth": self._proxy_bitmap_width,
             "proxyBitmapHeight": self._proxy_bitmap_height,
             "proxyCacheAgeMs": round(self._proxy_cache_age_ms, 3),
+            "proxyVisualStale": bool(self._proxy_visual_stale),
             "proxyFallbackReason": self._proxy_fallback_reason,
             "completionWatchdogPolls": self._completion_watchdog_polls,
             "completionQueuedBy": self._completion_queued_by,
             "completionDeliveryRetries": self._completion_delivery_retries,
+            "lastNativePhase": self._diagnostic_phase,
             "systemMoveWatcherReady": bool(
                 self._system_move_end_watcher is not None
                 and self._system_move_end_watcher.ready
@@ -1743,6 +1827,7 @@ class CompactPointerEventFilter(QObject):
             "screenRefreshRate": round(refresh_rate, 3),
         }
         self._schedule_drag_diagnostics_write()
+        self._end_drag_proxy_gesture()
 
     @Slot(result="QVariantMap")
     def dragDiagnosticsSnapshot(self) -> dict[str, object]:
@@ -1812,6 +1897,7 @@ class CompactPointerEventFilter(QObject):
         if proxy_cache is not None:
             proxy_cache.close()
             self._drag_proxy_cache = None
+        self._drag_proxy_gesture_active = False
         self._closing_drag_bridge = True
         self._active_system_move_serial = 0
         self._active_system_move_window_id = 0
@@ -1862,6 +1948,7 @@ class CompactPointerEventFilter(QObject):
             self._system_move_watchdog_started_at = 0.0
             self._system_move_release_timer.stop()
             self._resume_native_drag_filter()
+            self._end_drag_proxy_gesture()
 
     @Slot(int, result="QVariantMap")
     def takeLatestPointerEvent(self, after_serial: int) -> dict[str, object]:
@@ -2012,6 +2099,7 @@ class CompactPointerEventFilter(QObject):
             self._active_system_move_serial = 0
             self._active_system_move_window_id = 0
             self._system_move_release_timer.stop()
+            self._end_drag_proxy_gesture()
             return
         try:
             accepted = callback(gesture_serial)
@@ -2024,6 +2112,7 @@ class CompactPointerEventFilter(QObject):
             self._active_system_move_window_id = 0
             self._system_move_watchdog_started_at = 0.0
             self._system_move_release_timer.stop()
+            self._end_drag_proxy_gesture()
             return
         self._completion_delivery_retries += 1
         force_callback = getattr(self.root, "forceFinishNativeSystemMove", None)
@@ -2037,6 +2126,7 @@ class CompactPointerEventFilter(QObject):
                 self._active_system_move_window_id = 0
                 self._system_move_watchdog_started_at = 0.0
                 self._system_move_release_timer.stop()
+                self._end_drag_proxy_gesture()
                 return
         if self._completion_delivery_retries < 3:
             QTimer.singleShot(
@@ -2054,6 +2144,7 @@ class CompactPointerEventFilter(QObject):
         self._system_move_watchdog_started_at = 0.0
         self._system_move_release_timer.stop()
         self._resume_native_drag_filter()
+        self._end_drag_proxy_gesture()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.root and event.type() == QEvent.Type.WinIdChange:
@@ -3169,7 +3260,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.48")
+    app.setApplicationVersion("0.3.49")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:

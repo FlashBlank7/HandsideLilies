@@ -344,6 +344,8 @@ class _ProxyMoveRoot(_NativeMoveRoot):
     def property(self, key):
         if key == "compactDragSnapshotKey":
             return "pose|size|box"
+        if key == "compactDragGeometryKey":
+            return "body-geometry"
         return super().property(key)
 
     def opacity(self):
@@ -371,19 +373,28 @@ class _ProxyCache:
             else bool(start_move_succeeds)
         )
         self.last_failure = "stale-key" if not prepared else ""
+        self.last_prepare_used_stale_visual = False
         self.cache_age_ms = 18.5
         self.metadata = SimpleNamespace(pixel_size=QSize(180, 240))
         self.active = False
         self.completed = 0
         self.cancelled = 0
         self.native_move_cancels = 0
+        self.gesture_active = False
         self.final = SimpleNamespace(
             rect=SimpleNamespace(left=120, top=240),
             delta=SimpleNamespace(x=0, y=0),
         )
 
-    def prepare(self, key, root_rect):
+    def begin_gesture(self):
+        self.gesture_active = True
+
+    def end_gesture(self):
+        self.gesture_active = False
+
+    def prepare(self, key, root_rect, geometry_key):
         assert key == "pose|size|box"
+        assert geometry_key == "body-geometry"
         assert root_rect.left == 100 and root_rect.top == 200
         if not self.prepared:
             return 0
@@ -475,6 +486,7 @@ def test_cached_proxy_moves_only_preview_then_commits_real_window_once(
         native_window_id=root_window_id
     )
     cache = _ProxyCache()
+    cache.last_prepare_used_stale_visual = True
     event_filter._drag_proxy_cache = cache
     monkeypatch.setattr(
         event_filter,
@@ -507,6 +519,7 @@ def test_cached_proxy_moves_only_preview_then_commits_real_window_once(
     assert root.opacity_value == 1.0
     assert event_filter._proxy_real_geometry_commits == 1
     event_filter.acknowledgeSystemMoveFinished(361)
+    assert cache.gesture_active is False
 
     report = event_filter.dragDiagnosticsSnapshot()
     assert report["mode"] == "layered-proxy"
@@ -514,6 +527,7 @@ def test_cached_proxy_moves_only_preview_then_commits_real_window_once(
     assert report["proxyBitmapWidth"] == 180
     assert report["proxyBitmapHeight"] == 240
     assert report["proxyCacheAgeMs"] == 18.5
+    assert report["proxyVisualStale"] is True
     event_filter._complete_proxy_preview()
     assert cache.completed == 1
 
@@ -552,6 +566,7 @@ def test_interrupted_proxy_ack_cancels_native_loop_before_commit(monkeypatch) ->
     assert cache.native_move_cancels == 1
     assert event_filter._proxy_move_active is False
     assert root.opacity_value == 1.0
+    assert cache.gesture_active is False
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
@@ -582,6 +597,36 @@ def test_stale_proxy_falls_back_without_hiding_or_losing_root_system_move(
     assert event_filter._proxy_fallback_reason == "stale-key"
     event_filter.acknowledgeSystemMoveFinished(362)
     assert event_filter.dragDiagnosticsSnapshot()["mode"] == "native"
+    assert cache.gesture_active is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
+def test_hidden_direct_fallback_can_explicitly_release_snapshot_fence(
+    monkeypatch,
+) -> None:
+    root = _ProxyMoveRoot()
+    root.startSystemMove = lambda: False
+    event_filter = CompactPointerEventFilter(root)
+    event_filter._native_drag_filter = SimpleNamespace(
+        native_window_id=2**48 + 82
+    )
+    cache = _ProxyCache(prepared=False)
+    event_filter._drag_proxy_cache = cache
+    monkeypatch.setattr(
+        event_filter,
+        "_native_window_rect",
+        lambda _window_id: SimpleNamespace(
+            left=100, top=200, right=520, bottom=596
+        ),
+    )
+
+    event_filter._reset_drag_diagnostics()
+    assert event_filter.tryStartSystemMove(366) is False
+    assert cache.gesture_active is True
+    assert event_filter._active_system_move_serial == 0
+
+    event_filter.endDragProxyGesture()
+    assert cache.gesture_active is False
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
@@ -1095,7 +1140,7 @@ def test_drag_diagnostics_are_content_free_and_persist_after_release(tmp_path):
     event_filter.close_drag_diagnostics_writer()
 
 
-def test_drag_diagnostics_persist_armed_phase_before_release(tmp_path):
+def test_drag_diagnostics_keep_armed_phase_in_memory_until_release(tmp_path):
     QCoreApplication.instance() or QCoreApplication([])
     root = _NativeMoveRoot()
     report_path = tmp_path / "runtime" / "pet-drag-latest.json"
@@ -1103,22 +1148,14 @@ def test_drag_diagnostics_persist_armed_phase_before_release(tmp_path):
 
     event_filter._reset_drag_diagnostics()
     assert event_filter.tryStartSystemMove(811) is True
-    assert event_filter.wait_for_drag_diagnostics_write(1.0) is True
-
-    armed = json.loads(report_path.read_text("utf-8"))
-    assert armed == {
-        "activeWindowLatched": False,
-        "gestureSerial": 811,
-        "recordedAt": armed["recordedAt"],
-        "schemaVersion": 3,
-        "state": "armed",
-        "surface": "character",
-        "systemMoveWatcherReady": False,
-    }
+    assert event_filter._diagnostic_phase == "armed"
+    assert not report_path.exists()
 
     event_filter.acknowledgeSystemMoveFinished(811)
     assert event_filter.wait_for_drag_diagnostics_write(1.0) is True
-    assert json.loads(report_path.read_text("utf-8"))["state"] == "finished"
+    finished = json.loads(report_path.read_text("utf-8"))
+    assert finished["state"] == "finished"
+    assert finished["lastNativePhase"] == "armed"
     event_filter.close_drag_diagnostics_writer()
 
 
@@ -1227,7 +1264,7 @@ def test_drag_diagnostics_writer_survives_an_unexpected_worker_exception(
     assert writer.submit({"marker": 3}) == 0
 
 
-def test_new_press_flushes_pending_drag_diagnostic_without_gui_file_io(
+def test_new_press_supersedes_pending_drag_diagnostic_without_disk_wakeup(
     tmp_path,
 ):
     root = _NativeMoveRoot()
@@ -1249,6 +1286,9 @@ def test_new_press_flushes_pending_drag_diagnostic_without_gui_file_io(
     )
     assert event_filter.eventFilter(root, next_press) is False
     assert not event_filter._drag_diagnostics_timer.isActive()
+    assert not report_path.exists()
+
+    event_filter.completeGestureDiagnostics(92, False, False, False)
     assert event_filter.wait_for_drag_diagnostics_write(1.0)
-    assert json.loads(report_path.read_text("utf-8"))["gestureSerial"] == 91
+    assert json.loads(report_path.read_text("utf-8"))["gestureSerial"] == 92
     event_filter.close_drag_diagnostics_writer()

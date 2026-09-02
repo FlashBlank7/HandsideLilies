@@ -17,8 +17,16 @@ def test_compact_pet_uses_idle_and_interaction_animation_cadences() -> None:
     source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
 
     assert "readonly property bool highMotion: expanded" in source
-    assert "|| compactLilith.characterHovered" in source
-    assert "|| backend.boxWorldSceneOpen" in source
+    high_motion_start = source.index("readonly property bool highMotion: expanded")
+    high_motion_end = source.index(
+        "readonly property real quietBreath:", high_motion_start
+    )
+    high_motion = source[high_motion_start:high_motion_end]
+    # Mere hover must not wake the full 60 FPS tree immediately before a
+    # press; the held press itself and real interactive surfaces still do.
+    assert "compactLilith.characterHovered" not in high_motion
+    assert "compactLilith.characterPressed" in high_motion
+    assert "|| backend.boxWorldSceneOpen" in high_motion
     assert "|| !compactWindow.highMotion" in source
     assert "readonly property real quietBreath:" in source
 

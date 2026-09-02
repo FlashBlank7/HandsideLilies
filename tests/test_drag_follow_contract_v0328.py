@@ -13,7 +13,7 @@ def _main_source() -> str:
 def test_direct_character_drag_uses_the_atomic_window_position_bridge() -> None:
     source = _main_source()
     helper_start = source.index("function moveWindowForDrag(targetX, targetY)")
-    helper_end = source.index("function tryNativeSystemMove()", helper_start)
+    helper_end = source.index("function tryNativeSystemMove(", helper_start)
     helper = source[helper_start:helper_end]
     follow_start = source.index("function followPointerAt(")
     follow_end = source.index("function consumePointerEvent(", follow_start)

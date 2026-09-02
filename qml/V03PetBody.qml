@@ -1446,6 +1446,16 @@ Item {
 
         property var nodes: []
         property real segmentLength: 1.0
+        // Several bindings can move both cord endpoints and resize this
+        // Canvas in one QML event turn.  A paused cord has no frame clock to
+        // absorb that burst, so commit one final geometry update after all
+        // bindings have settled instead of rebuilding/repainting per signal.
+        property bool geometryUpdatePending: false
+        property bool geometryUpdateNeedsReset: false
+        // Internal diagnostic used by the focused off-screen contract test.
+        // It is deliberately incremented only when geometry is committed,
+        // not whenever an input binding requests an update.
+        property int geometryCommitCount: 0
 
         function startPoint() {
             return root.normalizedPoint(root.cordStart,
@@ -1477,6 +1487,7 @@ Item {
                 nextNodes.push({"x": px, "y": py, "oldX": px, "oldY": py})
             }
             nodes = nextNodes
+            geometryCommitCount += 1
             requestPaint()
         }
 
@@ -1506,7 +1517,41 @@ Item {
                 nodes[i].oldX = px
                 nodes[i].oldY = py
             }
+            geometryCommitCount += 1
             requestPaint()
+        }
+
+        function scheduleGeometryUpdate(resetRequired) {
+            // Keep the live Verlet path unchanged: while animation is active,
+            // endpoint changes reset immediately and motionClock continues to
+            // advance the fresh node set on its normal cadence.
+            if (!root.paused) {
+                geometryUpdatePending = false
+                geometryUpdateNeedsReset = false
+                resetCord()
+                return
+            }
+
+            geometryUpdateNeedsReset = geometryUpdateNeedsReset
+                                       || Boolean(resetRequired)
+            if (geometryUpdatePending)
+                return
+            geometryUpdatePending = true
+            Qt.callLater(flushScheduledGeometryUpdate)
+        }
+
+        function flushScheduledGeometryUpdate() {
+            // A live update may already have cancelled and committed this
+            // request before the queued callback gets its turn.
+            if (!geometryUpdatePending)
+                return
+            var needsReset = geometryUpdateNeedsReset
+            geometryUpdatePending = false
+            geometryUpdateNeedsReset = false
+            if (!root.paused || needsReset)
+                resetCord()
+            else
+                reflowCord()
         }
 
         function pinEndpoints() {
@@ -1601,16 +1646,14 @@ Item {
             context.globalAlpha = 1.0
         }
 
-        Component.onCompleted: resetCord()
-        onWidthChanged: root.paused ? reflowCord() : resetCord()
-        onHeightChanged: root.paused ? reflowCord() : resetCord()
+        Component.onCompleted: scheduleGeometryUpdate(true)
+        onWidthChanged: scheduleGeometryUpdate(false)
+        onHeightChanged: scheduleGeometryUpdate(false)
     }
 
-    onCordStartChanged: root.paused
-                        ? supportCord.reflowCord() : supportCord.resetCord()
-    onCordEndChanged: root.paused
-                      ? supportCord.reflowCord() : supportCord.resetCord()
-    onCordNodeCountChanged: supportCord.resetCord()
+    onCordStartChanged: supportCord.scheduleGeometryUpdate(false)
+    onCordEndChanged: supportCord.scheduleGeometryUpdate(false)
+    onCordNodeCountChanged: supportCord.scheduleGeometryUpdate(true)
 
     Item {
         id: poseArtworkFrame

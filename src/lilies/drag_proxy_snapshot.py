@@ -3,14 +3,15 @@ from __future__ import annotations
 """Idle snapshot cache for the Windows layered drag proxy.
 
 The GPU-to-CPU grab is deliberately separated from the press path.  A press
-can use only an exact, already uploaded semantic key; every miss falls back to
-the ordinary Qt/Windows move path.
+can use only an already uploaded, geometry-compatible image; every real
+geometry miss falls back to the ordinary Qt/Windows move path.
 """
 
+import math
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import QObject, QPoint, QRect, QSize, QTimer
 from PySide6.QtGui import QGuiApplication, QImage
@@ -33,6 +34,8 @@ class DragProxySnapshotMetadata:
     device_pixel_ratio: float
     crop_origin: QPoint
     pixel_size: QSize
+    geometry_key: str = ""
+    source_pixel_size: QSize = field(default_factory=QSize)
 
 
 def alpha_bounds(image: QImage, *, margin: int = 0) -> QRect:
@@ -93,15 +96,21 @@ class DragProxySnapshotCache(QObject):
         self._proxy: WindowsDragProxy | None = None
         self._metadata: DragProxySnapshotMetadata | None = None
         self._pending_key = ""
+        self._pending_geometry_key = ""
         self._grab_key = ""
+        self._grab_geometry_key = ""
         self._grab_pointer: object | None = None
         self._grab_result: QObject | None = None
         self._grab_generation = 0
+        self._gesture_active = False
+        self._refresh_after_gesture = False
+        self._closed = False
         self._active = False
         self._prepared_root_rect: WindowRect | None = None
         self._prepared_proxy_rect: WindowRect | None = None
         self._last_failure = "cache-miss"
         self._last_failure_type = ""
+        self._last_prepare_used_stale_visual = False
 
     @property
     def proxy_handle(self) -> int:
@@ -127,6 +136,10 @@ class DragProxySnapshotCache(QObject):
             return 0.0
         return max(0.0, (self._monotonic() - metadata.captured_at) * 1000.0)
 
+    @property
+    def last_prepare_used_stale_visual(self) -> bool:
+        return self._last_prepare_used_stale_visual
+
     def _uniform_screen_dpr(self) -> bool:
         values = {
             round(float(screen.devicePixelRatio() or 1.0), 4)
@@ -134,29 +147,129 @@ class DragProxySnapshotCache(QObject):
         }
         return len(values) <= 1
 
-    def request(self, key: str) -> bool:
+    def request(self, key: str, geometry_key: str = "") -> bool:
+        if self._closed:
+            return False
         normalized = str(key or "").strip()[:512]
-        if not normalized or self._active:
+        normalized_geometry = str(geometry_key or "").strip()[:256]
+        if not normalized:
             return False
         self._pending_key = normalized
+        self._pending_geometry_key = normalized_geometry
+        if self._gesture_active:
+            self._refresh_after_gesture = True
+            return False
+        if self._active:
+            return False
         metadata = self._metadata
-        if metadata is not None and metadata.key == normalized:
-            return True
+        if (
+            metadata is not None
+            and metadata.key == normalized
+            and (
+                not normalized_geometry
+                or metadata.geometry_key == normalized_geometry
+            )
+        ):
+            current_dpr = max(
+                0.25,
+                float(self.root.devicePixelRatio() or 1.0),
+            )
+            current_source_size = self._current_source_pixel_size()
+            if (
+                abs(current_dpr - metadata.device_pixel_ratio) <= 0.001
+                and not metadata.source_pixel_size.isEmpty()
+                and metadata.source_pixel_size == current_source_size
+            ):
+                return True
+            # A display-scale or quantized source-size change can leave the
+            # semantic key untouched.  Treat it as an idle refresh obligation
+            # so the 2 s health request self-heals instead of permanently
+            # falling back with dpr-changed/source-size-changed.
+            self._last_failure = (
+                "dpr-changed"
+                if abs(current_dpr - metadata.device_pixel_ratio) > 0.001
+                else "source-size-changed"
+            )
         if self._grab_result is None:
             QTimer.singleShot(0, self._begin_grab)
         return True
 
+    def begin_gesture(self) -> None:
+        """Fence the GUI-thread image pipeline for one held pointer gesture."""
+
+        if self._closed:
+            return
+        self._gesture_active = True
+        if self._grab_result is not None:
+            # QQuickItemGrabResult has no reliable cross-backend cancellation.
+            # Its ready callback will therefore only release references; it
+            # must not convert, scan or upload pixels while the pointer is held.
+            self._refresh_after_gesture = True
+
+    def end_gesture(self) -> None:
+        if self._closed or not self._gesture_active:
+            return
+        self._gesture_active = False
+        metadata = self._metadata
+        needs_refresh = self._refresh_after_gesture or (
+            bool(self._pending_key)
+            and (
+                metadata is None
+                or metadata.key != self._pending_key
+                or (
+                    bool(self._pending_geometry_key)
+                    and metadata.geometry_key != self._pending_geometry_key
+                )
+            )
+        )
+        # If the layered preview is still bridging the first live frame,
+        # preserve this bit until complete()/cancel() retires that preview.
+        self._refresh_after_gesture = bool(needs_refresh)
+        if needs_refresh and self._grab_result is None and not self._active:
+            # Leave the release/composition turn clear.  The canonical QML
+            # debounce may request the same key meanwhile; request() coalesces
+            # that harmlessly.
+            self._refresh_after_gesture = False
+            QTimer.singleShot(120, self._begin_grab)
+
+    @staticmethod
+    def _qt_round_positive(value: float) -> int:
+        """Match qRound for the positive logical/pixel sizes used here."""
+
+        return max(1, math.floor(float(value) + 0.5))
+
+    def _schedule_refresh_after_preview(self) -> None:
+        if (
+            self._gesture_active
+            or self._closed
+            or self._active
+            or self._grab_result is not None
+            or not self._refresh_after_gesture
+        ):
+            return
+        self._refresh_after_gesture = False
+        QTimer.singleShot(120, self._begin_grab)
+
     def _begin_grab(self) -> None:
-        if self._grab_result is not None or self._active:
+        if (
+            self._closed
+            or self._grab_result is not None
+            or self._active
+            or self._gesture_active
+        ):
             return
         key = self._pending_key
         if not key:
             return
         try:
             dpr = max(0.25, float(self.root.devicePixelRatio() or 1.0))
+            # QQuickItem.grabToImage() accepts a logical target size and Qt
+            # applies the window DPR to the returned QImage itself.  Passing
+            # width*dpr here therefore scales twice (DPR²): at 150% the proxy
+            # becomes 1.5x too large and carries 2.25x the pixel area.
             target = QSize(
-                max(1, round(float(self.item.width()) * dpr)),
-                max(1, round(float(self.item.height()) * dpr)),
+                self._qt_round_positive(float(self.item.width())),
+                self._qt_round_positive(float(self.item.height())),
             )
             pointer = self.item.grabToImage(target)
             result = pointer.data()
@@ -169,6 +282,7 @@ class DragProxySnapshotCache(QObject):
         self._grab_generation += 1
         generation = self._grab_generation
         self._grab_key = key
+        self._grab_geometry_key = self._pending_geometry_key
         self._grab_pointer = pointer
         self._grab_result = result
         result.ready.connect(
@@ -183,74 +297,146 @@ class DragProxySnapshotCache(QObject):
         # Keep a local reference until image() has copied the completed frame.
         pointer = self._grab_pointer
         captured_key = self._grab_key
-        try:
-            image = result.image()
-            converted = image.convertToFormat(
-                QImage.Format.Format_ARGB32_Premultiplied
-            )
-            bounds = alpha_bounds(converted, margin=max(1, round(7 * dpr)))
-            if bounds.isEmpty():
-                self._last_failure = "empty-alpha"
-                return
-            cropped = converted.copy(bounds)
-            bitmap = ArgbPremultipliedBitmap.from_qt_premultiplied(
-                cropped.width(),
-                cropped.height(),
-                cropped.constBits(),
-                stride=cropped.bytesPerLine(),
-            )
-            proxy = self._proxy or self._proxy_factory()
-            proxy.upload_bitmap(bitmap)
-        except (
-            AttributeError,
-            RuntimeError,
-            TypeError,
-            ValueError,
-            WindowsDragProxyError,
-        ) as error:
-            self._last_failure = "upload-failed"
-            self._last_failure_type = type(error).__name__
+        captured_geometry_key = self._grab_geometry_key
+        deferred_for_gesture = self._gesture_active
+        ready_proxy: WindowsDragProxy | None = None
+        ready_bounds = QRect()
+        if deferred_for_gesture:
+            self._last_failure = "grab-deferred-for-gesture"
+            self._refresh_after_gesture = True
         else:
-            self._proxy = proxy
+            try:
+                image = result.image()
+                converted = image.convertToFormat(
+                    QImage.Format.Format_ARGB32_Premultiplied
+                )
+                ready_bounds = alpha_bounds(
+                    converted,
+                    margin=max(1, round(7 * dpr)),
+                )
+                if ready_bounds.isEmpty():
+                    self._last_failure = "empty-alpha"
+                else:
+                    cropped = converted.copy(ready_bounds)
+                    bitmap = ArgbPremultipliedBitmap.from_qt_premultiplied(
+                        cropped.width(),
+                        cropped.height(),
+                        cropped.constBits(),
+                        stride=cropped.bytesPerLine(),
+                    )
+                    ready_proxy = self._proxy or self._proxy_factory()
+                    ready_proxy.upload_bitmap(bitmap)
+            except (
+                AttributeError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+                WindowsDragProxyError,
+            ) as error:
+                ready_proxy = None
+                self._last_failure = "upload-failed"
+                self._last_failure_type = type(error).__name__
+        if ready_proxy is not None and not ready_bounds.isEmpty():
+            self._proxy = ready_proxy
             self._metadata = DragProxySnapshotMetadata(
                 key=captured_key,
                 captured_at=self._monotonic(),
                 device_pixel_ratio=dpr,
-                crop_origin=bounds.topLeft(),
-                pixel_size=bounds.size(),
+                crop_origin=ready_bounds.topLeft(),
+                pixel_size=ready_bounds.size(),
+                geometry_key=captured_geometry_key,
+                source_pixel_size=converted.size(),
             )
             self._last_failure = ""
             self._last_failure_type = ""
-        finally:
+        try:
             del pointer
+        finally:
             self._grab_result = None
             self._grab_pointer = None
             self._grab_key = ""
-        if self._pending_key and self._pending_key != captured_key:
+            self._grab_geometry_key = ""
+        if (
+            not self._gesture_active
+            and self._pending_key
+            and (
+                self._pending_key != captured_key
+                or self._pending_geometry_key != captured_geometry_key
+            )
+        ):
             QTimer.singleShot(0, self._begin_grab)
 
-    def can_prepare(self, key: str) -> bool:
+    def _current_source_pixel_size(self) -> QSize:
+        dpr = max(0.25, float(self.root.devicePixelRatio() or 1.0))
+        try:
+            # Mirror the real two-stage path exactly: this class first passes
+            # an integer logical QSize to grabToImage(), then Qt applies DPR
+            # to that target.  Rounding (fractional item * DPR) in one step can
+            # differ by one pixel at .5 logical boundaries.
+            logical_width = self._qt_round_positive(float(self.item.width()))
+            logical_height = self._qt_round_positive(float(self.item.height()))
+            return QSize(
+                self._qt_round_positive(logical_width * dpr),
+                self._qt_round_positive(logical_height * dpr),
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return QSize()
+
+    def can_prepare(self, key: str, geometry_key: str = "") -> bool:
         metadata = self._metadata
+        self._last_prepare_used_stale_visual = False
+        if self._closed:
+            self._last_failure = "closed"
+            return False
         if self._active:
             self._last_failure = "already-active"
             return False
         if self._proxy is None or metadata is None:
             self._last_failure = "cache-miss"
             return False
-        if metadata.key != str(key or ""):
-            self._last_failure = "stale-key"
-            return False
+        requested_key = str(key or "")
+        requested_geometry = str(geometry_key or "")
+        if metadata.key != requested_key:
+            current_source_size = self._current_source_pixel_size()
+            geometry_compatible = bool(
+                requested_geometry
+                and metadata.geometry_key == requested_geometry
+                and not metadata.source_pixel_size.isEmpty()
+                and metadata.source_pixel_size == current_source_size
+            )
+            if not geometry_compatible:
+                self._last_failure = "stale-key"
+                return False
+            # A breathing/pose/content revision may change just before press.
+            # Moving the most recent same-geometry static sprite is preferable
+            # to falling back to a live 165 Hz QQuickWindow; the real scene is
+            # restored immediately on release.
+            self._last_prepare_used_stale_visual = True
         current_dpr = max(0.25, float(self.root.devicePixelRatio() or 1.0))
         if abs(current_dpr - metadata.device_pixel_ratio) > 0.001:
             self._last_failure = "dpr-changed"
             return False
+        if (
+            not metadata.source_pixel_size.isEmpty()
+            and metadata.source_pixel_size != self._current_source_pixel_size()
+        ):
+            self._last_failure = "source-size-changed"
+            return False
+        # The hidden proxy bitmap is uploaded on its current monitor.  Until
+        # the proxy is rebuilt per target monitor, fail closed on mixed-DPR
+        # desktops instead of allowing User32 to rescale its crop/anchor.
         if not self._uniform_screen_dpr():
             self._last_failure = "mixed-dpr"
             return False
         return True
 
-    def prepare(self, key: str, root_rect: WindowRect) -> int:
-        if not self.can_prepare(key):
+    def prepare(
+        self,
+        key: str,
+        root_rect: WindowRect,
+        geometry_key: str = "",
+    ) -> int:
+        if not self.can_prepare(key, geometry_key):
             return 0
         proxy = self._proxy
         metadata = self._metadata
@@ -308,6 +494,7 @@ class DragProxySnapshotCache(QObject):
         self._active = False
         self._prepared_root_rect = None
         self._prepared_proxy_rect = None
+        self._schedule_refresh_after_preview()
 
     def cancel(self) -> None:
         proxy = self._proxy
@@ -325,6 +512,7 @@ class DragProxySnapshotCache(QObject):
         self._active = False
         self._prepared_root_rect = None
         self._prepared_proxy_rect = None
+        self._schedule_refresh_after_preview()
 
     def cancel_native_move(self) -> bool:
         """Request cancellation while leaving final geometry readable."""
@@ -341,6 +529,18 @@ class DragProxySnapshotCache(QObject):
             return False
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._grab_generation += 1
+        self._pending_key = ""
+        self._pending_geometry_key = ""
+        self._grab_key = ""
+        self._grab_geometry_key = ""
+        self._grab_pointer = None
+        self._grab_result = None
+        self._gesture_active = False
+        self._refresh_after_gesture = False
         self.cancel()
         proxy = self._proxy
         self._proxy = None

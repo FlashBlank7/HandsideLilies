@@ -542,11 +542,14 @@ def main() -> int:
             "nativeCalls": len(fake_native.start_calls),
             "manualDragActive": bool(pet_window.property("manualDragActive")),
         }
+        # Stay clearly below the 4 logical-pixel threshold.  Deriving an
+        # exactly-four sample from a fractional figure anchor made integer
+        # cursor rounding occasionally produce 4.000...1 and a flaky latch.
         backend.offscreen_cursor = {
-            "x": round(cursor_x + 4.0),
+            "x": round(cursor_x + 2.0),
             "y": round(cursor_y),
         }
-        pet_body.movePointer(point_x + 4.0, point_y, True)
+        pet_body.movePointer(point_x + 2.0, point_y, True)
         QApplication.processEvents()
         pet_window.followPointerFrame()
         QApplication.processEvents()
@@ -570,7 +573,7 @@ def main() -> int:
         QApplication.processEvents()
         outcome["directThresholdAndBridge"] = {
             "pressed": pressed_state,
-            "atFourPixels": at_threshold,
+            "belowThreshold": at_threshold,
             "afterTwentyPixels": after_threshold,
             "nativeCalls": len(fake_native.start_calls),
             "interactionSnapAfterRelease": bool(
@@ -976,7 +979,9 @@ def main() -> int:
 
         # A cancel emitted inside tryStartSystemMove must see the start-pending
         # guard and defer completion.  The outer frame then owns the same serial
-        # and interaction lock until WM_EXITSIZEMOVE-style completion arrives.
+        # until WM_EXITSIZEMOVE-style completion arrives.  The expensive
+        # companion/timer interaction lock is deliberately armed 40 ms later,
+        # outside the native move's first composition frames.
         backend.setPetDragMode("system")
         backend.clearPetInteractionLocks()
         compact_window.setProperty("expanded", False)
@@ -1084,12 +1089,12 @@ def main() -> int:
                 and after_reentry["startPending"] is False
                 and after_reentry["cancelPending"] is True
                 and after_reentry["gestureSerial"] > 0
-                and after_reentry["lockReasons"] == ["character"]
+                and after_reentry["lockReasons"] == []
                 and wrong_serial_finish is False
                 and after_wrong_serial["manualDragActive"] is True
                 and after_wrong_serial["nativeMoveActive"] is True
                 and after_wrong_serial["gestureSerial"] == reentrant_serial
-                and after_wrong_serial["lockReasons"] == ["character"]
+                and after_wrong_serial["lockReasons"] == []
                 and correct_serial_finish is True
                 and after_correct_serial["manualDragActive"] is False
                 and after_correct_serial["nativeMoveActive"] is False

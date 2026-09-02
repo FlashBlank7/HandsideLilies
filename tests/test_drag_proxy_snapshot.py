@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
 from PySide6.QtCore import QObject, QPoint, QSize, QUrl
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtQml import QQmlComponent, QQmlEngine
@@ -17,6 +24,18 @@ from lilies.windows_drag_proxy import DragDelta, DragProxyFinal, WindowRect
 class _Root:
     def devicePixelRatio(self) -> float:
         return 1.5
+
+
+class _SizedItem:
+    def __init__(self, width: float = 256, height: float = 242) -> None:
+        self.width_value = width
+        self.height_value = height
+
+    def width(self) -> float:
+        return self.width_value
+
+    def height(self) -> float:
+        return self.height_value
 
 
 class _Proxy:
@@ -117,9 +136,10 @@ def test_exact_cache_key_prepares_tight_proxy_and_reports_physical_delta() -> No
     assert proxy.hide_count == 1
 
 
-def test_cache_mismatch_and_mixed_dpr_fail_closed() -> None:
+def test_stale_semantic_key_reuses_only_same_geometry_and_source_size() -> None:
     parent = QObject()
-    cache = DragProxySnapshotCache(_Root(), object(), parent)
+    item = _SizedItem()
+    cache = DragProxySnapshotCache(_Root(), item, parent)
     proxy = _Proxy()
     cache._proxy = proxy
     cache._metadata = DragProxySnapshotMetadata(
@@ -128,14 +148,153 @@ def test_cache_mismatch_and_mixed_dpr_fail_closed() -> None:
         device_pixel_ratio=1.5,
         crop_origin=QPoint(),
         pixel_size=QSize(40, 50),
+        geometry_key="body-256x242",
+        source_pixel_size=QSize(384, 363),
     )
 
-    assert cache.prepare("stale", WindowRect(0, 0, 100, 100)) == 0
+    assert (
+        cache.prepare(
+            "new-pose-revision",
+            WindowRect(0, 0, 100, 100),
+            "body-256x242",
+        )
+        == proxy.handle
+    )
+    assert cache.last_prepare_used_stale_visual is True
+    cache.complete()
+
+    assert (
+        cache.prepare(
+            "another-revision",
+            WindowRect(0, 0, 100, 100),
+            "different-geometry",
+        )
+        == 0
+    )
     assert cache.last_failure == "stale-key"
+    assert cache.last_prepare_used_stale_visual is False
+
+    item.width_value = 257
+    assert (
+        cache.prepare(
+            "another-revision",
+            WindowRect(0, 0, 100, 100),
+            "body-256x242",
+        )
+        == 0
+    )
+    assert cache.last_failure == "stale-key"
+
+    item.width_value = 256
     cache._uniform_screen_dpr = lambda: False
-    assert cache.prepare("current", WindowRect(0, 0, 100, 100)) == 0
+    assert (
+        cache.prepare(
+            "new-pose-revision",
+            WindowRect(0, 0, 100, 100),
+            "body-256x242",
+        )
+        == 0
+    )
     assert cache.last_failure == "mixed-dpr"
-    assert proxy.visible is False
+
+
+def test_exact_key_request_refreshes_after_dpr_or_source_size_change() -> None:
+    parent = QObject()
+    item = _SizedItem()
+    cache = DragProxySnapshotCache(_Root(), item, parent)
+    cache._metadata = DragProxySnapshotMetadata(
+        key="same-key",
+        captured_at=cache._monotonic(),
+        device_pixel_ratio=1.25,
+        crop_origin=QPoint(),
+        pixel_size=QSize(40, 50),
+        geometry_key="same-geometry",
+        source_pixel_size=QSize(320, 303),
+    )
+
+    assert cache.request("same-key", "same-geometry") is True
+    assert cache.last_failure == "dpr-changed"
+
+    cache._metadata = DragProxySnapshotMetadata(
+        key="same-key",
+        captured_at=cache._monotonic(),
+        device_pixel_ratio=1.5,
+        crop_origin=QPoint(),
+        pixel_size=QSize(40, 50),
+        geometry_key="same-geometry",
+        source_pixel_size=QSize(383, 363),
+    )
+    assert cache.request("same-key", "same-geometry") is True
+    assert cache.last_failure == "source-size-changed"
+    cache._proxy = _Proxy()
+    cache._uniform_screen_dpr = lambda: True
+    assert (
+        cache.prepare(
+            "same-key",
+            WindowRect(0, 0, 100, 100),
+            "same-geometry",
+        )
+        == 0
+    )
+    assert cache.last_failure == "source-size-changed"
+    cache.close()
+
+
+class _GrabResult:
+    def __init__(self) -> None:
+        self.image_calls = 0
+
+    def image(self):
+        self.image_calls += 1
+        raise AssertionError("image() must stay behind the gesture fence")
+
+
+def test_source_size_check_mirrors_logical_then_dpr_qt_rounding() -> None:
+    parent = QObject()
+    cache = DragProxySnapshotCache(
+        _Root(),
+        _SizedItem(width=385.5, height=363.5),
+        parent,
+    )
+
+    assert cache._current_source_pixel_size() == QSize(579, 546)
+
+
+def test_close_invalidates_queued_grab_and_refuses_reopen() -> None:
+    parent = QObject()
+    cache = DragProxySnapshotCache(_Root(), _SizedItem(), parent)
+    cache._pending_key = "queued"
+    generation = cache._grab_generation
+
+    cache.close()
+    cache._begin_grab()
+
+    assert cache._grab_generation == generation + 1
+    assert cache.request("after-close", "same-geometry") is False
+    assert cache.metadata is None
+
+
+def test_grab_ready_during_gesture_never_reads_or_uploads_image() -> None:
+    parent = QObject()
+    cache = DragProxySnapshotCache(_Root(), _SizedItem(), parent)
+    proxy = _Proxy()
+    result = _GrabResult()
+    cache._proxy = proxy
+    cache._grab_generation = 7
+    cache._grab_key = "pose-revision"
+    cache._grab_geometry_key = "body-256x242"
+    cache._grab_pointer = object()
+    cache._grab_result = result
+
+    cache.begin_gesture()
+    cache._finish_grab(7, 1.5)
+
+    assert result.image_calls == 0
+    assert proxy.bitmap is None
+    assert cache.metadata is None
+    assert cache.last_failure == "grab-deferred-for-gesture"
+    assert cache._refresh_after_gesture is True
+    assert cache._grab_result is None
 
 
 def test_offscreen_quick_item_is_captured_and_uploaded_before_press() -> None:
@@ -182,3 +341,108 @@ def test_offscreen_quick_item_is_captured_and_uploaded_before_press() -> None:
         item.deleteLater()
         window.deleteLater()
         engine.deleteLater()
+
+
+def test_offscreen_grab_target_is_logical_and_qt_applies_dpr_once() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    script = textwrap.dedent(
+        """
+        import json
+
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QGuiApplication
+        from PySide6.QtQml import QQmlComponent, QQmlEngine
+        from PySide6.QtQuick import QQuickItem, QQuickWindow
+        from PySide6.QtTest import QTest
+
+        from lilies.drag_proxy_snapshot import DragProxySnapshotCache
+
+
+        class Proxy:
+            handle = 101
+
+            def __init__(self):
+                self.bitmap = None
+
+            def upload_bitmap(self, bitmap):
+                self.bitmap = bitmap
+
+            def hide(self):
+                return True
+
+            def destroy(self):
+                return True
+
+
+        app = QGuiApplication([])
+        engine = QQmlEngine()
+        component = QQmlComponent(engine)
+        component.setData(
+            b'import QtQuick; Rectangle { width: 385; height: 363; color: "white" }',
+            QUrl(),
+        )
+        item = component.create()
+        assert isinstance(item, QQuickItem), component.errorString()
+        window = QQuickWindow()
+        window.setWidth(385)
+        window.setHeight(363)
+        item.setParentItem(window.contentItem())
+        proxy = Proxy()
+        cache = DragProxySnapshotCache(
+            window,
+            item,
+            window,
+            proxy_factory=lambda: proxy,
+        )
+        window.show()
+        try:
+            assert cache.request("dpr-once", "385x363")
+            for _ in range(200):
+                if cache.metadata is not None:
+                    break
+                QTest.qWait(10)
+            metadata = cache.metadata
+            assert metadata is not None, cache.last_failure
+            print(json.dumps({
+                "dpr": metadata.device_pixel_ratio,
+                "source": [
+                    metadata.source_pixel_size.width(),
+                    metadata.source_pixel_size.height(),
+                ],
+                "bitmap": [proxy.bitmap.width, proxy.bitmap.height],
+            }))
+        finally:
+            cache.close()
+            window.hide()
+        """
+    )
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "QT_QPA_PLATFORM": "offscreen",
+            "QSG_RHI_BACKEND": "software",
+            "QT_QUICK_BACKEND": "software",
+            "QT_SCALE_FACTOR": "1.5",
+            "QT_SCALE_FACTOR_ROUNDING_POLICY": "PassThrough",
+            "PYTHONPATH": str(project_root / "src"),
+            "PYTHONUTF8": "1",
+        }
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=project_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
+    outcome = json.loads(completed.stdout.strip().splitlines()[-1])
+
+    assert outcome["dpr"] == 1.5
+    assert outcome["source"] == [578, 545]
+    assert outcome["bitmap"] == [578, 545]

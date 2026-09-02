@@ -102,6 +102,7 @@ def test_proxy_uses_layered_tool_noactivate_style_and_fake_lifecycle() -> None:
     assert DEFAULT_PROXY_EX_STYLE == (
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST
     )
+    assert DEFAULT_PROXY_EX_STYLE & 0x00000020 == 0  # WS_EX_TRANSPARENT
     assert api.calls[:3] == [
         ("create", DEFAULT_PROXY_EX_STYLE, DEFAULT_PROXY_STYLE),
         ("update", 73, bitmap, 0, 0),

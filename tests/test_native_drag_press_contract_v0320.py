@@ -12,16 +12,24 @@ def test_native_system_move_is_requested_from_character_press() -> None:
     move_start = source.index("onCharacterPointerMoved:", press_start)
     press_handler = source[press_start:move_start]
 
-    assert "petWindow.tryNativeSystemMove()" in press_handler
+    assert "petWindow.tryNativeSystemMove(" in press_handler
+    assert "petWindow.dragLatchedSnapshotKey" in press_handler
+    assert "petWindow.dragLatchedGeometryKey" in press_handler
     assert press_handler.index("petWindow.dragStartCursorY = cursor.y") < press_handler.index(
-        "petWindow.tryNativeSystemMove()"
+        "petWindow.tryNativeSystemMove("
+    )
+    assert press_handler.index("petWindow.dragLatchedSnapshotKey =") < press_handler.index(
+        "petWindow.tryNativeSystemMove("
+    )
+    assert press_handler.index("petWindow.dragLatchedGeometryKey =") < press_handler.index(
+        "petWindow.tryNativeSystemMove("
     )
     assert "petWindow.nativeSystemMoveStartPending = false" in press_handler
 
 
 def test_system_move_is_the_recommended_default_and_direct_is_compatibility_mode() -> None:
     source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
-    start = source.index("function tryNativeSystemMove()")
+    start = source.index("function tryNativeSystemMove(")
     end = source.index("function finishCharacterGesture(", start)
     handler = source[start:end]
 
@@ -55,12 +63,18 @@ def test_drag_hides_auxiliary_animated_quick_windows_without_cancelling_them() -
 
 def test_qml_uses_boolean_preserving_python_system_move_bridge() -> None:
     source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
-    start = source.index("function tryNativeSystemMove()")
+    start = source.index("function tryNativeSystemMove(")
     end = source.index("function followPointerAt(", start)
     handler = source[start:end]
 
     assert "nativeMoveController.tryStartSystemMove(" in handler
     assert "nativeSystemMoveGestureSerial" in handler
+    assert "requestedSnapshotKey" in handler
+    assert "requestedGeometryKey" in handler
+    assert "requestedSerial," in handler
+    assert "requestedSnapshotKey," in handler
+    assert "requestedGeometryKey))" in handler
+    assert "nativeMoveController.dragProxyActive()" in handler
     assert "Boolean(startSystemMove())" not in handler
     assert handler.index("nativeSystemMoveStartPending = true") < handler.index(
         "nativeMoveController.tryStartSystemMove("
@@ -70,7 +84,12 @@ def test_qml_uses_boolean_preserving_python_system_move_bridge() -> None:
     )
 
     app_source = (ROOT / "src" / "lilies" / "app.py").read_text("utf-8")
-    assert "def tryStartSystemMove(self, gesture_serial: int) -> bool:" in app_source
+    assert "gesture_serial: int," in app_source
+    assert "semantic_key: str = \"\"," in app_source
+    assert "geometry_key: str = \"\"," in app_source
+    assert "self._prepare_proxy_system_move(" in app_source
+    assert "str(semantic_key or \"\")" in app_source
+    assert "str(geometry_key or \"\")" in app_source
     assert "started = bool(self.root.startSystemMove())" in app_source
     assert 'pet_window.setProperty("nativeMoveController", pointer_event_filter)' in app_source
 
@@ -185,8 +204,23 @@ def test_drag_freezes_pose_and_defers_detach_until_after_release() -> None:
 
     press_start = source.index("onCharacterPressStarted:")
     press_end = source.index("onCharacterPointerMoved:", press_start)
-    assert "compactLilith.interactionSnap = true" in source[press_start:press_end]
-    assert "compactWindow.prepareForCharacterDrag()" in source[press_start:press_end]
+    press_handler = source[press_start:press_end]
+    assert "compactWindow.prepareForCharacterDrag()" in press_handler
+    assert "petWindow.dragLatchedSnapshotKey" in press_handler
+    assert "petWindow.dragLatchedGeometryKey" in press_handler
+    assert "var nativeStarted = petWindow.tryNativeSystemMove(" in press_handler
+    fallback_guard = press_handler.index(
+        "if (!nativeStarted || !petWindow.nativeSystemMoveUsesProxy)"
+    )
+    interaction_snap = press_handler.index("compactLilith.interactionSnap = true")
+    assert fallback_guard < interaction_snap
+    assert press_handler.count("compactLilith.interactionSnap = true") == 1
+    assert "dragInteractionLockTimer.restart()" in press_handler
+    timer_start = source.index("id: dragInteractionLockTimer")
+    timer_end = source.index("id: dragProxySnapshotDebounce", timer_start)
+    interaction_timer = source[timer_start:timer_end]
+    assert "interval: 40" in interaction_timer
+    assert 'backend.setPetInteractionLock("character", true)' in interaction_timer
     assert "orbitProgressAnimation.stop()" in source
     assert "boxRotationAnimation.stop()" in source
     assert source.count("enabled: !petWindow.manualDragActive") >= 2
@@ -211,6 +245,7 @@ def test_pending_release_detach_is_committed_before_hidden_state_clears_it() -> 
     assert handler.index("finalizeMovedCharacterGesture()") < handler.index(
         "dragFinalizePending = false"
     )
+    assert "nativeMoveController.endDragProxyGesture()" in handler
 
 
 def test_character_drag_uses_one_forgiving_shared_interaction_mask() -> None:

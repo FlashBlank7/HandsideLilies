@@ -1809,8 +1809,8 @@ Window {
         // QWindow boolean independently of the QML method signature and owns
         // the matching WM_EXITSIZEMOVE gesture serial.
         property var nativeMoveController: null
-        readonly property string compactDragSnapshotKey: [
-            "proxy-v2",
+        readonly property string compactDragGeometryKey: [
+            "proxy-geometry-v2",
             Math.round(compactWindow.boxSize * 100),
             Math.round(compactWindow.accessoryDx * 1000),
             Math.round(compactWindow.accessoryDy * 1000),
@@ -1834,6 +1834,13 @@ Window {
             Math.round(compactLilith.habitatPeekFraction * 10000),
             compactWindow.expanded ? 1 : 0
         ].join("|")
+        readonly property string compactDragSnapshotKey: [
+            "proxy-v3",
+            compactDragGeometryKey
+        ].join("|")
+        property string dragLatchedSnapshotKey: ""
+        property string dragLatchedGeometryKey: ""
+        property bool nativeSystemMoveUsesProxy: false
         property int consumedPointerEventSerial: 0
         property real lastCapturedPointerEventAt: -100000
         readonly property real presentationWindowX:
@@ -1923,8 +1930,10 @@ Window {
             return moved || resized
         }
         onVisibleChanged: {
-            if (visible && backend.petFloatMode === "always") {
-                raise()
+            if (visible) {
+                if (backend.petFloatMode === "always")
+                    raise()
+                Qt.callLater(scheduleDragProxySnapshot)
             } else if (!visible) {
                 // A direct release can queue its habitat detach for the next
                 // event turn. If presence changes in that narrow gap, commit
@@ -1936,6 +1945,10 @@ Window {
                 if (nativeMoveController && nativeSystemMoveGestureSerial > 0)
                     nativeMoveController.acknowledgeSystemMoveFinished(
                         nativeSystemMoveGestureSerial)
+                if (nativeMoveController
+                        && typeof nativeMoveController.endDragProxyGesture
+                           === "function")
+                    nativeMoveController.endDragProxyGesture()
                 manualDragActive = false
                 resizeDragActive = false
                 localGestureDepth = 0
@@ -1944,6 +1957,10 @@ Window {
                 nativeSystemMoveStartPending = false
                 nativeSystemMoveGestureSerial = 0
                 nativeSystemMoveCancelPending = false
+                nativeSystemMoveUsesProxy = false
+                dragLatchedSnapshotKey = ""
+                dragLatchedGeometryKey = ""
+                dragInteractionLockTimer.stop()
                 dragFinalizePending = false
                 dragMoved = false
                 dragPointerEventPending = false
@@ -2042,7 +2059,7 @@ Window {
                 x + width / 2, y + height / 2)
         }
 
-        function tryNativeSystemMove() {
+        function tryNativeSystemMove(snapshotKey, geometryKey) {
             // Windows' compositor-owned move is the default. Direct movement
             // remains an explicit compatibility choice and is also the exact
             // fallback when the platform refuses startSystemMove().
@@ -2059,13 +2076,24 @@ Window {
             // in which case followPointerAt remains the exact fallback.
             var started = false
             var requestedSerial = nativeSystemMoveGestureSerial
+            var requestedSnapshotKey = String(
+                snapshotKey || dragLatchedSnapshotKey || compactDragSnapshotKey)
+            var requestedGeometryKey = String(
+                geometryKey || dragLatchedGeometryKey || compactDragGeometryKey)
             nativeSystemMoveStartPending = true
             try {
                 started = Boolean(nativeMoveController
                                   && nativeMoveController.tryStartSystemMove(
-                                      requestedSerial))
+                                      requestedSerial,
+                                      requestedSnapshotKey,
+                                      requestedGeometryKey))
+                nativeSystemMoveUsesProxy = Boolean(
+                    started && nativeMoveController
+                    && typeof nativeMoveController.dragProxyActive === "function"
+                    && nativeMoveController.dragProxyActive())
             } catch (error) {
                 started = false
+                nativeSystemMoveUsesProxy = false
             }
             nativeSystemMoveStartPending = false
             // QWindow::startSystemMove releases the QML mouse capture before
@@ -2078,10 +2106,12 @@ Window {
                     nativeMoveController.acknowledgeSystemMoveFinished(
                         requestedSerial)
                 nativeSystemMoveActive = false
+                nativeSystemMoveUsesProxy = false
                 return false
             }
             nativeSystemMoveActive = started
             if (!started) {
+                nativeSystemMoveUsesProxy = false
                 nativeSystemMoveGestureSerial = 0
                 if (nativeSystemMoveCancelPending) {
                     nativeSystemMoveCancelPending = false
@@ -2102,6 +2132,7 @@ Window {
                 return false
             if (expected > 0 && expected !== nativeSystemMoveGestureSerial)
                 return false
+            dragInteractionLockTimer.stop()
             if (!nativeSystemMoveActive) {
                 followPendingPointerEvent()
                 if (!followCapturedPointerEvent())
@@ -2159,6 +2190,9 @@ Window {
             nativeSystemMoveStartPending = false
             nativeSystemMoveGestureSerial = 0
             nativeSystemMoveCancelPending = false
+            nativeSystemMoveUsesProxy = false
+            dragLatchedSnapshotKey = ""
+            dragLatchedGeometryKey = ""
             dragPointerEventPending = false
             dragWorkAreaValid = false
             if (nativeMoveController && completedSerial > 0)
@@ -2398,8 +2432,23 @@ Window {
             onTriggered: petWindow.followPointerFrame()
         }
         Timer {
+            id: dragInteractionLockTimer
+            interval: 40
+            repeat: false
+            property int gestureSerial: 0
+            onTriggered: {
+                if (petWindow.manualDragActive
+                        && gestureSerial ===
+                           petWindow.nativeSystemMoveGestureCounter)
+                    backend.setPetInteractionLock("character", true)
+            }
+        }
+        Timer {
             id: dragProxySnapshotDebounce
-            interval: 850
+            // Qt's grab is asynchronous and idle-only.  A short quiet window
+            // keeps the proxy current after resize/pose changes without
+            // making the user's first drag wait almost a second.
+            interval: 180
             repeat: false
             onTriggered: {
                 if (!petWindow.visible || petWindow.manualDragActive
@@ -2412,13 +2461,24 @@ Window {
                             && typeof petWindow.nativeMoveController
                                 .requestDragProxySnapshot === "function") {
                         petWindow.nativeMoveController.requestDragProxySnapshot(
-                            petWindow.compactDragSnapshotKey)
+                            petWindow.compactDragSnapshotKey,
+                            petWindow.compactDragGeometryKey)
                     }
                 } catch (error) {
                     // Cache failure is an explicit fallback, never a broken
                     // click or a synchronous grab on the press path.
                 }
             }
+        }
+        Timer {
+            id: dragProxySnapshotHealthTimer
+            interval: 2000
+            repeat: true
+            running: petWindow.visible && !petWindow.manualDragActive
+                     && !petWindow.resizeDragActive
+                     && petWindow.localGestureDepth <= 0
+                     && !compactWindow.expanded
+            onTriggered: petWindow.scheduleDragProxySnapshot()
         }
         Timer {
             id: dragPresentationSettleTimer
@@ -2534,14 +2594,13 @@ Window {
             || actionVisibleBottom < height - 8.5
         property bool expanded: false
         property real orbitProgress: expanded ? 1 : 0
-        // Quiet breathing remains visible at 15 FPS.  Hovering, dragging or
-        // opening one of Lilith's surfaces temporarily restores the 60 FPS
+        // Quiet breathing remains visible at 15 FPS.  Dragging or opening one
+        // of Lilith's surfaces temporarily restores the 60 FPS
         // interaction cadence, matching the v0.3 active/idle animation budget.
         readonly property bool highMotion: expanded
-                                                || petWindow.manualDragActive
-                                                || compactLilith.characterPressed
-                                                || compactLilith.characterHovered
-                                                || compactLilith.poseTransitionRunning
+                                                 || petWindow.manualDragActive
+                                                 || compactLilith.characterPressed
+                                                 || compactLilith.poseTransitionRunning
                                                 || petPoseResolver.requiresHighMotion
                                                 || backend.chatOpen
                                                 || backend.workPanelOpen
@@ -2761,7 +2820,10 @@ Window {
                 objectName: "compactLilith"
                 anchors.fill: parent
                 appBackend: backend
-                inputEnabled: !petWindow.nativeSystemMoveActive
+                // The native completion state machine owns a successful move;
+                // disabling the held MouseArea here manufactured an early
+                // QML cancel before User32 had even consumed the posted move.
+                inputEnabled: true
                 characterHeight: compactWindow.boxSize * 2.20
                 pose: petPoseResolver.resolvedPose
                 paused: petWindow.manualDragActive
@@ -2787,7 +2849,6 @@ Window {
                 }
                 z: 3
                 onCharacterPressStarted: function(pointerX, pointerY) {
-                    backend.setPetInteractionLock("character", true)
                     petWindow.manualDragActive = true
                     var heldWindow = petWindow.cancelPositionAnimations()
                     petWindow.nativeSystemMoveActive = false
@@ -2804,9 +2865,14 @@ Window {
                     // A stationary release restores the correct toggle from
                     // dragMenuWasExpanded; a real drag leaves them closed.
                     compactWindow.prepareForCharacterDrag()
-                    // Freeze the exact silhouette that received the press.
-                    // Habitat detachment now happens only after release.
-                    compactLilith.interactionSnap = true
+                    // Lock the exact pre-side-effect presentation.  Companion
+                    // cancellation and artwork stabilization can both change
+                    // the semantic key; they must never turn a ready proxy
+                    // into a press-time stale-key fallback.
+                    petWindow.dragLatchedGeometryKey =
+                        petWindow.compactDragGeometryKey
+                    petWindow.dragLatchedSnapshotKey =
+                        petWindow.compactDragSnapshotKey
                     petWindow.dragWindowX = heldWindow.x
                     petWindow.dragWindowY = heldWindow.y
                     var cursor = petWindow.consumePointerEvent(pointerX, pointerY)
@@ -2821,7 +2887,19 @@ Window {
                     // originating mouse-press delivery.  Starting it only
                     // after a drag threshold is crossed is too late on
                     // Windows and forces the visibly laggier polling path.
-                    petWindow.tryNativeSystemMove()
+                    var nativeStarted = petWindow.tryNativeSystemMove(
+                        petWindow.dragLatchedSnapshotKey,
+                        petWindow.dragLatchedGeometryKey)
+                    if (!nativeStarted || !petWindow.nativeSystemMoveUsesProxy) {
+                        // Only the live-QQuickWindow compatibility path needs
+                        // dozens of geometry bindings frozen.  A layered proxy
+                        // already is the exact static presentation and keeps
+                        // this work completely out of the normal press path.
+                        compactLilith.interactionSnap = true
+                    }
+                    dragInteractionLockTimer.gestureSerial =
+                        petWindow.nativeSystemMoveGestureCounter
+                    dragInteractionLockTimer.restart()
                 }
                 onCharacterPointerMoved: function(pointerX, pointerY) {
                     petWindow.followPointerEvent(pointerX, pointerY)

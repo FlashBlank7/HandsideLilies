@@ -17,7 +17,7 @@ from .reading import ReadingRequest, prepare_reading_request
 
 MODEL_NAME = "gpt-5.6-luna"
 REASONING_EFFORT = "medium"
-CLIENT_VERSION = "0.3.53"
+CLIENT_VERSION = "0.3.54"
 
 _DISABLED_CODEX_FEATURES = (
     "apps",

@@ -68,6 +68,135 @@ def test_slack_runtime_matches_qml_contract_and_minimizes_scopes(tmp_path):
     ]
 
 
+def test_status_projects_only_reusable_non_secret_connector_configuration(tmp_path):
+    database, store, transport = services(tmp_path)
+    calendar = CalendarRuntime(
+        database, account_id="personal", secret_store=store, transport=transport
+    )
+    calendar.configure(
+        {
+            "clientId": "google-public-client",
+            "policy": {
+                "scope": "broad",
+                "interruption": "priority",
+                "retention": "searchable-summary",
+                "assistance": "reminder",
+            },
+        }
+    )
+    calendar._connector().save_tokens(
+        {"access_token": "calendar-secret", "refresh_token": "calendar-refresh"}
+    )
+    calendar_status = calendar.status()
+    assert calendar_status["configuration"] == {
+        "clientId": "google-public-client"
+    }
+    assert calendar_status["policyCanonical"] == {
+        "scope": "broad",
+        "interruption": "priority",
+        "retention": "searchable-summary",
+        "assistance": "reminder",
+        "selectedSources": [],
+    }
+    assert "calendar-secret" not in json.dumps(calendar_status)
+    assert "calendar-refresh" not in json.dumps(calendar_status)
+
+    # A policy-only save and reconnect path reuses the non-secret client ID.
+    reused = calendar.configure(
+        {
+            "clientId": "",
+            "policy": {
+                "scope": "necessary",
+                "interruption": "quiet",
+                "retention": "metadata",
+                "assistance": "assist",
+            },
+        }
+    )
+    assert reused["configuration"]["clientId"] == "google-public-client"
+
+    slack = SlackRuntime(
+        database, account_id="personal", secret_store=store, transport=transport
+    )
+    slack.configure(
+        {
+            "clientId": "slack-public-client",
+            "currentUserId": "U-SAFE",
+            "xappToken": "xapp-never-project",
+            "redirectUri": "http://127.0.0.1:53682/oauth/callback",
+            "selectedChannels": ["C-ONE"],
+            "policy": {
+                "scope": "selected",
+                "interruption": "immediate",
+                "retention": "extended-cache",
+                "assistance": "confirm-execute",
+            },
+        }
+    )
+    slack._connector().save_oauth_tokens(
+        {"authed_user": {"access_token": "slack-oauth-secret"}}
+    )
+    slack_status = slack.status()
+    assert slack_status["configuration"] == {
+        "clientId": "slack-public-client",
+        "currentUserId": "U-SAFE",
+        "redirectUri": "http://127.0.0.1:53682/oauth/callback",
+    }
+    serialized_status = json.dumps(slack_status)
+    assert "xapp-never-project" not in serialized_status
+    assert "slack-oauth-secret" not in serialized_status
+    assert "xappToken" not in serialized_status
+    assert "appToken" not in serialized_status
+
+    reused = slack.configure(
+        {
+            "clientId": "",
+            "currentUserId": "U-SAFE",
+            "redirectUri": "http://127.0.0.1:53682/oauth/callback",
+            "selectedChannels": ["C-ONE"],
+            "policy": slack_status["policyCanonical"],
+        }
+    )
+    assert reused["configuration"]["clientId"] == "slack-public-client"
+    assert reused["socketReady"] is True
+
+
+@pytest.mark.parametrize("runtime_type", [CalendarRuntime, SlackRuntime])
+def test_partial_configuration_preserves_saved_consent_and_public_setup(tmp_path, runtime_type):
+    database, store, transport = services(tmp_path)
+    runtime = runtime_type(database, account_id="personal", secret_store=store, transport=transport)
+    payload = {
+        "clientId": "public-client",
+        "currentUserId": "U-SAVED",
+        "redirectUri": "http://127.0.0.1:53682/oauth/callback",
+        "policy": {
+            "scope": "selected",
+            "interruption": "priority",
+            "retention": "extended-cache",
+            "assistance": "confirm-execute",
+            "selectedSources": ["saved-source"],
+        },
+    }
+    before = runtime.configure(payload)
+    unchanged = runtime.configure({})
+    assert unchanged["policyCanonical"] == before["policyCanonical"]
+    assert unchanged["configuration"] == before["configuration"]
+    updated = runtime.configure({"policy": {"interruption": "quiet"}})
+    assert updated["policyCanonical"] == {
+        **before["policyCanonical"], "interruption": "quiet"
+    }
+    assert updated["configuration"] == before["configuration"]
+    assert not transport.requests
+
+
+def test_slack_configuration_can_explicitly_clear_selected_sources(tmp_path):
+    database, store, transport = services(tmp_path)
+    runtime = SlackRuntime(database, account_id="personal", secret_store=store, transport=transport)
+    runtime.configure({"clientId": "public-client", "selectedChannels": ["C-SAVED"]})
+    cleared = runtime.configure({"selectedChannels": []})
+    assert cleared["policyCanonical"]["selectedSources"] == []
+
+
 def test_retention_downgrade_removes_encrypted_content(tmp_path):
     database, store, transport = services(tmp_path)
     runtime = SlackRuntime(

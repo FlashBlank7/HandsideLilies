@@ -32,7 +32,7 @@ from .activity import (
     capture_window_image_via_print_window,
     encode_window_image_png,
 )
-from ..paths import DataRootUnavailableError, data_root
+from ..paths import DataRootPurpose, DataRootUnavailableError, data_root
 
 
 _CAPTURE_NAME = re.compile(r"capture-[0-9a-f]{32}\.png", re.ASCII)
@@ -66,7 +66,10 @@ def native_capture_helper_available() -> bool:
 
 
 def _resolved_staging_destination(value: str | Path) -> tuple[Path, Path]:
-    root = (data_root() / "capture-staging").resolve()
+    root = (
+        data_root(purpose=DataRootPurpose.NATIVE_CAPTURE_HELPER)
+        / "capture-staging"
+    ).resolve()
     destination = Path(value).resolve()
     if destination.parent != root or not _CAPTURE_NAME.fullmatch(destination.name):
         raise ValueError("capture destination is outside private staging")

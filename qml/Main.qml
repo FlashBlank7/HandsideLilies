@@ -318,6 +318,14 @@ Window {
                                 Number.NaN, Number.NaN)
     }
 
+    WheelStepAccumulator { id: petWheelSteps }
+
+    function resizeCompactPetFromWheel(angleDelta) {
+        var steps = petWheelSteps.consume(angleDelta)
+        if (steps !== 0)
+            resizeCompactPet(steps * 12, true)
+    }
+
     function resizeCompactPetForDrag(delta, persistDeferred, clampDuringResize,
                                      interactionGlobalX, interactionGlobalY) {
         var areaX = Number(interactionGlobalX)
@@ -697,9 +705,15 @@ Window {
 
     Timer {
         id: compactLayoutPersistTimer
+        objectName: "compactLayoutPersistTimer"
         interval: 220
         repeat: false
-        onTriggered: desktop.persistCompactLayout()
+        onTriggered: {
+            // A timer already posted before a rapid re-grab must not commit
+            // SQLite or change habitat size during the new held gesture.
+            if (!petWindow.manualDragActive && !petWindow.resizeDragActive)
+                desktop.persistCompactLayout()
+        }
     }
 
     Timer {
@@ -1767,6 +1781,9 @@ Window {
         // Offscreen/unsupported platforms keep the deterministic fallback.
         property bool nativeSystemMoveActive: false
         property bool nativeSystemMoveAttempted: false
+        readonly property bool nativeDragAwaitingThreshold:
+            manualDragActive && backend.petDragMode === "system"
+            && !nativeSystemMoveAttempted
         property bool nativeSystemMoveStartPending: false
         property int nativeSystemMoveGestureCounter: 0
         property int nativeSystemMoveGestureSerial: 0
@@ -2065,6 +2082,10 @@ Window {
                     || !isFinite(cursorX) || !isFinite(cursorY))
                 return 0
             manualDragActive = true
+            compactLayoutPersistTimer.stop()
+            if (nativeMoveController
+                    && typeof nativeMoveController.beginDragProxyGesture === "function")
+                nativeMoveController.beginDragProxyGesture()
             var heldWindow = cancelPositionAnimations()
             nativeSystemMoveActive = false
             nativeSystemMoveAttempted = false
@@ -2097,17 +2118,17 @@ Window {
             // turn.  A delayed 40 ms lock lets the pet begin moving itself
             // after the user has already taken hold of it.
             backend.setPetInteractionLock("character", true)
+            compactLilith.interactionSnap = true
             return nativeSystemMoveGestureSerial
         }
 
         function startPreparedCharacterGesture(gestureSerial) {
             var serial = Number(gestureSerial)
-            if (!manualDragActive || serial <= 0
+            if (!manualDragActive || !dragMoved || serial <= 0
                     || serial !== nativeSystemMoveGestureSerial)
                 return false
-            // The native bridge may call this on the turn immediately after
-            // WM_LBUTTONDOWN.  The regular QML path calls it synchronously;
-            // both therefore share exactly one state transition.
+            // A stationary press belongs to Qt. Only the event-time movement
+            // threshold may hand the gesture to the native window manager.
             var nativeStarted = tryNativeSystemMove(
                 dragLatchedSnapshotKey, dragLatchedGeometryKey)
             if (!nativeStarted || !nativeSystemMoveUsesProxy) {
@@ -2318,6 +2339,9 @@ Window {
             if (nativeMoveController && completedSerial > 0)
                 nativeMoveController.acknowledgeSystemMoveFinished(
                     completedSerial)
+            if (nativeMoveController
+                    && typeof nativeMoveController.endDragProxyGesture === "function")
+                nativeMoveController.endDragProxyGesture()
             if (!actualMoved) {
                 applyHabitatState()
                 if (Boolean(toggleIfStationary))
@@ -2396,11 +2420,6 @@ Window {
                 // second object was accidentally grabbed.  Collapse it as
                 // soon as this gesture is unambiguously a drag.
                 compactWindow.expanded = false
-                // The normal Windows path already requested ownership during
-                // the press event. A late retry is only a compatibility
-                // guard; do not submit duplicate geometry in this frame.
-                if (allowNativeStart !== false && tryNativeSystemMove())
-                    return
             }
             if (nativeSystemMoveStartPending || nativeSystemMoveActive)
                 return
@@ -2429,6 +2448,12 @@ Window {
             // figure recoverable without clamping the much larger transparent
             // canvas, while the held point remains under the real cursor.
             moveWindowForDrag(targetX, targetY)
+            // Prime the real window once to the original grabbed point before
+            // User32 establishes its own offset. This same event already
+            // proved a drag, so even an immediate out-and-back/release cannot
+            // be reclassified as a stationary menu click by a later poll.
+            if (allowNativeStart !== false && !nativeSystemMoveAttempted)
+                startPreparedCharacterGesture(nativeSystemMoveGestureSerial)
         }
 
         function consumePointerEvent(pointerX, pointerY) {
@@ -2476,6 +2501,13 @@ Window {
         function followPointerEvent(pointerX, pointerY) {
             if (!manualDragActive)
                 return
+            if (backend.petDragMode === "system"
+                    && !nativeSystemMoveAttempted) {
+                var cursor = consumePointerEvent(pointerX, pointerY)
+                lastCapturedPointerEventAt = Date.now()
+                followPointerAtInternal(cursor.x, cursor.y, true)
+                return
+            }
             dragFallbackPointerX = Number(pointerX)
             dragFallbackPointerY = Number(pointerY)
             dragPointerEventPending = true
@@ -2538,6 +2570,8 @@ Window {
             if (!manualDragActive || nativeSystemMoveStartPending
                     || nativeSystemMoveActive)
                 return
+            if (backend.petDragMode === "system" && !nativeSystemMoveAttempted)
+                return
             if (followPendingPointerEventInternal(true))
                 return
             // MouseArea can miss a position callback while the native tool
@@ -2562,6 +2596,8 @@ Window {
             running: petWindow.manualDragActive
                      && !petWindow.nativeSystemMoveActive
                      && !petWindow.nativeSystemMoveStartPending
+                     && (backend.petDragMode !== "system"
+                         || petWindow.nativeSystemMoveAttempted)
             onTriggered: petWindow.followPointerFrame()
         }
         Timer {
@@ -2972,10 +3008,8 @@ Window {
                 z: 3
                 onCharacterPressStarted: function(pointerX, pointerY) {
                     var cursor = petWindow.consumePointerEvent(pointerX, pointerY)
-                    var serial = petWindow.prepareCharacterGestureAtGlobal(
+                    petWindow.prepareCharacterGestureAtGlobal(
                         cursor.x, cursor.y)
-                    if (serial > 0)
-                        petWindow.startPreparedCharacterGesture(serial)
                 }
                 onCharacterPointerMoved: function(pointerX, pointerY) {
                     petWindow.followPointerEvent(pointerX, pointerY)
@@ -3005,7 +3039,7 @@ Window {
                     petWindow.finishCharacterGesture(moved, false, 0)
                 }
                 onWheelStepped: function(steps) {
-                    desktop.resizeCompactPet(steps > 0 ? 12 : -12, true)
+                    desktop.resizeCompactPetFromWheel(steps * 120)
                 }
             }
 
@@ -3304,8 +3338,7 @@ Window {
                 WheelHandler {
                     onWheel: function(event) {
                         if (event.angleDelta.y === 0) return
-                        desktop.resizeCompactPet(
-                            event.angleDelta.y > 0 ? 12 : -12, true)
+                        desktop.resizeCompactPetFromWheel(event.angleDelta.y)
                         event.accepted = true
                     }
                 }
@@ -3545,15 +3578,20 @@ Window {
                         onTriggered:
                             componentMoveDrag.flushPendingTranslation()
                     }
+                    WheelStepAccumulator { id: componentWheelSteps }
                     WheelHandler {
                         enabled: compactWindow.actionsInteractive && actionClick.containsMouse
                         onWheel: function(event) {
                             if (event.angleDelta.y === 0) return
-                            componentButton.buttonScale = Math.max(0.70, Math.min(1.55,
-                                componentButton.buttonScale + (event.angleDelta.y > 0 ? 0.06 : -0.06)))
+                            event.accepted = true
+                            var steps = componentWheelSteps.consume(event.angleDelta.y)
+                            if (steps === 0) return
+                            var nextScale = Math.max(0.70, Math.min(1.55,
+                                componentButton.buttonScale + steps * 0.06))
+                            if (nextScale === componentButton.buttonScale) return
+                            componentButton.buttonScale = nextScale
                             backend.saveComponentLayout(modelData.action, componentButton.offsetX,
                                                         componentButton.offsetY, componentButton.buttonScale)
-                            event.accepted = true
                         }
                     }
                 }
@@ -3713,14 +3751,20 @@ Window {
                              && accessoryDrag.translationPending
                     onTriggered: accessoryDrag.flushPendingTranslation()
                 }
+                WheelStepAccumulator { id: accessoryWheelSteps }
                 WheelHandler {
                     onWheel: function(event) {
-                        compactWindow.accessoryScale = Math.max(0.28, Math.min(0.66,
-                            compactWindow.accessoryScale + (event.angleDelta.y > 0 ? 0.025 : -0.025)))
+                        if (event.angleDelta.y === 0) return
+                        event.accepted = true
+                        var steps = accessoryWheelSteps.consume(event.angleDelta.y)
+                        if (steps === 0) return
+                        var nextScale = Math.max(0.28, Math.min(0.66,
+                            compactWindow.accessoryScale + steps * 0.025))
+                        if (nextScale === compactWindow.accessoryScale) return
+                        compactWindow.accessoryScale = nextScale
                         backend.saveAccessoryBoxLayout(compactWindow.accessoryDx,
                                                        compactWindow.accessoryDy,
                                                        compactWindow.accessoryScale)
-                        event.accepted = true
                     }
                 }
             }
@@ -6096,7 +6140,7 @@ Window {
                                 Label {
                                     Layout.fillWidth: true
                                     text: backend.petDragMode === "system"
-                                          ? "由 Windows 和桌面合成器直接接管，跟手最稳定；系统拒绝时自动回退。"
+                                          ? "由 Windows 直接移动真实莉莉丝窗口，不经过截图替身；系统拒绝时再使用兼容路径。"
                                           : "兼容模式按渲染帧合并鼠标事件；仅建议在原生拖动不可用时选择。"
                                     color: "#746f67"
                                     wrapMode: Text.Wrap

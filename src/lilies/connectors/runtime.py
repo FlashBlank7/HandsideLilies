@@ -220,6 +220,18 @@ class _RuntimeBase:
         value = self.database.get_setting(f"connector_{self.connector_id}_policy", {})
         return ConnectorPolicyAxes.from_mapping(value if isinstance(value, dict) else {})
 
+    def _configuration_policy(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        """A configuration patch cannot silently reset omitted consent axes."""
+        policy = self.axes.to_dict(localized=False)
+        incoming = value.get("policy")
+        if incoming is not None:
+            if not isinstance(incoming, Mapping):
+                raise ValueError("Connector policy must be an object")
+            policy.update(incoming)
+            if "selected_sources" in incoming and "selectedSources" not in incoming:
+                policy["selectedSources"] = incoming["selected_sources"]
+        return ConnectorPolicyAxes.from_mapping(policy).to_dict(localized=False)
+
     def set_policy(self, value: Mapping[str, Any]) -> dict[str, Any]:
         previous = self.axes
         axes = ConnectorPolicyAxes.from_mapping(value)
@@ -862,12 +874,16 @@ class CalendarRuntime(_RuntimeBase):
         )
 
     def configure(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        client_id = str(value.get("clientId", "")).strip()
+        # ``clientId`` is public OAuth application configuration, not a
+        # credential.  Reuse the saved value when the UI submits only a policy
+        # edit so reconnecting never requires the user to paste it again.
+        client_id = str(value.get("clientId", "")).strip() or self._client_id().strip()
         if not client_id or len(client_id) > 500:
             raise ValueError("Google Desktop OAuth client_id is required")
+        policy = self._configuration_policy(value)
         self.database.set_setting("connector_calendar_client_id", client_id)
-        if isinstance(value.get("policy"), Mapping):
-            self.set_policy(value["policy"])
+        if "policy" in value:
+            self.set_policy(policy)
         self._save_account(connected=False, metadata={"configured": True})
         return self.status()
 
@@ -898,14 +914,21 @@ class CalendarRuntime(_RuntimeBase):
 
     def status(self) -> dict[str, Any]:
         value = super().status()
-        configured = bool(self._client_id())
+        client_id = self._client_id()
+        configured = bool(client_id)
         connected = False
         if configured:
             try:
                 connected = bool(self._connector().load_tokens())
             except Exception:
                 connected = False
-        value.update(configured=configured, connected=connected)
+        # This projection is deliberately allow-listed.  Tokens remain solely
+        # in SecretStore and can never be reflected into QML.
+        value.update(
+            configured=configured,
+            connected=connected,
+            configuration={"clientId": client_id},
+        )
         value["state"] = "connected" if connected else ("configured" if configured else "not-configured")
         return value
 
@@ -1123,20 +1146,28 @@ class SlackRuntime(_RuntimeBase):
         )
 
     def configure(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        client_id = str(value.get("clientId", "")).strip()
+        previous = self._configuration()
+        # As with Calendar, the client ID is non-secret application metadata.
+        # A blank policy-only submission must not erase a working setup.
+        client_id = str(value.get("clientId", "")).strip() or str(
+            previous.get("clientId", "")
+        ).strip()
         if not client_id:
             raise ValueError("Slack client_id is required")
-        current_user = str(value.get("currentUserId", "")).strip()
-        selected = value.get("selectedChannels", [])
-        if isinstance(selected, str):
-            selected = [part.strip() for part in selected.split(",") if part.strip()]
-        policy = dict(value.get("policy") or {})
-        policy["selectedSources"] = selected
+        current_user = str(value.get("currentUserId", previous.get("currentUserId", ""))).strip()
+        policy = self._configuration_policy(value)
+        if "selectedChannels" in value:
+            selected = value["selectedChannels"]
+            if isinstance(selected, str):
+                selected = [part.strip() for part in selected.split(",") if part.strip()]
+            if not isinstance(selected, (list, tuple)):
+                raise ValueError("Selected Slack channels must be a list")
+            policy["selectedSources"] = selected
         self.set_policy(policy)
         configuration = {
             "clientId": client_id,
             "currentUserId": current_user,
-            "redirectUri": str(value.get("redirectUri", "")).strip(),
+            "redirectUri": str(value.get("redirectUri", previous.get("redirectUri", ""))).strip(),
         }
         self.database.set_setting("connector_slack_configuration", configuration)
         connector = self._connector()
@@ -1181,7 +1212,8 @@ class SlackRuntime(_RuntimeBase):
 
     def status(self) -> dict[str, Any]:
         value = super().status()
-        configured = bool(self._configuration().get("clientId"))
+        configuration = self._configuration()
+        configured = bool(configuration.get("clientId"))
         connected = False
         socket_ready = False
         if configured:
@@ -1191,7 +1223,19 @@ class SlackRuntime(_RuntimeBase):
                 socket_ready = bool(self.secret_store.get_text(connector._app_token_key()))
             except Exception:
                 pass
-        value.update(configured=configured, connected=connected, socketReady=socket_ready, workspace=self.account_id)
+        # Never merge the stored xapp/OAuth material here.  QML receives only
+        # the public fields needed to edit or reconnect the custom app.
+        value.update(
+            configured=configured,
+            connected=connected,
+            socketReady=socket_ready,
+            workspace=self.account_id,
+            configuration={
+                "clientId": str(configuration.get("clientId", "")),
+                "currentUserId": str(configuration.get("currentUserId", "")),
+                "redirectUri": str(configuration.get("redirectUri", "")),
+            },
+        )
         value["state"] = "connected" if connected else ("configured" if configured else "not-configured")
         return value
 

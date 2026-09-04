@@ -1036,8 +1036,10 @@ def test_foreground_change_aborts_context_bound_companion_generation(tmp_path) -
         "hasCapture",
         "hasSource",
         "manualCapture",
+        "anchorContinuation",
     }
     assert payload["manualCapture"] is False
+    assert payload["anchorContinuation"] is False
     assert runtime.aborted == [LUNA_MODEL]
     assert all(broker.get(task_id).state is ModelTaskState.CANCELLED for task_id in cancelled_ids)
     controller.shutdown()

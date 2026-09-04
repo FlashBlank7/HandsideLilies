@@ -36,6 +36,9 @@ def test_cross_dpi_and_extreme_work_area_layouts_offscreen(
     assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
     outcome = json.loads(completed.stdout.strip().splitlines()[-1])
     assert outcome["platform"] == "offscreen"
+    assert outcome["nativeThresholdEventTime"]["passed"] is True
+    assert outcome["nativeThresholdEventTime"]["qtScaleFactor"] == qt_scale_factor
+    assert outcome["dragTimerCapturedEvent"]["dragMode"] == "direct"
     assert outcome["passed"] is True
     assert outcome["focusAuraBinding"]["passed"] is True
     assert len(outcome["radialMenu"]) == 4

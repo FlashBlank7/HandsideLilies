@@ -112,7 +112,13 @@ def test_helper_cli_dispatch_is_before_qt_and_single_instance_work() -> None:
 def test_destination_is_limited_to_private_capture_staging_png(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(helper_module, "data_root", lambda: tmp_path / "private")
+    purposes: list[object] = []
+
+    def helper_data_root(*, purpose: object) -> Path:
+        purposes.append(purpose)
+        return tmp_path / "private"
+
+    monkeypatch.setattr(helper_module, "data_root", helper_data_root)
     valid = tmp_path / "private" / "capture-staging" / ("capture-" + "a" * 32 + ".png")
     root, destination = helper_module._resolved_staging_destination(valid)
     assert root == (tmp_path / "private" / "capture-staging").resolve()
@@ -127,6 +133,8 @@ def test_destination_is_limited_to_private_capture_staging_png(
     for candidate in invalid:
         with pytest.raises(ValueError, match="private staging"):
             helper_module._resolved_staging_destination(candidate)
+
+    assert purposes == [helper_module.DataRootPurpose.NATIVE_CAPTURE_HELPER] * 5
 
 
 def test_parent_helper_adopts_valid_png_from_expected_destination(

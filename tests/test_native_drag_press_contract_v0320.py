@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_native_system_move_is_requested_from_character_press() -> None:
+def test_character_press_prepares_and_only_event_time_drag_starts_native() -> None:
     source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
     prepare_start = source.index("function prepareCharacterGestureAtGlobal(")
     starter_start = source.index("function startPreparedCharacterGesture(")
@@ -18,11 +18,12 @@ def test_native_system_move_is_requested_from_character_press() -> None:
     press_handler = source[press_start:move_start]
 
     assert "petWindow.prepareCharacterGestureAtGlobal(" in press_handler
-    assert "petWindow.startPreparedCharacterGesture(serial)" in press_handler
+    assert "startPreparedCharacterGesture" not in press_handler
     assert "dragLatchedSnapshotKey = compactDragSnapshotKey" in prepare_handler
     assert "dragLatchedGeometryKey = compactDragGeometryKey" in prepare_handler
     assert "dragStartCursorY = cursorY" in prepare_handler
     assert "tryNativeSystemMove(" in starter_handler
+    assert "!dragMoved" in starter_handler
     assert "dragLatchedSnapshotKey, dragLatchedGeometryKey" in starter_handler
     assert 'backend.setPetInteractionLock("character", true)' in prepare_handler
     assert "function beginNativeCharacterPress(" in starter_handler
@@ -92,7 +93,7 @@ def test_qml_uses_boolean_preserving_python_system_move_bridge() -> None:
     assert "self._prepare_proxy_system_move(" in app_source
     assert "str(semantic_key or \"\")" in app_source
     assert "str(geometry_key or \"\")" in app_source
-    assert "started = bool(self.root.startSystemMove())" in app_source
+    assert "return bool(self.root.startSystemMove())" in app_source
     assert 'pet_window.setProperty("nativeMoveController", pointer_event_filter)' in app_source
 
 
@@ -220,6 +221,7 @@ def test_drag_freezes_pose_and_defers_detach_until_after_release() -> None:
     interaction_snap = starter_handler.index("compactLilith.interactionSnap = true")
     assert fallback_guard < interaction_snap
     assert starter_handler.count("compactLilith.interactionSnap = true") == 1
+    assert "compactLilith.interactionSnap = true" in prepare_handler
     assert 'backend.setPetInteractionLock("character", true)' in prepare_handler
     assert "dragInteractionLockTimer" not in source
     assert "orbitProgressAnimation.stop()" in source

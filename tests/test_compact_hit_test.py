@@ -155,7 +155,50 @@ def test_native_filter_never_resolves_win_id_while_dispatching():
 
 
 @pytest.mark.skipif(os.name != "nt", reason="exercises the Windows MSG bridge")
-def test_native_character_press_is_claimed_before_qml_mouse_delivery():
+@pytest.mark.parametrize(
+    "message_type",
+    [
+        CompactHitTestFilter.WM_LBUTTONDOWN,
+        CompactHitTestFilter.WM_LBUTTONUP,
+        CompactHitTestFilter.WM_LBUTTONDBLCLK,
+    ],
+)
+def test_default_native_press_filter_preserves_synchronous_qml_input(
+    message_type,
+):
+    calls: list[str] = []
+
+    class _Controller:
+        def queueNativeCharacterPress(self, *_args):
+            calls.append("queue")
+            return True
+
+        def handleNativeCharacterRelease(self):
+            calls.append("release")
+            return True
+
+    backend = _Backend()
+    backend.petDragMode = "system"
+    hit_test = CompactHitTestFilter(
+        _Root(), backend, _Controller(), native_window_id=4242
+    )
+    hit_test._native_character_accepts_point = lambda *_args: (
+        calls.append("hit-geometry") or True
+    )
+    message = wintypes.MSG()
+    message.hWnd = 4242
+    message.message = message_type
+    message.lParam = (200 << 16) | 160
+
+    assert hit_test.queued_press_compatibility is False
+    assert hit_test.nativeEventFilter(
+        b"windows_generic_MSG", ctypes.addressof(message)
+    ) == (False, 0)
+    assert calls == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="exercises the Windows MSG bridge")
+def test_opt_in_native_press_compatibility_claims_before_qml_delivery():
     class _NativePressRoot(_Root):
         def devicePixelRatio(self):
             return 1.5
@@ -223,6 +266,7 @@ def test_native_character_press_is_claimed_before_qml_mouse_delivery():
         _NativePressBackend(),
         native_window_id=4242,
         native_move_controller=controller,
+        queued_press_compatibility=True,
     )
 
     # Client coordinates arrive in physical pixels.  (240, 300) maps to the
@@ -352,6 +396,7 @@ def test_native_character_press_does_not_claim_accessory_or_direct_mode():
         backend,
         native_window_id=4242,
         native_move_controller=controller,
+        queued_press_compatibility=True,
     )
     message = wintypes.MSG()
     message.hWnd = 4242
@@ -420,6 +465,7 @@ def test_native_down_and_up_never_call_qml_before_user32_returns():
         _NativePressBackend(),
         native_window_id=4242,
         native_move_controller=controller,
+        queued_press_compatibility=True,
     )
     press = wintypes.MSG()
     press.hWnd = 4242
@@ -643,20 +689,9 @@ def _start_qt_system_move_compatibility(
     event_filter: CompactPointerEventFilter,
     gesture_serial: int,
 ) -> bool:
-    """Exercise the retained non-Windows Qt compatibility branch on Windows.
+    """Exercise the same real-window-first branch used on Windows."""
 
-    Production Windows tests use the sentinel-backed layered proxy. Tests for
-    QML/filter/diagnostic bookkeeping that do not construct that proxy still
-    need a deterministic way to cover Qt's cross-platform startSystemMove
-    result without re-enabling the unsafe Windows fallback.
-    """
-
-    original_name = os.name
-    try:
-        os.name = "posix"
-        return event_filter.tryStartSystemMove(gesture_serial)
-    finally:
-        os.name = original_name
+    return event_filter.tryStartSystemMove(gesture_serial)
 
 
 class _QueuedNativePressRoot(QObject):
@@ -976,7 +1011,9 @@ class _ProxyMoveRoot(_NativeMoveRoot):
 
     def startSystemMove(self):
         self.system_move_starts += 1
-        return True
+        # Proxy-specific fixtures explicitly reject the preferred live-window
+        # request; production only enters this fallback after that rejection.
+        return False
 
     def requestUpdate(self):
         self.update_requests += 1
@@ -1178,7 +1215,7 @@ def test_cached_proxy_moves_only_preview_then_commits_real_window_once(
 
     event_filter._reset_drag_diagnostics()
     assert event_filter.tryStartSystemMove(361) is True
-    assert root.system_move_starts == 0
+    assert root.system_move_starts == 1
     assert root.opacity_value == 1.0
     assert root.opacity_writes == []
     assert native_visibility == [(root_window_id, False)]
@@ -1590,7 +1627,7 @@ def test_native_hide_start_failure_restores_before_direct_frame_fallback(monkeyp
         (root_window_id, False),
         (root_window_id, True),
     ]
-    assert root.system_move_starts == 0
+    assert root.system_move_starts == 1
     assert root.opacity_writes == []
     assert event_filter._proxy_root_native_hidden is False
     assert event_filter._active_system_move_window_id == 0
@@ -1652,7 +1689,7 @@ def test_interrupted_proxy_ack_cancels_native_loop_before_commit(monkeypatch) ->
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows proxy branch")
-def test_stale_proxy_falls_back_without_starting_unguarded_root_system_move(
+def test_stale_proxy_falls_back_after_one_rejected_root_system_move(
     monkeypatch,
 ) -> None:
     root = _ProxyMoveRoot()
@@ -1674,7 +1711,7 @@ def test_stale_proxy_falls_back_without_starting_unguarded_root_system_move(
 
     event_filter._reset_drag_diagnostics()
     assert event_filter.tryStartSystemMove(362) is False
-    assert root.system_move_starts == 0
+    assert root.system_move_starts == 1
     assert root.opacity_value == 1.0
     assert event_filter._diagnostic_proxy_used is False
     assert event_filter._proxy_fallback_reason == "stale-key"
@@ -1792,7 +1829,7 @@ def test_proxy_start_failure_restores_root_origin_before_direct_fallback(
 
     event_filter._reset_drag_diagnostics()
     assert event_filter.tryStartSystemMove(365) is False
-    assert root.system_move_starts == 0
+    assert root.system_move_starts == 1
     assert root.opacity_value == 1.0
     assert event_filter._active_system_move_window_id == 0
     assert event_filter._system_move_origin_physical == (100, 200)

@@ -16,6 +16,7 @@ class _MoveRoot(QObject):
     def __init__(self) -> None:
         super().__init__()
         self.system_move_starts = 0
+        self.system_move_result = True
 
     def property(self, key: str):
         if key == "compactDragSnapshotKey":
@@ -26,7 +27,7 @@ class _MoveRoot(QObject):
 
     def startSystemMove(self) -> bool:
         self.system_move_starts += 1
-        return True
+        return self.system_move_result
 
     def devicePixelRatio(self) -> float:
         return 1.5
@@ -81,7 +82,7 @@ def test_character_press_hot_path_never_captures_a_new_proxy_frame() -> None:
     native_handler = qml_source[native_start:native_end]
 
     assert "petWindow.prepareCharacterGestureAtGlobal(" in press_handler
-    assert "petWindow.startPreparedCharacterGesture(serial)" in press_handler
+    assert "startPreparedCharacterGesture" not in press_handler
     assert "dragLatchedSnapshotKey = compactDragSnapshotKey" in prepare_handler
     assert "dragLatchedGeometryKey = compactDragGeometryKey" in prepare_handler
     assert "tryNativeSystemMove(" in starter_handler
@@ -168,7 +169,7 @@ def test_proxy_snapshot_is_precached_only_from_the_idle_debounce_path() -> None:
     assert "self.item.grabToImage(target)" in request_pipeline
 
 
-def test_system_move_attempts_cached_proxy_before_the_real_window() -> None:
+def test_system_move_uses_real_window_without_preparing_any_proxy() -> None:
     root = _MoveRoot()
     event_filter = CompactPointerEventFilter(root)
     calls: list[str] = []
@@ -186,14 +187,77 @@ def test_system_move_attempts_cached_proxy_before_the_real_window() -> None:
     root.startSystemMove = lambda: calls.append("root") or True
 
     assert event_filter.tryStartSystemMove(4801, "latched-pose", "latched-geometry") is True
-    assert calls == ["proxy:latched-pose:latched-geometry"]
+    assert calls == ["root"]
+    assert event_filter._root_system_move_attempts == 1
+    assert event_filter._root_system_move_rejection == ""
+    # A repeated bridge request must not create a second window owner.
+    assert event_filter.tryStartSystemMove(4801) is True
+    assert event_filter.tryStartSystemMove(4899) is False
+    assert calls == ["root"]
     event_filter.acknowledgeSystemMoveFinished(4801)
+    report = event_filter.dragDiagnosticsSnapshot()
+    assert report["mode"] == "native"
+    assert report["rootSystemMoveAttempts"] == 1
+    assert report["rootSystemMoveRejection"] == ""
+    assert report["proxyBitmapWidth"] == 0
+    assert report["proxyRealGeometryCommits"] == 0
+
+
+def test_system_move_only_attempts_proxy_after_live_window_refusal() -> None:
+    root = _MoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    calls: list[str] = []
+    root.startSystemMove = lambda: calls.append("root") or False
+    event_filter._prepare_proxy_system_move = lambda *_args: (
+        calls.append("proxy") or True
+    )
+
+    assert event_filter.tryStartSystemMove(4803) is True
+    assert calls == ["root", "proxy"]
+    assert event_filter._root_system_move_rejection == "platform-refused"
+    event_filter.acknowledgeSystemMoveFinished(4803)
+
+
+def test_reentrant_native_finish_never_starts_a_proxy_or_resurrects_owner() -> None:
+    root = _MoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+    calls: list[str] = []
+
+    def native_start() -> bool:
+        calls.append("root")
+        event_filter.acknowledgeSystemMoveFinished(4804)
+        return False
+
+    root.startSystemMove = native_start
+    event_filter._prepare_proxy_system_move = lambda *_args: (
+        calls.append("proxy") or True
+    )
+    assert event_filter.tryStartSystemMove(4804) is False
+    assert calls == ["root"]
+    assert event_filter.native_system_move_active is False
+    assert event_filter._active_system_move_session_id == 0
+
+
+def test_native_exception_is_bounded_and_preserves_direct_fallback() -> None:
+    root = _MoveRoot()
+    event_filter = CompactPointerEventFilter(root)
+
+    def native_start() -> bool:
+        raise RuntimeError("do not copy platform text into diagnostics")
+
+    root.startSystemMove = native_start
+    event_filter._prepare_proxy_system_move = lambda *_args: False
+    assert event_filter.tryStartSystemMove(4805) is False
+    assert event_filter._root_system_move_attempts == 1
+    assert event_filter._root_system_move_rejection == "platform-error"
+    assert event_filter.native_system_move_active is False
 
 
 def test_proxy_cache_failure_explicitly_falls_back_to_frame_animation(
     monkeypatch,
 ) -> None:
     root = _MoveRoot()
+    root.system_move_result = False
     event_filter = CompactPointerEventFilter(root)
     event_filter._native_drag_filter = SimpleNamespace(native_window_id=4321)
     cache = _UnavailableCache()
@@ -212,7 +276,7 @@ def test_proxy_cache_failure_explicitly_falls_back_to_frame_animation(
     ]
     assert event_filter._proxy_fallback_reason == "stale-key"
     assert event_filter._diagnostic_proxy_used is False
-    assert root.system_move_starts == 0
+    assert root.system_move_starts == 1
     assert event_filter.native_system_move_active is False
     event_filter.endDragProxyGesture()
 

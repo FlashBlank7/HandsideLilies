@@ -101,7 +101,13 @@ from .core.windows import (
     system_status,
     window_fully_occluded,
 )
-from .paths import data_root, legacy_data_root, theme_root, to_file_url
+from .paths import (
+    DataRootPurpose,
+    data_root,
+    legacy_data_root,
+    theme_root,
+    to_file_url,
+)
 
 
 _PRODUCTIVITY_COMPONENT_MUTATIONS = frozenset(
@@ -311,10 +317,16 @@ class Backend(QObject):
         self._database_session: Any | None = None
         self._preview_mode = smoke
         self._status = "盒子已连接 · 本地"
-        self.data_directory = data_root()
+        self.data_directory = data_root(
+            purpose=(
+                DataRootPurpose.DIAGNOSTIC
+                if smoke
+                else DataRootPurpose.PRODUCTION
+            )
+        )
         self._migration_session = secrets.token_hex(16)
         self._migration_result: dict[str, Any] = {"status": "diagnostic"}
-        if not smoke and not os.environ.get("LILIES_DATA_DIR"):
+        if not smoke:
             migration = prepare_private_data(self.data_directory, legacy_data_root())
             self._migration_result = {
                 "status": migration.status,
@@ -744,7 +756,7 @@ class Backend(QObject):
                 )
             if slack_status.get("connected") and slack_status.get("socketReady"):
                 QTimer.singleShot(0, self.slack_socket.start)
-        if not smoke and not os.environ.get("LILIES_DATA_DIR"):
+        if not smoke:
             self._migration_result = validate_startup_and_finalize(
                 self.data_directory,
                 legacy_data_root(),

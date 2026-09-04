@@ -56,6 +56,7 @@ from .core.socket_server import (
 from .paths import (
     APP_NAME,
     WINDOWS_PRIVATE_DATA_ROOT,
+    DataRootPurpose,
     DataRootUnavailableError,
     configure_qt_cache_environment,
     data_root,
@@ -64,6 +65,7 @@ from .paths import (
 )
 from .drag_proxy_snapshot import DragProxySnapshotCache
 from .windows_drag_proxy import WindowRect
+from .root_system_move_guard import RootSystemMoveGuard
 
 
 class CompactHitTestFilter(QAbstractNativeEventFilter):
@@ -89,6 +91,7 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         native_move_controller: CompactPointerEventFilter | None = None,
         *,
         native_window_id: int,
+        queued_press_compatibility: bool = False,
     ) -> None:
         super().__init__()
         self.root = root
@@ -100,6 +103,11 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         # helper it owns can enter QWindowPrivate::create() while User32 is
         # already dispatching a message.
         self.native_window_id = int(native_window_id)
+        # Normal presses must reach Qt Quick synchronously: startSystemMove
+        # relies on Qt's current button/capture state.  The historical raw
+        # DOWN -> zero-delay screenshot-proxy bridge is available only to
+        # explicitly configured compatibility callers, never by default.
+        self.queued_press_compatibility = bool(queued_press_compatibility)
         self.native_dispatch_count = 0
         self.native_hit_test_count = 0
         self._native_move_motion_latched = False
@@ -117,6 +125,10 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         self._native_device_pixel_ratio = 1.0
         self._native_window_origin = (0.0, 0.0)
         self._native_snapshot_ready = False
+        self._native_origin_signals: list[object] = []
+        self._native_origin_paused_signals: list[object] = []
+        self._native_observers_suspended = False
+        self._native_refresh_was_running = False
         find_child = getattr(root, "findChild", None)
         if callable(find_child):
             controls: list[QQuickItem] = []
@@ -202,8 +214,43 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
                     continue
                 try:
                     signal.connect(self._refresh_native_window_origin)
+                    self._native_origin_signals.append(signal)
                 except (AttributeError, RuntimeError, TypeError):
                     pass
+
+    def suspend_drag_observers(self) -> None:
+        """Remove signal callbacks too, not only the native event filter."""
+        if self._native_observers_suspended:
+            return
+        self._native_observers_suspended = True
+        timer = self._native_hit_refresh_timer
+        self._native_refresh_was_running = bool(timer and timer.isActive())
+        if timer is not None:
+            timer.stop()
+        for signal in self._native_origin_signals:
+            try:
+                signal.disconnect(self._refresh_native_window_origin)
+                self._native_origin_paused_signals.append(signal)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+
+    def resume_drag_observers(self) -> None:
+        if not self._native_observers_suspended:
+            return
+        self._native_observers_suspended = False
+        # Refresh once at the terminal boundary before hit testing resumes.
+        self._refresh_native_window_origin()
+        self._refresh_native_hit_snapshot()
+        paused = self._native_origin_paused_signals
+        self._native_origin_paused_signals = []
+        for signal in paused:
+            try:
+                signal.connect(self._refresh_native_window_origin)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+        if self._native_refresh_was_running and self._native_hit_refresh_timer is not None:
+            self._native_hit_refresh_timer.start()
+        self._native_refresh_was_running = False
 
     @staticmethod
     def _finite_property(root: object, name: str, default: float = 0.0) -> float:
@@ -214,6 +261,8 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         return value if math.isfinite(value) else float(default)
 
     def _refresh_native_window_origin(self, *_args: object) -> None:
+        if self._native_observers_suspended:
+            return
         try:
             x = float(self.root.x())
             y = float(self.root.y())
@@ -261,6 +310,8 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
         return left, top, width, height
 
     def _refresh_native_hit_snapshot(self) -> None:
+        if self._native_observers_suspended:
+            return
         controller = self.native_move_controller
         if bool(
             controller is not None
@@ -753,6 +804,8 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             self.WM_LBUTTONUP,
             self.WM_LBUTTONDBLCLK,
         }:
+            if not self.queued_press_compatibility:
+                return False, 0
             controller = self.native_move_controller
             if controller is None:
                 return False, 0
@@ -1055,6 +1108,7 @@ class _SystemMoveWatcher(QObject):
         super().__init__(parent)
         self._window_id = max(0, int(window_id))
         self._window_generation = 0
+        self._generation_armed_tick: int | None = None
         self._window_id_lock = threading.Lock()
         self._start_event_count = 0
         self._end_event_count = 0
@@ -1090,6 +1144,73 @@ class _SystemMoveWatcher(QObject):
         with self._window_id_lock:
             self._window_id = max(0, int(window_id))
             self._window_generation = max(0, int(generation))
+            self._generation_armed_tick = (
+                self._tick_count32() if self._window_generation > 0 else None
+            )
+
+    @staticmethod
+    def _tick_count32() -> int | None:
+        """Use the same Windows uptime clock as WinEvent's dwmsEventTime."""
+        if os.name != "nt":
+            return None
+        try:
+            kernel32 = ctypes.WinDLL("Kernel32.dll", use_last_error=True)
+            kernel32.GetTickCount.argtypes = []
+            kernel32.GetTickCount.restype = wintypes.DWORD
+            return int(kernel32.GetTickCount()) & 0xFFFFFFFF
+        except (AttributeError, OSError, TypeError, ValueError):
+            # Missing timing evidence cannot grant an event the current
+            # generation. The independent release watchdog remains available.
+            return None
+
+    @staticmethod
+    def _event_is_after_arm(event_tick: int, armed_tick: int | None) -> bool:
+        if armed_tick is None:
+            return False
+        elapsed = (int(event_tick) - int(armed_tick)) & 0xFFFFFFFF
+        # GetTickCount wraps after 49.7 days. A half-range comparison accepts
+        # forward wrap but rejects old callbacks. Same-tick events are
+        # ambiguous (the system clock has coarse resolution), so fail closed.
+        return 0 < elapsed < 0x80000000
+
+    def _observe_native_event(
+        self, native_event: int, window_id: int, event_tick: int
+    ) -> None:
+        """Tag only events generated after this gesture was armed.
+
+        OUTOFCONTEXT delivery can occur after the same HWND has been rearmed.
+        Reading only the current generation at callback time relabels old
+        START/END pairs as the new drag. This timestamp fence is evaluated
+        under the identity lock before crossing to Qt's queued lifecycle.
+        """
+        if self._stop.is_set():
+            return
+        observed = int(window_id or 0)
+        event_kind = int(native_event)
+        with self._window_id_lock:
+            if observed <= 0 or observed != self._window_id:
+                return
+            if event_kind == self._EVENT_SYSTEM_MOVESIZESTART:
+                self._start_event_count += 1
+            elif event_kind == self._EVENT_SYSTEM_MOVESIZEEND:
+                self._end_event_count += 1
+            else:
+                return
+            generation = int(self._window_generation)
+            owns_generation = generation > 0 and self._event_is_after_arm(
+                event_tick, self._generation_armed_tick
+            )
+        # Untagged signals/counters are diagnostic observations, including
+        # startup's generation-zero hook probe. Only tagged signals drive a
+        # gesture; the hook never reads QML or invokes a GUI callback directly.
+        if event_kind == self._EVENT_SYSTEM_MOVESIZESTART:
+            self.moveStarted.emit(observed)
+            if owns_generation:
+                self.moveStartedTagged.emit(observed, generation)
+        else:
+            self.moveEnded.emit(observed)
+            if owns_generation:
+                self.moveEndedTagged.emit(observed, generation)
 
     @property
     def target_window_id(self) -> int:
@@ -1174,29 +1295,10 @@ class _SystemMoveWatcher(QObject):
                 _object_id: int,
                 _child_id: int,
                 _event_thread_id: int,
-                _native_time_ms: int,
+                native_time_ms: int,
             ) -> None:
                 try:
-                    if self._stop.is_set():
-                        return
-                    observed = int(hwnd or 0)
-                    event_kind = int(native_event)
-                    with self._window_id_lock:
-                        if observed <= 0 or observed != self._window_id:
-                            return
-                        generation = int(self._window_generation)
-                        if event_kind == self._EVENT_SYSTEM_MOVESIZESTART:
-                            self._start_event_count += 1
-                        elif event_kind == self._EVENT_SYSTEM_MOVESIZEEND:
-                            self._end_event_count += 1
-                        else:
-                            return
-                    if event_kind == self._EVENT_SYSTEM_MOVESIZESTART:
-                        self.moveStarted.emit(observed)
-                        self.moveStartedTagged.emit(observed, generation)
-                    elif event_kind == self._EVENT_SYSTEM_MOVESIZEEND:
-                        self.moveEnded.emit(observed)
-                        self.moveEndedTagged.emit(observed, generation)
+                    self._observe_native_event(native_event, hwnd, native_time_ms)
                 except Exception:
                     # Never unwind Python through the User32 callback.
                     return
@@ -1342,6 +1444,10 @@ class CompactPointerEventFilter(QObject):
         self._system_move_max_distance_squared = 0.0
         self._system_move_threshold_physical = 4.0
         self._system_move_start_returned = False
+        self._root_system_move_attempts = 0
+        self._root_system_move_rejection = ""
+        self._root_move_guard: RootSystemMoveGuard | None = None
+        self._root_move_guard_required = False
         self._system_move_entered = False
         self._system_move_exited = False
         self._system_window_moving_messages = 0
@@ -1366,11 +1472,9 @@ class CompactPointerEventFilter(QObject):
         self._local_gesture_depths: dict[str, int] = {}
         self._local_gesture_states: dict[str, dict[str, object]] = {}
         self._local_gesture_total_depth = 0
-        # Windows sees the button before Qt Quick constructs its MouseArea
-        # delivery.  A one-turn queue lets the native filter consume that raw
-        # press, return safely, and only then remove itself while the already
-        # warm layered proxy takes capture.  This is the primary Windows path;
-        # QML remains the compatibility path on unsupported platforms.
+        # Retain the old queued raw-press bridge for explicitly configured
+        # compatibility callers. Normal Windows input reaches QML, which
+        # synchronously requests the native move on threshold-crossing motion.
         self._native_character_request_counter = 0
         self._queued_native_character_request_id = 0
         self._queued_native_character_serial = 0
@@ -1539,6 +1643,9 @@ class CompactPointerEventFilter(QObject):
         session_id = self._system_move_session_counter
         self._active_system_move_session_id = session_id
         self._active_system_move_serial = int(gesture_serial)
+        # The root-native success branch never prepares a screenshot proxy,
+        # but it must still fence a previously queued image-ready callback.
+        self._begin_drag_proxy_gesture()
         return session_id
 
     def _retire_system_move_identity(
@@ -1550,6 +1657,8 @@ class CompactPointerEventFilter(QObject):
 
         if not self._owns_system_move_session(session_id, gesture_serial):
             return False
+        if self._root_move_guard is not None:
+            self._root_move_guard.finish(session_id)
         self._active_system_move_session_id = 0
         self._active_system_move_serial = 0
         self._active_system_move_window_id = 0
@@ -1695,6 +1804,13 @@ class CompactPointerEventFilter(QObject):
 
         self._native_filter_app = app
         self._native_drag_filter = native_filter
+        if os.name == "nt" and isinstance(native_filter, CompactHitTestFilter):
+            self._root_move_guard_required = True
+            if self._root_move_guard is None:
+                try:
+                    self._root_move_guard = RootSystemMoveGuard()
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                    self._root_move_guard = None
         if (
             os.name == "nt"
             and isinstance(native_filter, CompactHitTestFilter)
@@ -1857,6 +1973,10 @@ class CompactPointerEventFilter(QObject):
         self._native_filter_resume_timer.stop()
         self._native_filter_resume_retries = 0
         self._suspend_qt_pointer_filter()
+        native_filter = self._native_drag_filter
+        suspend_observers = getattr(native_filter, "suspend_drag_observers", None)
+        if callable(suspend_observers):
+            suspend_observers()
         if self._native_drag_filter_suspended:
             return
         app = self._native_filter_app
@@ -1875,13 +1995,16 @@ class CompactPointerEventFilter(QObject):
         # first owner to finish must not reinstall them into another owner's
         # hot path. Shutdown clears local ownership before bypassing this
         # guard.
-        if self._local_gesture_total_depth > 0 and not self._closing_drag_bridge:
+        if (
+            self._local_gesture_total_depth > 0 or self._active_system_move_serial > 0
+        ) and not self._closing_drag_bridge:
             return
         pointer_restored = self._resume_qt_pointer_filter()
         if not self._native_drag_filter_suspended:
             if pointer_restored:
                 self._native_filter_resume_retries = 0
                 self._native_filter_resume_timer.stop()
+                self._resume_native_drag_observers()
                 self._refresh_native_window_id()
             else:
                 self._schedule_filter_resume_retry()
@@ -1890,6 +2013,7 @@ class CompactPointerEventFilter(QObject):
         native_filter = self._native_drag_filter
         if app is None or native_filter is None:
             self._native_drag_filter_suspended = False
+            self._resume_native_drag_observers()
             return
         try:
             app.installNativeEventFilter(native_filter)
@@ -1905,9 +2029,15 @@ class CompactPointerEventFilter(QObject):
         if pointer_restored:
             self._native_filter_resume_retries = 0
             self._native_filter_resume_timer.stop()
+            self._resume_native_drag_observers()
             self._refresh_native_window_id()
         else:
             self._schedule_filter_resume_retry()
+
+    def _resume_native_drag_observers(self) -> None:
+        resume = getattr(self._native_drag_filter, "resume_drag_observers", None)
+        if callable(resume):
+            resume()
 
     @staticmethod
     def _native_window_rect(window_id: int) -> WindowRect | None:
@@ -2251,6 +2381,12 @@ class CompactPointerEventFilter(QObject):
         cache.begin_gesture()
         self._drag_proxy_gesture_active = True
 
+    @Slot()
+    def beginDragProxyGesture(self) -> None:
+        """Fence pending image work from the initial Qt character press."""
+        if not self._closing_drag_bridge:
+            self._begin_drag_proxy_gesture()
+
     def _end_drag_proxy_gesture(self) -> None:
         cache = self._drag_proxy_cache
         if cache is None or not self._drag_proxy_gesture_active:
@@ -2519,6 +2655,8 @@ class CompactPointerEventFilter(QObject):
             0.25, device_pixel_ratio
         )
         self._system_move_start_returned = False
+        self._root_system_move_attempts = 0
+        self._root_system_move_rejection = ""
         self._system_move_entered = False
         self._system_move_exited = False
         self._system_window_moving_messages = 0
@@ -3330,21 +3468,55 @@ class CompactPointerEventFilter(QObject):
         # has already established ownership, so remove that filter for the
         # held gesture and restore it at the first completion boundary.
         self._suspend_native_drag_filter()
-        started = self._prepare_proxy_system_move(
-            session_id,
-            str(semantic_key or ""),
-            str(geometry_key or ""),
+        # Let the platform move the live pet first.  Preparing a screenshot
+        # proxy before this request hid the actual window, added a second HWND
+        # and let old cached poses masquerade as native movement on Windows.
+        # Call on QML's threshold-crossing pointer event, while Qt still owns
+        # the initiating button. No geometry, focus or cache mutation occurs
+        # when this succeeds.
+        native_start_at = time.perf_counter()
+
+        def start_real_window() -> bool:
+            self._root_system_move_attempts += 1
+            return bool(self.root.startSystemMove())
+
+        try:
+            if self._root_move_guard is not None:
+                started = self._root_move_guard.start(
+                    self._active_system_move_window_id, session_id, start_real_window
+                )
+                self._root_system_move_rejection = self._root_move_guard.last_rejection
+            elif self._root_move_guard_required:
+                started = False
+                self._root_system_move_rejection = "release-guard-unavailable"
+            else:
+                # Non-Windows/offscreen controller doubles have no User32
+                # modal loop; production Windows always requires the guard.
+                started = start_real_window()
+                self._root_system_move_rejection = (
+                    "" if started else "platform-refused"
+                )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            started = False
+            self._root_system_move_rejection = "platform-error"
+        self._diagnostic_native_start_call_ms = max(
+            0.0, (time.perf_counter() - native_start_at) * 1000.0
         )
-        proxy_started = bool(started)
+        proxy_started = False
+        if started:
+            self._proxy_fallback_reason = ""
         if (
             not started
-            and os.name != "nt"
             and self._owns_system_move_session(session_id, gesture_serial)
         ):
-            try:
-                started = bool(self.root.startSystemMove())
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                started = False
+            # Only a platform refusal may select the existing cached proxy.
+            # A reentrant terminal callback must never start another owner.
+            started = self._prepare_proxy_system_move(
+                session_id,
+                str(semantic_key or ""),
+                str(geometry_key or ""),
+            )
+            proxy_started = bool(started)
         self._system_move_start_returned = bool(started)
         if self._last_drag_diagnostics:
             # A synchronous capture cancellation can finish QML while the
@@ -3386,9 +3558,9 @@ class CompactPointerEventFilter(QObject):
             )
             return False
         if started and os.name == "nt":
-            # The off-GUI sentinel makes User32 leave the proxy modal loop on
-            # release. This sparse logical-primary-button poll then owns the
-            # GUI-side commit/restore; it never drives window motion.
+            # Native moves are completed by WinEvent/Qt, with a sparse button
+            # watchdog for a missing terminal event. The proxy fallback also
+            # has its off-GUI release sentinel. This timer never drives motion.
             self._system_move_release_timer.setSingleShot(False)
             self._system_move_release_timer.setInterval(
                 64 if watcher is not None and watcher.ready else 100
@@ -3591,6 +3763,8 @@ class CompactPointerEventFilter(QObject):
             "moved": bool(moved),
             "durationMs": round(elapsed_ms, 3),
             "systemMoveStartReturned": bool(self._system_move_start_returned),
+            "rootSystemMoveAttempts": self._root_system_move_attempts,
+            "rootSystemMoveRejection": self._root_system_move_rejection,
             "systemMoveEntered": bool(self._system_move_entered),
             "systemMoveExited": bool(self._system_move_exited),
             "systemMovingMessages": self._system_window_moving_messages,
@@ -3742,6 +3916,8 @@ class CompactPointerEventFilter(QObject):
             self._drag_proxy_cache = None
         self._drag_proxy_gesture_active = False
         self._closing_drag_bridge = True
+        if self._root_move_guard is not None:
+            self._root_move_guard.close()
         self._publish_drag_proxy_runtime_state(
             fallback_reason="not-configured"
         )
@@ -3888,10 +4064,18 @@ class CompactPointerEventFilter(QObject):
             and observed_generation != self._active_system_move_session_id
         ):
             return
-        # A delayed END without this gesture's START must never terminate a
-        # newly armed move on a reused HWND.
+        # A same-tick START is intentionally rejected by the timestamp fence.
+        # A later, timestamp-validated END can still finish promptly if the
+        # logical primary button is up. Never accept an untagged/no-START END
+        # or end a held gesture; missing button evidence stays on the watchdog.
         if not self._system_move_entered:
-            return
+            if observed_generation <= 0:
+                return
+            try:
+                if self._left_button_is_down():
+                    return
+            except (AttributeError, OSError, TypeError, ValueError):
+                return
         self._completion_queued_by = "win-event-move-end"
         self._sample_system_window_position()
         self._commit_proxy_geometry()
@@ -4077,6 +4261,7 @@ class CompactPointerEventFilter(QObject):
         return (
             event.type() == QEvent.Type.MouseMove
             and bool(self.root.property("manualDragActive"))
+            and not bool(self.root.property("nativeDragAwaitingThreshold"))
         )
 
 
@@ -5087,15 +5272,22 @@ def main(argv: list[str] | None = None) -> int:
 
     # Smoke tests, benchmarks and packaged probes must never reuse or mutate
     # the person's real desktop mode, chat history or memory database.
-    diagnostic_data: tempfile.TemporaryDirectory[str] | None = None
-    if (
+    diagnostic_run = bool(
         args.smoke
         or args.benchmark
         or args.self_test
         or args.windows_startup_probe
-    ) and not os.environ.get("LILIES_DATA_DIR"):
+    )
+    diagnostic_data: tempfile.TemporaryDirectory[str] | None = None
+    if diagnostic_run and not os.environ.get("LILIES_DATA_DIR"):
         diagnostic_data = tempfile.TemporaryDirectory(prefix="lilies-diagnostic-")
         os.environ["LILIES_DATA_DIR"] = diagnostic_data.name
+
+    data_root_purpose = (
+        DataRootPurpose.DIAGNOSTIC
+        if diagnostic_run
+        else DataRootPurpose.PRODUCTION
+    )
 
     # Qt derives its QML bytecode and scene-graph pipeline caches from
     # LOCALAPPDATA unless these paths are fixed before QApplication exists.
@@ -5106,7 +5298,9 @@ def main(argv: list[str] | None = None) -> int:
         "error": "Qt cache routing was not configured",
     }
     try:
-        qt_cache_routing = configure_qt_cache_environment(data_root())
+        qt_cache_routing = configure_qt_cache_environment(
+            data_root(purpose=data_root_purpose)
+        )
     except DataRootUnavailableError as exc:
         startup_data_error = exc
         qt_cache_routing = {
@@ -5144,7 +5338,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.53")
+    app.setApplicationVersion("0.3.54")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:
@@ -5157,12 +5351,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 3
 
-    diagnostic_run = bool(
-        args.smoke
-        or args.benchmark
-        or args.self_test
-        or args.windows_startup_probe
-    )
     activation_socket = None
     if not diagnostic_run:
         try:

@@ -2,12 +2,29 @@ from __future__ import annotations
 
 import os
 import sys
+from enum import Enum
 from pathlib import Path
 
 
 APP_NAME = "Lilies in the box"
 APP_ID = "lilies-in-the-box"
 WINDOWS_PRIVATE_DATA_ROOT = Path(r"F:\code\Lilies in the box\private-data")
+
+
+class DataRootPurpose(Enum):
+    """Call-site authority for a non-production ``LILIES_DATA_DIR``.
+
+    The environment variable is useful for isolated tests and release probes,
+    but it is not a production configuration knob.  Requiring one of these
+    enum values at the call site keeps an inherited or user-edited environment
+    from silently relocating the real database and Qt caches to the system
+    drive.
+    """
+
+    PRODUCTION = "production"
+    TEST = "test"
+    DIAGNOSTIC = "diagnostic"
+    NATIVE_CAPTURE_HELPER = "native-capture-helper"
 
 
 class DataRootUnavailableError(RuntimeError):
@@ -29,17 +46,74 @@ def project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def data_root() -> Path:
+def _same_windows_location(left: Path, right: Path) -> bool:
+    """Compare two absolute Windows locations without relying on existence."""
+
+    return os.path.normcase(os.path.normpath(str(left))) == os.path.normcase(
+        os.path.normpath(str(right))
+    )
+
+
+def data_root(*, purpose: DataRootPurpose = DataRootPurpose.PRODUCTION) -> Path:
+    """Return the only data directory authorized for this process role.
+
+    A normal Windows process is pinned to ``WINDOWS_PRIVATE_DATA_ROOT``.  It
+    may inherit ``LILIES_DATA_DIR`` only when that value resolves to the same
+    fixed directory.  Tests, non-interactive release diagnostics and the
+    bounded native-capture helper must opt in explicitly at their call sites;
+    merely setting another environment variable can therefore never weaken a
+    production launch.
+
+    Android remains able to supply its platform-owned directory through
+    ``LILIES_DATA_DIR`` because the fixed F: boundary is Windows-specific.
+    """
+
+    if not isinstance(purpose, DataRootPurpose):
+        raise TypeError("purpose must be a DataRootPurpose")
+
     override = os.environ.get("LILIES_DATA_DIR", "").strip()
-    if override:
-        path = Path(override).resolve()
-    elif os.name == "nt":
-        path = WINDOWS_PRIVATE_DATA_ROOT
-    else:
-        # Android will provide an explicit LILIES_DATA_DIR.  Source builds on
-        # other platforms keep project-owned data beside the project instead
-        # of falling back to a hidden home-directory copy.
-        path = project_root() / "private-data"
+    try:
+        requested = Path(override).expanduser().resolve() if override else None
+        if os.name == "nt":
+            if requested is not None and purpose is not DataRootPurpose.PRODUCTION:
+                path = requested
+            else:
+                fixed_root = WINDOWS_PRIVATE_DATA_ROOT.resolve()
+                # A directory junction must not silently turn the fixed F:
+                # location into a system-drive data store either.  Resolve it
+                # before mkdir so recovery cannot first create a C: directory.
+                if (
+                    fixed_root.drive.casefold()
+                    != WINDOWS_PRIVATE_DATA_ROOT.drive.casefold()
+                ):
+                    raise DataRootUnavailableError(
+                        WINDOWS_PRIVATE_DATA_ROOT,
+                        "the fixed data root resolves outside its dedicated volume",
+                    )
+                if requested is not None and not _same_windows_location(
+                    requested, fixed_root
+                ):
+                    raise DataRootUnavailableError(
+                        requested,
+                        "LILIES_DATA_DIR is not permitted during normal startup; "
+                        f"the fixed data root is {fixed_root}",
+                    )
+                # Even an equivalent spelling of the environment override is
+                # discarded so all production consumers receive one canonical
+                # path object.
+                path = fixed_root
+        elif requested is not None:
+            # Android supplies an app-private platform directory here.  Source
+            # builds on other platforms use the same explicit override.
+            path = requested
+        else:
+            path = (project_root() / "private-data").resolve()
+    except DataRootUnavailableError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        failed_path = Path(override) if override else WINDOWS_PRIVATE_DATA_ROOT
+        raise DataRootUnavailableError(failed_path, str(exc)) from exc
+
     try:
         path.mkdir(parents=True, exist_ok=True)
         if not path.is_dir() or not os.access(path, os.W_OK):
@@ -63,21 +137,18 @@ def configure_qt_cache_environment(root: Path) -> dict[str, object]:
     active data root must never weaken the storage boundary.
     """
 
-    resolved_root = Path(root).resolve()
+    try:
+        resolved_root = Path(root).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise DataRootUnavailableError(Path(root), str(exc)) from exc
     cache_root = resolved_root / "cache"
     qml_cache_root = cache_root / "qmlcache"
     pipeline_cache_path = cache_root / "qt-rhi-pipeline-cache.bin"
-    try:
-        qml_cache_root.mkdir(parents=True, exist_ok=True)
-        if not qml_cache_root.is_dir() or not os.access(qml_cache_root, os.W_OK):
-            raise OSError("Qt cache directory is not writable")
-    except OSError as exc:
-        raise DataRootUnavailableError(resolved_root, str(exc)) from exc
 
     def is_within_root(path: Path) -> bool:
         try:
             path.resolve().relative_to(resolved_root)
-        except ValueError:
+        except (OSError, RuntimeError, ValueError):
             return False
         return True
 
@@ -90,6 +161,15 @@ def configure_qt_cache_environment(root: Path) -> dict[str, object]:
             resolved_root,
             "Qt cache path resolves outside the dedicated data root",
         )
+
+    # Containment must be checked before touching the filesystem: cache or
+    # qmlcache may already be a junction to another drive.
+    try:
+        qml_cache_root.mkdir(parents=True, exist_ok=True)
+        if not qml_cache_root.is_dir() or not os.access(qml_cache_root, os.W_OK):
+            raise OSError("Qt cache directory is not writable")
+    except OSError as exc:
+        raise DataRootUnavailableError(resolved_root, str(exc)) from exc
 
     os.environ["QML_DISK_CACHE_PATH"] = str(qml_cache_root)
     os.environ["QSG_RHI_PIPELINE_CACHE_LOAD"] = str(pipeline_cache_path)

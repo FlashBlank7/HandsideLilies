@@ -8,6 +8,51 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Get-LiveProcessResourceSnapshot {
+    param(
+        [Parameter(Mandatory)]
+        [object]$Process,
+        [Parameter(Mandatory)]
+        [ValidateRange(1, 2147483647)]
+        [int]$ExpectedProcessId
+    )
+
+    $null = $Process.Refresh()
+    if ($Process.HasExited -or [int]$Process.Id -ne $ExpectedProcessId) {
+        throw 'Compact resource sampling requires the live diagnostic process.'
+    }
+    # Process properties are lazy and Refresh/termination invalidates them.
+    # Materialize values, never retain the Process object as report evidence.
+    $workingSetBytes = [long]$Process.WorkingSet64
+    $privateBytes = [long]$Process.PrivateMemorySize64
+    $threadCount = [int]$Process.Threads.Count
+    $handleCount = [int]$Process.HandleCount
+    $responding = [bool]$Process.Responding
+    $moduleNames = [string[]]@(
+        $Process.Modules | ForEach-Object { [string]$_.ModuleName }
+    )
+    $null = $Process.Refresh()
+    if ($Process.HasExited) {
+        throw 'The diagnostic process exited during resource sampling.'
+    }
+    if ($workingSetBytes -le 0 -or $privateBytes -le 0 -or
+        $threadCount -le 0 -or $handleCount -le 0 -or
+        $moduleNames.Count -le 0) {
+        throw 'Live compact resource metrics and module enumeration must be positive.'
+    }
+    return [pscustomobject]@{
+        processId = $ExpectedProcessId
+        workingSetBytes = $workingSetBytes
+        privateBytes = $privateBytes
+        threads = $threadCount
+        handles = $handleCount
+        responding = $responding
+        moduleNames = $moduleNames
+        sampledWhileAlive = $true
+        capturedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+}
+
 function Remove-ExactDiagnosticDirectoryWithRetry {
     [CmdletBinding()]
     param(
@@ -326,15 +371,15 @@ function Get-PackagedDistFootprint([string]$DistRoot) {
 }
 
 $ProjectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$ExpectedApplicationVersion = '0.3.53'
+$ExpectedApplicationVersion = '0.3.54'
 if ([string]::IsNullOrWhiteSpace($Executable)) {
     $Executable = Join-Path $ProjectRoot 'dist\LiliesInTheBox\LiliesInTheBox.exe'
 }
 if ([string]::IsNullOrWhiteSpace($SelfTestReport)) {
-    $SelfTestReport = Join-Path $ProjectRoot 'artifacts\packaged-self-test-v0353.json'
+    $SelfTestReport = Join-Path $ProjectRoot 'artifacts\packaged-self-test-v0354.json'
 }
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
-    $ReportPath = Join-Path $ProjectRoot 'artifacts\packaged-compact-resource-v0353.json'
+    $ReportPath = Join-Path $ProjectRoot 'artifacts\packaged-compact-resource-v0354.json'
 }
 
 $Executable = [IO.Path]::GetFullPath($Executable)
@@ -381,7 +426,7 @@ if ([IO.Path]::GetFullPath((Split-Path -Parent $diagnosticDataRoot)).TrimEnd('\'
 }
 [IO.Directory]::CreateDirectory($diagnosticDataRoot) | Out-Null
 $process = $null
-$sample = $null
+$resourceSnapshot = $null
 $loadedModules = @{}
 $probeStopped = $false
 $probeFailure = $null
@@ -404,16 +449,15 @@ try {
         throw "Packaged compact probe exited early with code $($process.ExitCode)."
     }
     $sample = Get-Process -Id $process.Id -ErrorAction Stop
-    $moduleNames = @(
-        $sample.Modules | ForEach-Object { [string]$_.ModuleName }
-    )
+    $resourceSnapshot = Get-LiveProcessResourceSnapshot `
+        -Process $sample -ExpectedProcessId $process.Id
     foreach ($name in @(
         'Qt6Multimedia.dll',
         'Qt6MultimediaQuick.dll',
         'ffmpegmediaplugin.dll',
         'avcodec-61.dll'
     )) {
-        $loadedModules[$name] = $moduleNames -contains $name
+        $loadedModules[$name] = $resourceSnapshot.moduleNames -contains $name
     }
 } catch {
     $probeFailure = $_.Exception
@@ -483,10 +527,10 @@ if ($null -ne $probeFailure) {
     )
 }
 
-if ($null -eq $sample) {
+if ($null -eq $resourceSnapshot -or -not $resourceSnapshot.sampledWhileAlive) {
     throw 'The packaged compact process could not be sampled.'
 }
-$responding = [bool]$sample.Responding
+$responding = [bool]$resourceSnapshot.responding
 $multimediaLoaded = @($loadedModules.GetEnumerator() | Where-Object { $_.Value })
 $report = [ordered]@{
     schemaVersion = 1
@@ -507,10 +551,13 @@ $report = [ordered]@{
         passed = $distFootprint.forbiddenMatches.Count -eq 0
     }
     settleSeconds = $SettleSeconds
-    workingSetMiB = [Math]::Round($sample.WorkingSet64 / 1MB, 2)
-    privateMiB = [Math]::Round($sample.PrivateMemorySize64 / 1MB, 2)
-    threads = @($sample.Threads).Count
-    handles = [int]$sample.HandleCount
+    workingSetMiB = [Math]::Round($resourceSnapshot.workingSetBytes / 1MB, 2)
+    privateMiB = [Math]::Round($resourceSnapshot.privateBytes / 1MB, 2)
+    threads = [int]$resourceSnapshot.threads
+    handles = [int]$resourceSnapshot.handles
+    sampledWhileAlive = [bool]$resourceSnapshot.sampledWhileAlive
+    sampledProcessId = [int]$resourceSnapshot.processId
+    resourceSampledAt = [string]$resourceSnapshot.capturedAt
     responding = $responding
     modules = $loadedModules
     probeProcessStopped = $probeStopped
@@ -524,6 +571,7 @@ $report = [ordered]@{
         errors = @($cleanupFailures | ForEach-Object { $_.Message })
     }
     passed = [bool](
+        $resourceSnapshot.sampledWhileAlive -and
         $responding -and $probeStopped -and $cleanupSucceeded -and
         $multimediaLoaded.Count -eq 0 -and
         $distFootprint.forbiddenMatches.Count -eq 0

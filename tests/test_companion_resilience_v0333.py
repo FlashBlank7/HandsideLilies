@@ -580,6 +580,7 @@ def test_subjective_failure_stays_quiet_and_does_not_spend_success_gate(
     controller = _controller(database, tmp_path)
     before_count = controller.engine.gate.state(datetime.now(UTC))["countToday"]
     before_cooldown = controller.activity.status()["cooldownRemainingSeconds"]
+    before_attempt_gate = controller._generation_attempt_not_before
     payload = {
         "result": {
             "summary": "",
@@ -596,13 +597,14 @@ def test_subjective_failure_stays_quiet_and_does_not_spend_success_gate(
         "generationToken": 0,
     }
     try:
-        start = time.monotonic()
         controller._busy = True
         controller._accept_generation({**payload, "force": False})
         assert controller.bubble == {}
         assert controller.engine.gate.state(datetime.now(UTC))["countToday"] == before_count
         assert controller.activity.status()["cooldownRemainingSeconds"] == before_cooldown
-        assert start + 29 <= controller._generation_attempt_not_before <= start + 32
+        # Subjective/model failures use their model/category circuit; a
+        # global retry deadline must not silence unrelated content categories.
+        assert controller._generation_attempt_not_before == before_attempt_gate
 
         controller._busy = True
         controller._accept_generation({**payload, "force": True})

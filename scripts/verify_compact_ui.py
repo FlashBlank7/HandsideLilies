@@ -338,17 +338,29 @@ def main() -> int:
             int(float(pet_window.property("compactCharacterTop"))
                 + float(pet_window.property("compactCharacterHeight")) / 2),
         )
-        wheel = QWheelEvent(
-            QPointF(figure_point),
-            QPointF(pet_window.mapToGlobal(figure_point)),
-            QPoint(0, 0),
-            QPoint(0, 120),
-            Qt.MouseButton.NoButton,
-            Qt.KeyboardModifier.NoModifier,
-            Qt.ScrollPhase.ScrollUpdate,
-            False,
-        )
-        QApplication.sendEvent(pet_window, wheel)
+        size_before = float(root.property("compactBoxSize"))
+        packet_sizes = []
+        for _ in range(8):
+            wheel = QWheelEvent(
+                QPointF(figure_point),
+                QPointF(pet_window.mapToGlobal(figure_point)),
+                QPoint(0, 0),
+                QPoint(0, 15),
+                Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier,
+                Qt.ScrollPhase.ScrollUpdate,
+                False,
+            )
+            QApplication.sendEvent(pet_window, wheel)
+            packet_sizes.append(float(root.property("compactBoxSize")))
+        outcome["highResolutionWheel"] = {
+            "sizeBefore": size_before,
+            "packetSizes": packet_sizes,
+            "passed": (
+                all(abs(size - size_before) < 0.01 for size in packet_sizes[:7])
+                and 0 < packet_sizes[-1] - size_before <= 12.01
+            ),
+        }
 
     def find_action(action_id: str) -> QQuickItem | None:
         action = next(
@@ -2407,6 +2419,7 @@ def main() -> int:
         )
         and outcome.get("companionAwarenessOnPet", {}).get("passed") is True
         and outcome.get("wheelResizeWorked") is True
+        and outcome.get("highResolutionWheel", {}).get("passed") is True
         and outcome.get("resizeHandleExists") is True
         and outcome.get("breathingAnimated") is True
         and outcome.get("animationBudget", {}).get("passed") is True

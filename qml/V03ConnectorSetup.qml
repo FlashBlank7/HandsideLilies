@@ -59,6 +59,15 @@ Window {
     property string pendingAssistProvider: ""
     property string pendingAssistEventId: ""
     property string calendarAssistSuggestion: ""
+    // Each connector owns an independent, non-secret edit draft.  Secrets are
+    // intentionally never copied into these objects or restored into fields.
+    property var calendarConfigurationDraft: null
+    property var slackConfigurationDraft: null
+    property var calendarConfigurationBaseline: null
+    property var slackConfigurationBaseline: null
+    property string loadedProvider: ""
+    property bool applyingProviderDraft: false
+    property bool configurationReady: false
 
     width: Math.min(900, Screen.width - 48)
     height: Math.min(760, Screen.height - 64)
@@ -116,6 +125,208 @@ Window {
 
     function normalizedProvider(value) {
         return String(value || "") === "google-calendar" ? "calendar" : String(value || "")
+    }
+
+    function canonicalAxis(axis, value) {
+        var text = String(value || "").trim()
+        var aliases = {
+            "必要": "necessary", "精选": "selected", "广泛": "broad",
+            "安静": "quiet", "优先": "priority", "即时": "immediate",
+            "元数据": "metadata", "可搜索摘要": "searchable-summary",
+            "扩展缓存": "extended-cache", "提醒": "reminder",
+            "协助": "assist", "确认执行": "confirm-execute"
+        }
+        text = aliases[text] || text
+        var allowed = {
+            scope: ["necessary", "selected", "broad"],
+            interruption: ["quiet", "priority", "immediate"],
+            retention: ["metadata", "searchable-summary", "extended-cache"],
+            assistance: ["reminder", "assist", "confirm-execute"]
+        }
+        var defaults = {
+            scope: "necessary", interruption: "quiet",
+            retention: "metadata", assistance: "assist"
+        }
+        return allowed[axis].indexOf(text) >= 0 ? text : defaults[axis]
+    }
+
+    function safeStringList(value) {
+        var result = []
+        if (value === undefined || value === null || typeof value === "string")
+            return result
+        try {
+            for (var index = 0; index < value.length; ++index) {
+                var item = String(value[index] || "").trim()
+                if (item !== "" && result.indexOf(item) < 0)
+                    result.push(item)
+            }
+        } catch (error) {
+            return []
+        }
+        return result
+    }
+
+    function draftFromInfo(providerName, info) {
+        var status = info || ({})
+        var savedPolicy = status.policyCanonical || ({})
+        var safeConfiguration = status.configuration || ({})
+        var policy = {
+            scope: canonicalAxis("scope", savedPolicy.scope),
+            interruption: canonicalAxis("interruption", savedPolicy.interruption),
+            retention: canonicalAxis("retention", savedPolicy.retention),
+            assistance: canonicalAxis("assistance", savedPolicy.assistance),
+            selectedSources: safeStringList(savedPolicy.selectedSources)
+        }
+        if (providerName === "calendar") {
+            return {
+                policy: policy,
+                clientId: String(safeConfiguration.clientId || "")
+            }
+        }
+        return {
+            policy: policy,
+            clientId: String(safeConfiguration.clientId || ""),
+            currentUserId: String(safeConfiguration.currentUserId || ""),
+            redirectUri: String(safeConfiguration.redirectUri
+                                || "http://127.0.0.1:53682/oauth/callback"),
+            selectedChannels: policy.selectedSources.join(", ")
+        }
+    }
+
+    function providerDraft(providerName) {
+        return providerName === "slack" ? slackConfigurationDraft
+                                         : calendarConfigurationDraft
+    }
+
+    function setProviderDraft(providerName, draft) {
+        if (providerName === "slack")
+            slackConfigurationDraft = draft
+        else
+            calendarConfigurationDraft = draft
+    }
+
+    function ensureProviderDraft(providerName) {
+        var draft = providerDraft(providerName)
+        if (draft !== null && draft !== undefined)
+            return draft
+        draft = draftFromInfo(providerName,
+                              providerName === "slack" ? slackInfo : calendarInfo)
+        setProviderDraft(providerName, draft)
+        setProviderBaseline(providerName, draft)
+        return draft
+    }
+
+    function setProviderBaseline(providerName, draft) {
+        if (providerName === "slack")
+            slackConfigurationBaseline = draft
+        else
+            calendarConfigurationBaseline = draft
+    }
+
+    function mergeCanonicalDraft(previous, edited, incoming) {
+        // Refresh untouched fields from canonical state without throwing away
+        // the user's independent, unsaved tab edits. Arrays are atomic values.
+        if (JSON.stringify(edited) === JSON.stringify(previous))
+            return incoming
+        if (incoming === null || typeof incoming !== "object" || Array.isArray(incoming))
+            return edited
+        var result = ({})
+        for (var key in incoming)
+            result[key] = mergeCanonicalDraft((previous || ({}))[key],
+                                               (edited || ({}))[key], incoming[key])
+        return result
+    }
+
+    function synchronizeProviderStatus(providerName) {
+        if (!configurationReady || applyingProviderDraft)
+            return
+        var incoming = draftFromInfo(providerName,
+                                     providerName === "slack" ? slackInfo : calendarInfo)
+        var baseline = providerName === "slack" ? slackConfigurationBaseline
+                                                 : calendarConfigurationBaseline
+        if (JSON.stringify(incoming) === JSON.stringify(baseline))
+            return
+        if (loadedProvider === providerName)
+            captureProviderDraft(providerName)
+        var edited = providerDraft(providerName)
+        setProviderDraft(providerName, baseline === null || edited === null
+                         ? incoming : mergeCanonicalDraft(baseline, edited, incoming))
+        setProviderBaseline(providerName, incoming)
+        if (loadedProvider === providerName)
+            applyProviderDraft(providerName, false)
+    }
+
+    function policyFromControls(existingPolicy) {
+        var previous = existingPolicy || ({})
+        return {
+            scope: ["necessary", "selected", "broad"][Math.max(0, scopeBox.currentIndex)],
+            interruption: ["quiet", "priority", "immediate"][Math.max(0, interruptionBox.currentIndex)],
+            retention: ["metadata", "searchable-summary", "extended-cache"][Math.max(0, retentionBox.currentIndex)],
+            assistance: ["reminder", "assist", "confirm-execute"][Math.max(0, assistanceBox.currentIndex)],
+            selectedSources: safeStringList(previous.selectedSources)
+        }
+    }
+
+    function captureProviderDraft(providerName) {
+        if (applyingProviderDraft || providerName === "")
+            return
+        var previous = ensureProviderDraft(providerName)
+        var nextPolicy = policyFromControls(previous.policy)
+        if (providerName === "slack") {
+            nextPolicy.selectedSources = selectedChannels()
+            setProviderDraft("slack", {
+                policy: nextPolicy,
+                clientId: slackClientId.text.trim(),
+                currentUserId: slackCurrentUserId.text.trim(),
+                redirectUri: slackRedirectUri.text.trim(),
+                selectedChannels: slackChannels.text
+            })
+        } else {
+            setProviderDraft("calendar", {
+                policy: nextPolicy,
+                clientId: googleClientId.text.trim()
+            })
+        }
+    }
+
+    function applyProviderDraft(providerName, clearSecret) {
+        var draft = ensureProviderDraft(providerName)
+        var policy = draft.policy || ({})
+        applyingProviderDraft = true
+        scopeBox.currentIndex = ["necessary", "selected", "broad"].indexOf(
+                                    canonicalAxis("scope", policy.scope))
+        interruptionBox.currentIndex = ["quiet", "priority", "immediate"].indexOf(
+                                           canonicalAxis("interruption", policy.interruption))
+        retentionBox.currentIndex = ["metadata", "searchable-summary", "extended-cache"].indexOf(
+                                        canonicalAxis("retention", policy.retention))
+        assistanceBox.currentIndex = ["reminder", "assist", "confirm-execute"].indexOf(
+                                         canonicalAxis("assistance", policy.assistance))
+        if (providerName === "calendar") {
+            googleClientId.text = String(draft.clientId || "")
+        } else {
+            slackClientId.text = String(draft.clientId || "")
+            slackCurrentUserId.text = String(draft.currentUserId || "")
+            slackRedirectUri.text = String(draft.redirectUri
+                                           || "http://127.0.0.1:53682/oauth/callback")
+            slackChannels.text = String(draft.selectedChannels || "")
+        }
+        // Tokens remain write-only. An unrelated background status refresh
+        // must not erase a token while the user is typing it in this tab.
+        if (clearSecret !== false)
+            slackXappToken.text = ""
+        loadedProvider = providerName
+        applyingProviderDraft = false
+    }
+
+    function activateProvider(providerName) {
+        if (!configurationReady)
+            return
+        var normalized = normalizedProvider(providerName)
+        if (normalized !== "calendar" && normalized !== "slack")
+            normalized = "calendar"
+        if (loadedProvider !== "")
+            captureProviderDraft(loadedProvider)
+        applyProviderDraft(normalized)
     }
 
     function itemId(item) {
@@ -325,16 +536,33 @@ Window {
 
     onConnectorSelectionChanged: synchronizeBackendSelection()
     onConnectorAssistResultChanged: applyAssistResult()
+    onProviderChanged: activateProvider(provider)
+    onCalendarInfoChanged: synchronizeProviderStatus("calendar")
+    onSlackInfoChanged: synchronizeProviderStatus("slack")
     onCalendarItemsChanged: {
         if (selectedCalendarId !== "" && calendarUpdateTitle.text === ""
                 && calendarUpdateStart.text === "" && calendarUpdateEnd.text === "")
             populateCalendarUpdate()
     }
     onVisibleChanged: {
-        if (visible)
+        if (visible) {
+            activateProvider(provider)
             synchronizeBackendSelection()
+        } else if (configurationReady) {
+            captureProviderDraft(loadedProvider)
+            slackXappToken.text = ""
+        }
     }
-    Component.onCompleted: synchronizeBackendSelection()
+    Component.onCompleted: {
+        // Hydrate both connectors immediately, even though only one tab is
+        // visible.  This makes the persisted policies authoritative and keeps
+        // the first provider switch from inheriting the other tab's controls.
+        ensureProviderDraft("calendar")
+        ensureProviderDraft("slack")
+        configurationReady = true
+        activateProvider(provider)
+        synchronizeBackendSelection()
+    }
 
     function selectedChannels() {
         return slackChannels.text.split(/[，,\n]/).map(function(item) {
@@ -345,12 +573,11 @@ Window {
     }
 
     function policyMap() {
-        return {
-            scope: scopeBox.currentText,
-            interruption: interruptionBox.currentText,
-            retention: retentionBox.currentText,
-            assistance: assistanceBox.currentText
-        }
+        var currentDraft = ensureProviderDraft(provider)
+        var result = policyFromControls(currentDraft.policy)
+        if (provider === "slack")
+            result.selectedSources = selectedChannels()
+        return result
     }
 
     function configurationMap() {
@@ -359,8 +586,10 @@ Window {
         result.clientId = provider === "calendar" ? googleClientId.text.trim()
                                                    : slackClientId.text.trim()
         if (provider === "slack") {
-            result.xappToken = slackXappToken.text
-            result.appToken = slackXappToken.text
+            // Tokens are write-only and omitted entirely when the user did not
+            // type a new value.  Existing Credential Manager entries survive.
+            if (slackXappToken.text.trim() !== "")
+                result.xappToken = slackXappToken.text
             result.currentUserId = slackCurrentUserId.text.trim()
             result.selectedChannels = selectedChannels()
             result.redirectUri = slackRedirectUri.text.trim()
@@ -371,8 +600,19 @@ Window {
     function saveConfiguration(showConfirmation) {
         var response = callBackend("connectorConfigure", [provider, configurationMap()],
                                    "配置没有保存，请检查必填项")
-        if (response.ok && showConfirmation)
-            notice = "配置已交给本地连接器保存"
+        if (response.ok) {
+            var returnedStatus = response.result && response.result.status
+                                 ? response.result.status : null
+            if (returnedStatus) {
+                var savedDraft = draftFromInfo(provider, returnedStatus)
+                setProviderDraft(provider, savedDraft)
+                setProviderBaseline(provider, savedDraft)
+            } else
+                captureProviderDraft(provider)
+            applyProviderDraft(provider)
+            if (showConfirmation)
+                notice = "配置已交给本地连接器保存"
+        }
         return response.ok
     }
 
@@ -550,6 +790,7 @@ Window {
         id: axis
         required property string label
         required property string explanation
+        required property string controlName
         property alias model: choice.model
         property alias currentIndex: choice.currentIndex
         property alias currentText: choice.currentText
@@ -565,6 +806,7 @@ Window {
 
         ComboBox {
             id: choice
+            objectName: axis.controlName
             Layout.fillWidth: true
             implicitHeight: 38
             font.pixelSize: 12
@@ -701,6 +943,7 @@ Window {
                         FieldLabel { text: "Desktop OAuth Client ID" }
                         TextField {
                             id: googleClientId
+                            objectName: "connectorGoogleClientId"
                             Layout.fillWidth: true
                             placeholderText: "例如：……apps.googleusercontent.com"
                             selectByMouse: true
@@ -730,6 +973,7 @@ Window {
                             FieldLabel { text: "OAuth Client ID" }
                             TextField {
                                 id: slackClientId
+                                objectName: "connectorSlackClientId"
                                 Layout.fillWidth: true
                                 placeholderText: "Slack App Client ID"
                                 selectByMouse: true
@@ -739,6 +983,7 @@ Window {
                             FieldLabel { text: "Redirect URI" }
                             TextField {
                                 id: slackRedirectUri
+                                objectName: "connectorSlackRedirectUri"
                                 Layout.fillWidth: true
                                 text: "http://127.0.0.1:53682/oauth/callback"
                                 placeholderText: "已在 Slack App 注册的回调 URI"
@@ -749,6 +994,7 @@ Window {
                             FieldLabel { text: "Socket Mode xapp Token" }
                             TextField {
                                 id: slackXappToken
+                                objectName: "connectorSlackXappToken"
                                 Layout.fillWidth: true
                                 placeholderText: "xapp-…"
                                 echoMode: TextInput.Password
@@ -760,6 +1006,7 @@ Window {
                             FieldLabel { text: "当前用户 ID" }
                             TextField {
                                 id: slackCurrentUserId
+                                objectName: "connectorSlackCurrentUserId"
                                 Layout.fillWidth: true
                                 placeholderText: "例如 U0123456789"
                                 selectByMouse: true
@@ -769,6 +1016,7 @@ Window {
                             FieldLabel { text: "精选频道" }
                             TextField {
                                 id: slackChannels
+                                objectName: "connectorSlackChannels"
                                 Layout.fillWidth: true
                                 placeholderText: "频道 ID，用逗号分隔"
                                 selectByMouse: true
@@ -844,6 +1092,7 @@ Window {
 
                             PolicyAxis {
                                 id: scopeBox
+                                controlName: "connectorPolicyScope"
                                 Layout.fillWidth: true
                                 label: "信息范围"
                                 explanation: "必要：主日历／私信与本人提及；精选：只保留你勾选的来源；广泛：授权范围内全部来源。"
@@ -853,6 +1102,7 @@ Window {
 
                             PolicyAxis {
                                 id: interruptionBox
+                                controlName: "connectorPolicyInterruption"
                                 Layout.fillWidth: true
                                 label: "打扰方式"
                                 explanation: "安静会排队；优先使用系统通知；即时会在非敏感场景显示气泡。"
@@ -862,6 +1112,7 @@ Window {
 
                             PolicyAxis {
                                 id: retentionBox
+                                controlName: "connectorPolicyRetention"
                                 Layout.fillWidth: true
                                 label: "本地留存"
                                 explanation: "元数据不存正文；摘要与扩展缓存都会加密，扩展缓存仅保留已选来源。"
@@ -871,6 +1122,7 @@ Window {
 
                             PolicyAxis {
                                 id: assistanceBox
+                                controlName: "connectorPolicyAssistance"
                                 Layout.fillWidth: true
                                 label: "协助能力"
                                 explanation: "提醒不调用模型；协助仅在点击后处理当前项；确认执行仍需逐次预览并手动确认。"

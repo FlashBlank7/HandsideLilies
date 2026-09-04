@@ -164,6 +164,9 @@ def main() -> int:
     load_windows_ui_fonts()
     backend = OffscreenBackend(smoke=True, force_compact=True)
     backend._v03_timer.stop()
+    # Use production gesture decisions while the QPA remains forcibly
+    # offscreen; previewMode would deliberately skip all native requests.
+    backend._preview_mode = False
     backend.database.set_setting(
         "desktop_pet_quick_actions_v1", ["focus", "peek", "reading"]
     )
@@ -360,6 +363,67 @@ def main() -> int:
             }
         )
 
+    # Verify native-mode threshold handoff with event-time global positions at
+    # each Qt DPR. Offscreen refuses the actual system move; the one priming
+    # transaction and request must still occur on the >4 px event, not a frame.
+    backend.setPetDragMode("system")
+    compact_window.setProperty("expanded", False)
+    backend.offscreen_work_areas = [_area(0, 0, 960, 720, "threshold-screen")]
+    root.setProperty("preferredCompactBoxSize", 110.0)
+    root.setProperty("compactBoxSize", 110.0)
+    pet_window.setProperty("geometryClampActive", True)
+    pet_window.setPosition(QPoint(100, 80))
+    pet_window.setProperty("geometryClampActive", False)
+    press_x = float(pet_window.property("compactCharacterLeft")) + float(
+        pet_window.property("compactCharacterWidth")) / 2.0
+    press_y = float(pet_window.property("compactCharacterTop")) + float(
+        pet_window.property("compactCharacterHeight")) * 0.45
+    for kind, dx in ((QEvent.Type.MouseButtonPress, 0), (QEvent.Type.MouseMove, 3),
+                     (QEvent.Type.MouseMove, 8)):
+        event = QMouseEvent(
+            kind, QPointF(press_x + dx, press_y),
+            QPointF(100 + press_x + dx, 80 + press_y),
+            Qt.MouseButton.LeftButton if dx == 0 else Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+        )
+        backend.offscreen_cursor = {"x": 100 + press_x + dx, "y": 80 + press_y}
+        delivered = not pointer_event_filter.eventFilter(pet_window, event)
+        if dx == 0:
+            pet_body.beginPointer(press_x, press_y)
+        else:
+            pet_body.movePointer(press_x + dx, press_y, True)
+        if dx == 3:
+            threshold_held = bool(
+                delivered and not pet_window.property("dragMoved")
+                and pointer_event_filter._root_system_move_attempts == 0
+                and pet_window.x() == 100 and pet_window.y() == 80
+            )
+    native_threshold_event_time = {
+        "qtScaleFactor": os.environ.get("QT_SCALE_FACTOR", "1"),
+        "heldBelowThreshold": threshold_held,
+        "windowAfterEvent": [pet_window.x(), pet_window.y()],
+        "nativeAttempts": pointer_event_filter._root_system_move_attempts,
+        "primingCommits": pointer_event_filter._direct_move_commits,
+        "passed": bool(
+            threshold_held and delivered and pet_window.property("dragMoved")
+            and pet_window.x() == 108 and pet_window.y() == 80
+            and pointer_event_filter._root_system_move_attempts == 1
+            and pointer_event_filter._direct_move_commits == 1
+        ),
+    }
+    pet_body.endPointer()
+    app.processEvents()
+    compact_window.setProperty("expanded", False)
+    # This real gesture queues habitat finalization, a 220 ms persistence
+    # debounce and a 340 ms presentation settle. Drain that terminal work
+    # before constructing the next independent synthetic frame fixture.
+    QTest.qWait(380)
+    app.processEvents()
+    assert not pet_window.property("manualDragActive")
+    assert not pet_window.property("dragFinalizePending")
+    # All following frame/coalescing tests explicitly exercise direct mode.
+    backend.setPetDragMode("direct")
+
     # QMouseEvent/MultiPointTouchArea positions, QWindow x/y and QCursor.pos()
     # are all Qt logical coordinates.  Alternate the event-driven path with
     # the 16 ms global-cursor safety net after a cross-screen fit has resized
@@ -370,6 +434,12 @@ def main() -> int:
         "devicePixelRatio": 2.0,
     }
     backend.offscreen_work_areas = [drag_area]
+    # Establish ownership before assigning exact origins; otherwise x/y
+    # Behaviors can keep a prior scene glide alive in the first three samples.
+    pet_window.setProperty("manualDragActive", True)
+    pet_window.cancelPositionAnimations()
+    pet_window.setProperty("lastCapturedPointerEventAt", 0)
+    pet_window.setProperty("dragPointerEventPending", False)
     root.setProperty("preferredCompactBoxSize", 184.0)
     root.setProperty("compactBoxSize", 184.0)
     pet_window.setX(-820)
@@ -379,7 +449,6 @@ def main() -> int:
     pet_window.setProperty("dragStartCursorX", -680.0)
     pet_window.setProperty("dragStartCursorY", 140.0)
     pet_window.setProperty("dragMoved", True)
-    pet_window.setProperty("manualDragActive", True)
     cursor = {"x": 450, "y": 100}
     backend.offscreen_cursor = cursor
     pet_window.followGlobalPointer()
@@ -429,6 +498,8 @@ def main() -> int:
     # QWindow filter even when MouseArea did not deliver onPositionChanged.
     # This is the real-world gap that otherwise makes the pet pause behind
     # the hand and then jump to the cursor-polling fallback.
+    pet_window.setProperty("manualDragActive", True)
+    pet_window.cancelPositionAnimations()
     root.setProperty("preferredCompactBoxSize", 110.0)
     root.setProperty("compactBoxSize", 110.0)
     pet_window.setX(100)
@@ -438,7 +509,6 @@ def main() -> int:
     pet_window.setProperty("dragStartCursorX", 160.0)
     pet_window.setProperty("dragStartCursorY", 130.0)
     pet_window.setProperty("dragMoved", True)
-    pet_window.setProperty("manualDragActive", True)
     captured_event = QMouseEvent(
         QEvent.Type.MouseMove,
         QPointF(150.0, 110.0),
@@ -453,6 +523,7 @@ def main() -> int:
     app.processEvents()
     serial_after = int(pointer_event_filter.serial)
     timer_captured_event = {
+        "dragMode": backend.petDragMode,
         "serialBefore": serial_before,
         "serialAfter": serial_after,
         "consumedSerial": int(pet_window.property("consumedPointerEventSerial")),
@@ -1038,6 +1109,7 @@ def main() -> int:
 
     passed = bool(
         all(bool(case["passed"]) for case in radial_results)
+        and bool(native_threshold_event_time["passed"])
         and bool(drag_event_timer_handoff["passed"])
         and bool(timer_captured_event["passed"])
         and bool(stale_local_event_handoff["passed"])
@@ -1050,6 +1122,7 @@ def main() -> int:
     report = {
         "platform": os.environ["QT_QPA_PLATFORM"],
         "radialMenu": radial_results,
+        "nativeThresholdEventTime": native_threshold_event_time,
         "dragEventTimerHandoff": drag_event_timer_handoff,
         "dragTimerCapturedEvent": timer_captured_event,
         "staleLocalEventHandoff": stale_local_event_handoff,

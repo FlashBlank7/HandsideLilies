@@ -57,7 +57,6 @@ class FakeNativeMoveController(QObject):
     def tryStartSystemMove(self, gesture_serial: int) -> bool:
         serial = int(gesture_serial)
         self.start_calls.append(serial)
-        self._last_direct_position = None
         self.native_motion_latched = False
         if self.cancel_synchronously:
             # QWindow::startSystemMove can release the MouseArea grab before
@@ -494,7 +493,7 @@ def main() -> int:
                 glide_moved_before_press > 4.0
                 and glide_remaining_before_press > 12.0
                 and glide_press_state["manual"] is True
-                and glide_press_state["native"] is True
+                and glide_press_state["native"] is False
                 and glide_serial > 0
                 and pose_transition_before_press
                 and "presentation"
@@ -1000,6 +999,10 @@ def main() -> int:
             float(pet_window.y()),
         ]
         pet_body.beginPointer(point_x, point_y)
+        pet_body.movePointer(point_x + 8.0, point_y, True)
+        primed_position_reentry = [
+            position_before_reentry[0] + 8.0, position_before_reentry[1]
+        ]
         fake_native.probe_pending_fallback = False
         reentrant_serial = int(
             pet_window.property("nativeSystemMoveGestureSerial")
@@ -1068,8 +1071,8 @@ def main() -> int:
                 "afterCorrectSerial": after_correct_serial,
                 "passed": (
                 len(fake_native.start_calls) == calls_before_reentry + 1
-                and len(fake_native.move_requests) == requests_before_reentry
-                and len(fake_native.move_calls) == moves_before_reentry
+                and len(fake_native.move_requests) == requests_before_reentry + 1
+                and len(fake_native.move_calls) == moves_before_reentry + 1
                 and fake_native.reentrant_snapshot.get("startPending") is True
                 and fake_native.reentrant_snapshot.get("manualDragActive") is True
                 and fake_native.reentrant_snapshot.get("nativeMoveActive") is False
@@ -1081,9 +1084,9 @@ def main() -> int:
                 and fake_native.pending_fallback_snapshot.get("moveCommits")
                 == 0
                 and fake_native.pending_fallback_snapshot.get("positionBefore")
-                == position_before_reentry
+                == primed_position_reentry
                 and fake_native.pending_fallback_snapshot.get("positionAfter")
-                == position_before_reentry
+                == primed_position_reentry
                 and after_reentry["manualDragActive"] is True
                 and after_reentry["nativeMoveActive"] is True
                 and after_reentry["startPending"] is False
@@ -1162,6 +1165,7 @@ def main() -> int:
         expanded_press_serial = int(
             expanded_press_immediate["gestureSerial"]
         )
+        pet_body.movePointer(point_x + 8.0, point_y, True)
         # Complete the synthetic native move so no gesture state leaks into
         # the existing x/y out-and-back cases below.
         fake_native.native_motion_latched = True
@@ -1184,9 +1188,9 @@ def main() -> int:
                 and expanded_press_immediate["orbitProgress"] <= 0.01
                 and abs(expanded_press_immediate["boxRotation"]) <= 0.01
                 and expanded_press_immediate["manualDragActive"] is True
-                and expanded_press_immediate["nativeMoveActive"] is True
+                and expanded_press_immediate["nativeMoveActive"] is False
                 and expanded_press_immediate["gestureSerial"] > 0
-                and expanded_press_immediate["nativeStarts"] == 1
+                and expanded_press_immediate["nativeStarts"] == 0
                 and expanded_press_finish
             ),
         }
@@ -1214,6 +1218,10 @@ def main() -> int:
                 "y": round(float(pet_window.y()) + point_y),
             }
             pet_body.beginPointer(point_x, point_y)
+            pet_body.movePointer(
+                point_x + (8.0 if axis == "x" else 0.0),
+                point_y + (8.0 if axis == "y" else 0.0), True,
+            )
             QApplication.processEvents()
             serial = int(pet_window.property("nativeSystemMoveGestureSerial"))
             press_animation_state = {
@@ -1292,8 +1300,8 @@ def main() -> int:
                 len(backend.detach_calls) - detaches_before_axis
             )
             axis_results[axis] = {
-                "qmlGeometryCallbackStayedIdleOutbound": not qml_latched_out,
-                "qmlGeometryCallbackStayedIdleAtOrigin": not qml_latched_back,
+                "eventTimeMotionStayedLatchedOutbound": qml_latched_out,
+                "eventTimeMotionStayedLatchedAtOrigin": qml_latched_back,
                 "controllerMotionLatched": fake_native.systemMoveHadMotion(serial),
                 "menuOpenBeforePress": menu_open_before_press,
                 "pressAnimationState": press_animation_state,
@@ -1316,8 +1324,8 @@ def main() -> int:
         outcome["nativeOutAndBackLatch"] = {
             "axes": axis_results,
             "passed": all(
-                value["qmlGeometryCallbackStayedIdleOutbound"]
-                and value["qmlGeometryCallbackStayedIdleAtOrigin"]
+                value["eventTimeMotionStayedLatchedOutbound"]
+                and value["eventTimeMotionStayedLatchedAtOrigin"]
                 and value["controllerMotionLatched"]
                 and value["pressAnimationState"]["menuClosed"]
                 and value["pressAnimationState"]["orbitProgress"] <= 0.01
@@ -1329,7 +1337,7 @@ def main() -> int:
                 and value["returnedToOrigin"]
                 and value["manualFollowSuppressed"]
                 and value["detachesDuringDrag"] == 0
-                and value["fallbackCallsDuringDrag"] == 0
+                and value["fallbackCallsDuringDrag"] == 1
                 and value["finishAccepted"]
                 and value["detachesAfterFinish"] == 1
                 and not value["repeatedFinishAccepted"]
@@ -1341,8 +1349,65 @@ def main() -> int:
             ),
         }
 
+        # Neither a frame nor a WinEvent/64 ms watchdog runs between these
+        # pointer events. The threshold event itself must prove movement.
+        compact_window.setProperty("expanded", False)
+        pet_window.setProperty("geometryClampActive", True)
+        pet_window.setX(190)
+        pet_window.setY(90)
+        pet_window.setProperty("geometryClampActive", False)
+        point_x, point_y = _character_point(pet_window)
+        backend.offscreen_cursor = {
+            "x": float(pet_window.x()) + point_x,
+            "y": float(pet_window.y()) + point_y,
+        }
+        starts_before_fast = len(fake_native.start_calls)
+        commits_before_fast = len(fake_native.move_calls)
+        fake_native.native_motion_latched = False
+        pet_body.beginPointer(point_x, point_y)
+        pet_body.movePointer(point_x + 3.0, point_y, True)
+        held_below_threshold = (
+            len(fake_native.start_calls) == starts_before_fast
+            and len(fake_native.move_calls) == commits_before_fast
+        )
+        pet_body.endPointer()
+        stationary_opened = bool(compact_window.property("expanded"))
+        QApplication.processEvents()
+        compact_window.setProperty("expanded", False)
+        point_x, point_y = _character_point(pet_window)
+        origin_x, origin_y = float(pet_window.x()), float(pet_window.y())
+        backend.offscreen_cursor = {"x": origin_x + point_x, "y": origin_y + point_y}
+        pet_body.beginPointer(point_x, point_y)
+        pet_body.movePointer(point_x + 8.0, point_y, True)
+        threshold_latched = bool(pet_window.property("dragMoved"))
+        native_started_same_turn = bool(pet_window.property("nativeSystemMoveActive"))
+        fast_serial = int(pet_window.property("nativeSystemMoveGestureSerial"))
+        # Model a fast native out-and-back before any native-motion sampler.
+        pet_window.setX(round(origin_x))
+        pet_window.setY(round(origin_y))
+        pet_body.endPointer()
+        no_native_motion_sample = not fake_native.systemMoveHadMotion(fast_serial)
+        fast_finished = bool(pet_window.finishNativeSystemMove(fast_serial))
+        outcome["nativeThresholdFastOutAndBackWithoutPoll"] = {
+            "heldBelowThreshold": held_below_threshold,
+            "stationaryOpenedMenu": stationary_opened,
+            "eventTimeLatched": threshold_latched,
+            "nativeStartedSameTurn": native_started_same_turn,
+            "nativeMotionSampleWasAbsent": no_native_motion_sample,
+            "primingCommits": len(fake_native.move_calls) - commits_before_fast,
+            "menuStayedClosed": not bool(compact_window.property("expanded")),
+            "passed": bool(
+                held_below_threshold and stationary_opened and threshold_latched
+                and native_started_same_turn and no_native_motion_sample
+                and fast_finished and len(fake_native.start_calls) == starts_before_fast + 1
+                and len(fake_native.move_calls) == commits_before_fast + 1
+                and not compact_window.property("expanded")
+            ),
+        }
+        QApplication.processEvents()
+
         # Unsupported compositor moves must fall back to the same event-time
-        # direct path.  The failed bridge is attempted once on press, clears
+        # direct path. The failed bridge is attempted once at the threshold, clears
         # the native serial, and never prevents the >4 px move or its cleanup.
         fake_native.start_result = False
         compact_window.setProperty("expanded", False)
@@ -1461,9 +1526,9 @@ def main() -> int:
             "detachCallsAfterRepeat": fallback_detaches_after_repeat,
             "passed": (
                 fallback_after_press["manualDragActive"] is True
-                and fallback_after_press["nativeMoveAttempted"] is True
+                and fallback_after_press["nativeMoveAttempted"] is False
                 and fallback_after_press["nativeMoveActive"] is False
-                and fallback_after_press["gestureSerial"] == 0
+                and fallback_after_press["gestureSerial"] > 0
                 and fallback_after_press["directMoveCalls"] == 0
                 and fallback_after_press["directMoveRequests"] == 0
                 and fallback_after_press["detachCalls"] == 0

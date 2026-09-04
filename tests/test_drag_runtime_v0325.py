@@ -46,6 +46,7 @@ def test_drag_runtime_regressions_v0325_offscreen() -> None:
             "nativeStartCancelReentry",
             "expandedMenuNativePressStopsMotion",
             "nativeOutAndBackLatch",
+            "nativeThresholdFastOutAndBackWithoutPoll",
             "failedNativeStartFallsBackDirect",
             "directReleaseHideRaceFinalizesExactlyOnce",
             "avoidanceInteractionGuard",

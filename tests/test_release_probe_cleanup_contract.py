@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BOX_WORLD_TEST = PROJECT_ROOT / "tests" / "test_box_world_presentation_offscreen.py"
 BOX_WORLD_VERIFIER = PROJECT_ROOT / "scripts" / "verify_box_world_presentation.py"
 RESOURCE_PROBE = PROJECT_ROOT / "scripts" / "verify_packaged_compact_resources.ps1"
+CURRENT_PROMOTION = PROJECT_ROOT / "scripts" / "promote_v0354.ps1"
 
 
 def _powershell_function(source: str, name: str) -> str:
@@ -44,10 +45,16 @@ def _powershell_function(source: str, name: str) -> str:
     raise AssertionError(f"unterminated PowerShell function: {name}")
 
 
-def _run_cleanup_function(tmp_path: Path, body: str) -> dict[str, object]:
-    source = RESOURCE_PROBE.read_text(encoding="utf-8")
-    function = _powershell_function(
-        source, "Remove-ExactDiagnosticDirectoryWithRetry"
+def _run_cleanup_function(
+    tmp_path: Path,
+    body: str,
+    *,
+    script: Path = RESOURCE_PROBE,
+    function_names: tuple[str, ...] = ("Remove-ExactDiagnosticDirectoryWithRetry",),
+) -> dict[str, object]:
+    source = script.read_text(encoding="utf-8")
+    function = "\n\n".join(
+        _powershell_function(source, name) for name in function_names
     )
     environment = dict(os.environ)
     environment["LILIES_CLEANUP_TEST_ROOT"] = str(tmp_path)
@@ -272,3 +279,161 @@ def test_resource_probe_cannot_pass_when_cleanup_fails() -> None:
     passed_expression = source[source.index("passed = [bool](") :]
     assert "$cleanupSucceeded" in passed_expression.split(")\n", 1)[0]
     assert "errors = @($cleanupFailures" in source
+
+
+def test_live_resource_snapshot_survives_process_cleanup(tmp_path: Path) -> None:
+    report = _run_cleanup_function(
+        tmp_path,
+        r'''
+$fake = [pscustomobject]@{
+    Id = 42; HasExited = $false; RefreshCount = 0
+    WorkingSet64 = [long]67108864; PrivateMemorySize64 = [long]41943040
+    Threads = @(1, 2, 3, 4); HandleCount = 17; Responding = $true
+    Modules = @(
+        [pscustomobject]@{ ModuleName = 'Qt6Core.dll' },
+        [pscustomobject]@{ ModuleName = 'Qt6Gui.dll' }
+    )
+}
+$fake | Add-Member -MemberType ScriptMethod -Name Refresh -Value {
+    $this.RefreshCount++
+}
+$snapshot = Get-LiveProcessResourceSnapshot -Process $fake -ExpectedProcessId 42
+# Simulate Stop-Process and refreshed lazy Process properties before JSON output.
+$fake.HasExited = $true
+$fake.WorkingSet64 = 0
+$fake.PrivateMemorySize64 = 0
+$fake.Threads = @()
+$fake.HandleCount = 0
+$fake.Responding = $false
+$fake.Modules[0].ModuleName = 'Qt6Multimedia.dll'
+$fake.Modules = @()
+[ordered]@{
+    snapshot = $snapshot
+    refreshCount = $fake.RefreshCount
+    lazyProcessExited = $fake.HasExited
+} | ConvertTo-Json -Compress -Depth 4
+''',
+        function_names=("Get-LiveProcessResourceSnapshot",),
+    )
+    snapshot = report["snapshot"]
+    assert snapshot["workingSetBytes"] == 67108864
+    assert snapshot["privateBytes"] == 41943040
+    assert snapshot["threads"] == 4
+    assert snapshot["handles"] == 17
+    assert snapshot["responding"] is True
+    assert snapshot["sampledWhileAlive"] is True
+    assert snapshot["processId"] == 42
+    assert snapshot["capturedAt"]
+    assert snapshot["moduleNames"] == ["Qt6Core.dll", "Qt6Gui.dll"]
+    assert report["refreshCount"] == 2
+    assert report["lazyProcessExited"] is True
+
+
+def test_resource_snapshot_rejects_exited_empty_and_racing_processes(
+    tmp_path: Path,
+) -> None:
+    report = _run_cleanup_function(
+        tmp_path,
+        r'''
+function New-FakeProcess {
+    $fake = [pscustomobject]@{
+        Id = 42; HasExited = $false; RefreshCount = 0; ExitOnSecondRefresh = $false
+        WorkingSet64 = [long]67108864; PrivateMemorySize64 = [long]41943040
+        Threads = @(1, 2); HandleCount = 17; Responding = $true
+        Modules = @([pscustomobject]@{ ModuleName = 'Qt6Core.dll' })
+    }
+    $fake | Add-Member -MemberType ScriptMethod -Name Refresh -Value {
+        $this.RefreshCount++
+        if ($this.ExitOnSecondRefresh -and $this.RefreshCount -eq 2) {
+            $this.HasExited = $true
+        }
+    }
+    return $fake
+}
+$rejected = [ordered]@{}
+foreach ($kind in @('exited', 'identity', 'race', 'working', 'private', 'threads', 'handles', 'modules')) {
+    $fake = New-FakeProcess
+    switch ($kind) {
+        'exited' { $fake.HasExited = $true }
+        'identity' { $fake.Id = 43 }
+        'race' { $fake.ExitOnSecondRefresh = $true }
+        'working' { $fake.WorkingSet64 = 0 }
+        'private' { $fake.PrivateMemorySize64 = 0 }
+        'threads' { $fake.Threads = @() }
+        'handles' { $fake.HandleCount = 0 }
+        'modules' { $fake.Modules = @() }
+    }
+    $rejected[$kind] = $false
+    try { Get-LiveProcessResourceSnapshot -Process $fake -ExpectedProcessId 42 | Out-Null }
+    catch { $rejected[$kind] = $true }
+}
+$rejected | ConvertTo-Json -Compress
+''',
+        function_names=("Get-LiveProcessResourceSnapshot",),
+    )
+    assert len(report) == 8
+    assert all(value is True for value in report.values())
+
+
+def test_current_promotion_rejects_zero_or_nonlive_resource_evidence(
+    tmp_path: Path,
+) -> None:
+    report = _run_cleanup_function(
+        tmp_path,
+        r'''
+function New-ResourceReport {
+    return [pscustomobject]@{
+        sampledWhileAlive = $true; sampledProcessId = 42
+        workingSetMiB = 64.0; privateMiB = 40.0; threads = 4; handles = 17
+    }
+}
+$validAccepted = $true
+try { Assert-LiveCompactResourceSnapshot (New-ResourceReport) }
+catch { $validAccepted = $false }
+$rejected = [ordered]@{}
+foreach ($name in @('workingSetMiB', 'privateMiB', 'threads', 'handles', 'sampledProcessId')) {
+    $probe = New-ResourceReport
+    $probe.$name = 0
+    $rejected[$name] = $false
+    try { Assert-LiveCompactResourceSnapshot $probe }
+    catch { $rejected[$name] = $true }
+}
+foreach ($kind in @('missing', 'not-live', 'text-live', 'nan', 'infinite')) {
+    $probe = New-ResourceReport
+    switch ($kind) {
+        'missing' { $probe.PSObject.Properties.Remove('sampledWhileAlive') }
+        'not-live' { $probe.sampledWhileAlive = $false }
+        'text-live' { $probe.sampledWhileAlive = 'true' }
+        'nan' { $probe.workingSetMiB = [double]::NaN }
+        'infinite' { $probe.privateMiB = [double]::PositiveInfinity }
+    }
+    $rejected[$kind] = $false
+    try { Assert-LiveCompactResourceSnapshot $probe }
+    catch { $rejected[$kind] = $true }
+}
+[ordered]@{ validAccepted = $validAccepted; rejected = $rejected } |
+    ConvertTo-Json -Compress -Depth 3
+''',
+        script=CURRENT_PROMOTION,
+        function_names=(
+            "Assert-JsonBoolean",
+            "Get-RequiredJsonInteger",
+            "Get-RequiredJsonNumber",
+            "Assert-LiveCompactResourceSnapshot",
+        ),
+    )
+    assert report["validAccepted"] is True
+    assert len(report["rejected"]) == 10
+    assert all(value is True for value in report["rejected"].values())
+
+
+def test_report_uses_materialized_snapshot_only_after_probe_cleanup() -> None:
+    source = RESOURCE_PROBE.read_text(encoding="utf-8")
+    snapshot_call = source.index("$resourceSnapshot = Get-LiveProcessResourceSnapshot")
+    assert snapshot_call < source.index("Stop-Process -Id $process.Id")
+    final_report = source[source.index("$responding = [bool]$resourceSnapshot.responding") :]
+    assert "$sample." not in final_report
+    for name in ("workingSetBytes", "privateBytes", "threads", "handles", "responding"):
+        assert f"$resourceSnapshot.{name}" in final_report
+    wrapper = CURRENT_PROMOTION.read_text(encoding="utf-8")
+    assert "Assert-LiveCompactResourceSnapshot $compactResource" in wrapper

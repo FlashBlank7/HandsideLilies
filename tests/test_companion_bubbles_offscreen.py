@@ -81,7 +81,7 @@ def test_companion_bubbles_high_dpi_layout_placement_and_focus() -> None:
     assert outcome["busyLayout"] == {
         "bodyFits": True,
         "effectiveBusy": True,
-        "label": "正在整理……",
+        "label": "在想了",
         "labelVisible": True,
     }
     assert outcome["controllerBusy"] == {

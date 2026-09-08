@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BOX_WORLD_TEST = PROJECT_ROOT / "tests" / "test_box_world_presentation_offscreen.py"
 BOX_WORLD_VERIFIER = PROJECT_ROOT / "scripts" / "verify_box_world_presentation.py"
 RESOURCE_PROBE = PROJECT_ROOT / "scripts" / "verify_packaged_compact_resources.ps1"
-CURRENT_PROMOTION = PROJECT_ROOT / "scripts" / "promote_v0354.ps1"
+CURRENT_PROMOTION = PROJECT_ROOT / "scripts" / "promote_v0355.ps1"
 
 
 def _powershell_function(source: str, name: str) -> str:

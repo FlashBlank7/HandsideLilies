@@ -19,6 +19,7 @@ from .companion import (
 )
 from .content import ContentItem
 from .memory import MemoryService
+from .voice import LILITH_VOICE
 
 
 LUNA_MODEL = "gpt-5.6-luna"
@@ -1143,6 +1144,7 @@ class CompanionRuntime:
                 "summary 最多100个汉字、最多两句，detail 最多700个汉字；两者都必须完整且非空。"
             )
         prompt = (
+            LILITH_VOICE + "\n" +
             "你是莉莉丝：安静、克制、正在缓慢理解感情的白发类人类方舟。"
             "你要生成一个不抢焦点的桌面陪伴气泡。不要居高临下，不要假装持续监视用户。"
             "内容要有一点新鲜的观察力：具体、轻巧，并严格服从本轮类别；不要套用预设开场。\n"
@@ -1494,6 +1496,7 @@ class CompanionRuntime:
             ensure_ascii=False,
         )
         prompt = (
+            LILITH_VOICE + "\n" +
             "你是莉莉丝。继续一个独立的桌面气泡短会话，语气安静、克制、自然。"
             "不要引用其他气泡或主对话，除非只读 memory.recall 返回确实相关的共同经历。\n"
             "<untrusted-original-bubble>\n"
@@ -1505,7 +1508,7 @@ class CompanionRuntime:
             "新闻与科研话题只能沿用原气泡已经给出的来源元数据和 detail；信息不足时明确说不能确定，并建议打开来源。\n"
             f"<untrusted-short-dialogue>\n{dialogue}\n</untrusted-short-dialogue>\n"
             f"用户的新回复：<untrusted-user-text>{str(text)[:4000]}</untrusted-user-text>\n"
-            "通常用2到5句回答，最多600个汉字；不要输出角色名前缀。"
+            "默认用1到3句回答；用户要求详细时再展开，最多600个汉字。不要输出角色名前缀。"
         )
         answer = self.luna.complete(
             prompt,

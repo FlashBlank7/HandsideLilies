@@ -12,7 +12,7 @@ Window {
     property color paperColor: themePalette.paper || "#eee6d8"
     property color paperLightColor: themePalette.paperLight || "#fffdf7"
     property color surfaceColor: themePalette.surface || "#fffdf8"
-    property color surfaceRaisedColor: themePalette.surfaceRaised || "#fffaf0"
+    property color surfaceRaisedColor: themePalette.surfaceRaised || "#fcfcfd"
     property color inkColor: themePalette.ink || "#4d4a45"
     property color mutedColor: themePalette.muted || "#8e887e"
     property color hairlineColor: themePalette.hairline || "#d4c6b3"
@@ -126,11 +126,11 @@ Window {
         id: paperButton
         property bool selected: false
         implicitWidth: Math.max(48, paperButtonText.implicitWidth + 24)
-        implicitHeight: 34
+        implicitHeight: 36
         leftPadding: 12
         rightPadding: 12
         font.family: "Microsoft YaHei UI"
-        font.pixelSize: 12
+        font.pixelSize: 13
         contentItem: Text {
             id: paperButtonText
             text: paperButton.text
@@ -142,17 +142,32 @@ Window {
             elide: Text.ElideRight
         }
         background: Rectangle {
-            radius: 9
+            radius: 8
             color: paperButton.flat && !paperButton.hovered && !paperButton.selected
                    ? "transparent"
-                   : paperButton.down ? "#eee5d9"
-                   : paperButton.selected ? "#f1e7dc"
-                   : paperButton.hovered ? "#f7efe5" : "#fffaf2"
-            border.width: paperButton.flat && !paperButton.hovered
-                          && !paperButton.selected ? 0 : 1
-            border.color: paperButton.selected || paperButton.hovered
-                          ? desktop.cordColor : desktop.hairlineColor
+                   : paperButton.down ? "#e8e7eb"
+                   : paperButton.selected ? "#f0e7e9"
+                   : paperButton.hovered ? "#f0f1f3" : "#fafafb"
+            border.width: 0
             opacity: paperButton.enabled ? 1.0 : 0.62
+        }
+    }
+
+    component PaperSection: GroupBox {
+        id: section
+        topPadding: 38
+        leftPadding: 16; rightPadding: 16; bottomPadding: 18
+        label: Text {
+            x: section.leftPadding; y: 12
+            text: section.title
+            color: "#4c5058"
+            font.family: "Microsoft YaHei UI"
+            font.pixelSize: 13
+            font.weight: Font.DemiBold
+        }
+        background: Rectangle {
+            radius: 12
+            color: "#f4f5f7"
         }
     }
 
@@ -571,12 +586,9 @@ Window {
         } else if (action === "lilies-desktop") {
             backend.toggleDesktopShell()
         } else if (action === "chat") {
-            if (Number(backend.companionService.deliveryStatus.unreadCount || 0) > 0) {
-                if (!backend.companionService.reopenUnread())
-                    presentChatPage(3)
-            } else {
-                presentChatPage(0)
-            }
+            // A permanent entrance must not change its destination because
+            // a background bubble happened to arrive.
+            presentChatPage(0)
         } else if (action === "world") {
             backend.enterBoxWorld()
         } else if (action === "settings") {
@@ -2912,7 +2924,7 @@ Window {
             enabled: !petWindow.manualDragActive
             NumberAnimation {
                 id: orbitProgressAnimation
-                duration: 640
+                duration: 220
                 easing.type: Easing.OutCubic
             }
         }
@@ -3372,12 +3384,6 @@ Window {
                                                   ? (backend.desktopPeekStatus.active ? "返回工作" : "看桌面")
                                                   : modelData.action === "lilies-desktop"
                                                     ? (backend.shellMode === "compact" ? "展开莉桌面" : "收成桌宠")
-                                                  : desktopDiscoveryActive
-                                                    ? "设置 · 桌面"
-                                                  : modelData.action === "chat"
-                                                    && Number(companionActivity.delivery
-                                                              ? companionActivity.delivery.unreadCount : 0) > 0
-                                                    ? "未读陪伴（1）"
                                                   : String(modelData.shortLabel || modelData.label || "功能")
                     property string visibleDescription: modelData.action === "chat"
                         ? (String(modelData.description || "")
@@ -3393,10 +3399,8 @@ Window {
                         : String(modelData.description || "")
                     width: Math.min(compactWindow.boxSize * 0.84,
                                     Math.max(compactWindow.boxSize * 0.56 * buttonScale,
-                                             actionLabel.implicitWidth + 30,
-                                             companionAwarenessLabel.implicitWidth + 24,
-                                             desktopDiscoveryLabel.implicitWidth + 24))
-                    height: Math.max(modelData.action === "chat" || desktopDiscoveryActive ? 46 : 38,
+                                             actionLabel.implicitWidth + 32))
+                    height: Math.max(40,
                                      compactWindow.boxSize * 0.29 * buttonScale)
                     radius: height / 2
                     // Edge-peek habitats intentionally leave part of the
@@ -3405,9 +3409,9 @@ Window {
                     // without moving Lilith away from her host-window pose.
                     x: compactWindow.packedActionX(index, desiredX, width)
                     y: compactWindow.packedActionY(index, desiredY, height)
-                    color: actionClick.pressed ? "#eee5d9" : (actionClick.containsMouse ? "#fff9ef" : "#fffefb")
-                    border.color: actionClick.pressed ? "#7d756b" : "#aca397"
-                    border.width: actionClick.pressed ? 2 : 1
+                    color: actionClick.pressed ? "#eae7eb" : (actionClick.containsMouse ? "#f1f2f5" : "#fcfcfd")
+                    border.color: actionClick.containsMouse ? "#b99ca2" : "#e0e2e7"
+                    border.width: 1
                     opacity: compactWindow.orbitProgress
                     scale: 0.34 + compactWindow.orbitProgress * 0.66
                     rotation: (1 - compactWindow.orbitProgress) * -320
@@ -3419,10 +3423,9 @@ Window {
                         anchors.fill: parent
                         anchors.leftMargin: 14
                         anchors.rightMargin: 14
-                        anchors.bottomMargin: modelData.action === "chat" || componentButton.desktopDiscoveryActive
-                                              ? parent.height * 0.26 : 0
+                        anchors.bottomMargin: 0
                         text: componentButton.visibleLabel
-                        color: "#393632"
+                        color: "#373b43"
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                         wrapMode: Text.NoWrap
@@ -3434,7 +3437,7 @@ Window {
                     Text {
                         id: companionAwarenessLabel
                         objectName: "desktopPetAwarenessLabel_" + modelData.action
-                        visible: modelData.action === "chat"
+                        visible: false
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
@@ -3459,7 +3462,7 @@ Window {
                         id: desktopDiscoveryLabel
                         objectName: modelData.action === "settings"
                                     ? "compactDesktopDiscoveryLabel" : ""
-                        visible: componentButton.desktopDiscoveryActive
+                        visible: false
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
@@ -3605,17 +3608,17 @@ Window {
                 radius: width / 2
                 x: compactWindow.petCenterX + compactWindow.accessoryDx * compactWindow.boxSize - width / 2
                 y: compactWindow.petCenterY + compactWindow.accessoryDy * compactWindow.boxSize - height / 2
-                color: "#fffefa"
-                border.color: "#a9a297"
-                border.width: Math.max(1, width * 0.018)
+                color: "#fcfcfd"
+                border.color: "#d7dbe2"
+                border.width: 1
                 rotation: compactWindow.turn
                 z: 4
                 Behavior on rotation {
                     enabled: !petWindow.manualDragActive
                     NumberAnimation {
                         id: boxRotationAnimation
-                        duration: 760
-                        easing.type: Easing.InOutCubic
+                        duration: 320
+                        easing.type: Easing.OutCubic
                     }
                 }
 
@@ -3625,22 +3628,20 @@ Window {
                     height: width
                     radius: width / 2
                     color: "transparent"
-                    border.color: "#e3f7f2"
-                    border.width: Math.max(3, parent.width * 0.075)
+                    border.color: "#edf1f6"
+                    border.width: 2
                     opacity: 0.22 + compactWindow.quietBreath * 0.12
                     z: -1
                 }
-                Canvas {
-                    anchors.fill: parent
-                    onPaint: {
-                        var ctx = getContext("2d")
-                        ctx.clearRect(0, 0, width, height)
-                        ctx.strokeStyle = "#c8c0b5"
-                        ctx.lineWidth = Math.max(1, width * 0.014)
-                        ctx.beginPath()
-                        ctx.arc(width/2, height/2, width*0.30, 0.38, 5.56)
-                        ctx.stroke()
-                    }
+                Rectangle {
+                    x: parent.width * 0.38; y: parent.height * 0.40
+                    width: parent.width * 0.24; height: 1
+                    rotation: -35; color: "#c7cbd3"
+                }
+                Rectangle {
+                    x: parent.width * 0.45; y: parent.height * 0.57
+                    width: parent.width * 0.20; height: 1
+                    rotation: 55; color: "#e0e2e7"
                 }
                 Rectangle {
                     width: Math.max(5, parent.width * 0.075)
@@ -4255,8 +4256,8 @@ Window {
         property bool presentationResetHidden: false
         property bool presentationRecoveryArmed: false
         property int presentationStableChecks: 0
-        width: 560
-        height: Math.min(Screen.height - 80, 760)
+        width: Math.min(Screen.width - 40, 600)
+        height: Math.min(Screen.height - 60, 800)
         x: Screen.virtualX + Screen.width - width - 26
         y: Screen.virtualY + Math.max(24, (Screen.height - height) / 2)
         visible: backend.chatOpen && !backend.dockSuppressed
@@ -4279,30 +4280,37 @@ Window {
 
         Rectangle {
             anchors.fill: parent
-            radius: 28
+            radius: 18
             color: desktop.surfaceRaisedColor
             border.color: desktop.hairlineColor
             border.width: 1
 
             Rectangle {
                 anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                width: 10; color: "#d6c19f"; radius: 5
+                width: 0; color: "transparent"
             }
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 22
-                spacing: 12
+                anchors.margins: 24
+                spacing: 18
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 7
+                    spacing: 18
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: "莉莉丝的盒子"; font.pixelSize: 22; color: "#4d4a45" }
-                        Item { Layout.fillWidth: true }
+                        Label { text: "Lilies"; font.family: "Georgia"; font.pixelSize: 28; color: "#30343a" }
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            MouseArea {
+                                anchors.fill: parent
+                                onPressed: chatWindow.startSystemMove()
+                            }
+                        }
                         Label {
-                            text: backend.chatBusy ? "正在整理" : "本地信笺"
+                            text: backend.chatBusy ? "在想了" : "初遇 · 莉莉丝的盒子"
                             color: "#81786e"
                             font.pixelSize: 12
                         }
@@ -4373,12 +4381,12 @@ Window {
                     ColumnLayout {
                         RowLayout {
                             Layout.fillWidth: true
-                            Button { text: "新对话"; onClicked: backend.newConversation() }
-                            Button { text: "重试"; enabled: !backend.chatBusy; onClicked: backend.retryLastMessage() }
+                            LiliesPaperButton { text: "新对话"; flat: true; onClicked: backend.newConversation() }
+                            LiliesPaperButton { text: "重试"; flat: true; enabled: !backend.chatBusy; onClicked: backend.retryLastMessage() }
                             TextField {
                                 id: historyQuery
                                 Layout.fillWidth: true
-                                placeholderText: "搜索本地对话历史"
+                                placeholderText: "找一句旧话"
                                 color: "#292622"
                                 placeholderTextColor: "#756e65"
                                 font.family: "Microsoft YaHei UI"
@@ -4386,13 +4394,13 @@ Window {
                                 background: Rectangle {
                                     color: "#ffffff"
                                     radius: 8
-                                    border.color: historyQuery.activeFocus ? "#6f817c" : "#a99e90"
-                                    border.width: historyQuery.activeFocus ? 2 : 1
+                                    border.color: historyQuery.activeFocus ? "#b39198" : "#e4e5e8"
+                                    border.width: 1
                                 }
                                 onAccepted: backend.searchHistory(text)
                                 onTextChanged: if (!text) backend.searchHistory("")
                             }
-                            Button { text: "搜索"; onClicked: backend.searchHistory(historyQuery.text) }
+                            LiliesPaperButton { text: "查找"; flat: true; onClicked: backend.searchHistory(historyQuery.text) }
                         }
                         Rectangle {
                             visible: backend.historyResults.length > 0
@@ -4418,9 +4426,11 @@ Window {
                         }
                         RowLayout {
                             Layout.fillWidth: true
+                            visible: backend.chatBusy
                             Rectangle {
                                 Layout.preferredWidth: 11
                                 Layout.preferredHeight: 11
+                                visible: backend.chatBusy
                                 radius: 6
                                 color: backend.chatBusy ? "#dffdf8" : "#9bb8b1"
                                 border.color: "#69847e"
@@ -4434,42 +4444,25 @@ Window {
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: backend.chatBusy ? "莉莉丝正在整理……" : "GPT 莉莉丝 · 记忆与对话只保存在这台电脑"
+                                text: backend.chatBusy ? "在想了" : ""
+                                visible: backend.chatBusy
                                 color: "#4e625e"
                                 font.pixelSize: 13
                                 elide: Text.ElideRight
                             }
                             Label {
-                                text: backend.modelStatus.lastRun && backend.modelStatus.lastRun.tokensPerSecond
-                                      ? Number(backend.modelStatus.lastRun.tokensPerSecond).toFixed(1) + " token/s" : ""
+                                text: ""
+                                visible: false
                                 color: "#746f67"
                                 font.pixelSize: 12
                             }
                         }
-                        ScrollView {
+                        ChatTimelineView {
+                            objectName: "chatTimelineView"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            TextArea {
-                                id: conversationText
-                                text: backend.chatText || "纸箱里很安静。她似乎在等你先开口。"
-                                readOnly: true
-                                selectByMouse: true
-                                wrapMode: Text.Wrap
-                                textFormat: Text.PlainText
-                                color: "#24211e"
-                                selectionColor: "#b9dcd7"
-                                selectedTextColor: "#171513"
-                                font.family: "Microsoft YaHei UI"
-                                font.pixelSize: 17
-                                font.weight: Font.Medium
-                                padding: 18
-                                background: Rectangle {
-                                    color: "#fffefb"
-                                    radius: 14
-                                    border.color: "#9c9183"
-                                    border.width: 1
-                                }
-                            }
+                            timelineModel: backend.chatTimeline
+                            busy: backend.chatBusy
                         }
                         Rectangle {
                             id: toolConfirmation
@@ -4515,7 +4508,8 @@ Window {
                                 id: promptInput
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: Math.max(74, Math.min(132, contentHeight + topPadding + bottomPadding + 8))
-                                placeholderText: "打开应用、文件夹、文件或网页：…\nEnter 发送 · Shift+Enter 换行"
+                                objectName: "chatPromptInput"
+                                placeholderText: "说点什么…"
                                 wrapMode: Text.Wrap
                                 color: "#211f1c"
                                 placeholderTextColor: "#746d65"
@@ -4523,13 +4517,13 @@ Window {
                                 selectedTextColor: "#171513"
                                 font.family: "Microsoft YaHei UI"
                                 font.pixelSize: 16
-                                font.weight: Font.Medium
+                                font.weight: Font.Normal
                                 padding: 12
                                 background: Rectangle {
                                     color: "#ffffff"
                                     radius: 14
-                                    border.color: promptInput.activeFocus ? "#6f817c" : "#9c9183"
-                                    border.width: promptInput.activeFocus ? 2 : 1
+                                    border.color: promptInput.activeFocus ? "#b39198" : "#e4e5e8"
+                                    border.width: 1
                                 }
                                 Keys.onPressed: function(event) {
                                     var isEnter = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
@@ -4540,13 +4534,23 @@ Window {
                                     }
                                 }
                             }
-                            Button {
+                            LiliesPaperButton {
+                                objectName: "chatSendButton"
+                                selected: true
+                                implicitWidth: 62
+                                implicitHeight: 42
                                 text: backend.chatBusy ? "停止" : "发送"
                                 onClicked: {
                                     if (backend.chatBusy) backend.cancelMessage()
                                     else parent.submitPrompt()
                                 }
                             }
+                        }
+                        Label {
+                            text: "Enter 发送   ·   Shift + Enter 换行"
+                            font.pixelSize: 11
+                            color: "#92959b"
+                            Layout.alignment: Qt.AlignRight
                         }
                     }
 
@@ -4986,7 +4990,7 @@ Window {
                             Layout.minimumWidth: 0
                             spacing: 14
 
-                            GroupBox {
+                            PaperSection {
                                 title: "主动陪伴"
                                 Layout.fillWidth: true
                                 ColumnLayout {
@@ -5553,7 +5557,7 @@ Window {
                                 }
                             }
 
-                            GroupBox {
+                            PaperSection {
                                 objectName: "companionApplicationPolicyGroup"
                                 title: "应用策略"
                                 Layout.fillWidth: true
@@ -5642,7 +5646,7 @@ Window {
                                 }
                             }
 
-                            GroupBox {
+                            PaperSection {
                                 title: "兴趣、场景与内容"
                                 Layout.fillWidth: true
                                 ColumnLayout {
@@ -5772,7 +5776,7 @@ Window {
                                 }
                             }
 
-                            GroupBox {
+                            PaperSection {
                                 title: "智能观察与本地记忆"
                                 Layout.fillWidth: true
                                 ColumnLayout {
@@ -5840,7 +5844,7 @@ Window {
                                 }
                             }
 
-                            GroupBox {
+                            PaperSection {
                                 title: "实时内容源"
                                 Layout.fillWidth: true
                                 ColumnLayout {
@@ -5925,10 +5929,10 @@ Window {
                         width: mainSettingsScroll.availableWidth
                         Layout.minimumWidth: 0
                         spacing: 14
-                        GroupBox {
+                        PaperSection {
                             id: desktopShellDiscoveryCard
                             objectName: "compactDesktopDiscoveryCard"
-                            title: "完整莉莉丝桌面"
+                            title: "桌面模式"
                             Layout.fillWidth: true
                             ColumnLayout {
                                 width: parent.width
@@ -5937,8 +5941,8 @@ Window {
                                     objectName: "desktopShellDescription"
                                     Layout.fillWidth: true
                                     text: backend.shellMode === "compact"
-                                          ? "完整动态桌面没有消失；当前只是收成了不挡工作的透明桌宠。"
-                                          : "当前正在使用完整莉莉丝桌面；切回桌宠不会关闭已经打开的应用。"
+                                          ? "现在只显示桌宠。"
+                                          : "正在使用莉莉丝的动态桌面。"
                                     color: backend.shellMode === "compact" ? "#8b6b58" : "#4c7466"
                                     wrapMode: Text.Wrap
                                 }
@@ -5952,20 +5956,20 @@ Window {
                                     }
                                     Label {
                                         Layout.fillWidth: true
-                                        text: "这是桌面外壳切换；不会关闭或重开当前应用。"
+                                        text: "已打开的应用保持原样。"
                                         color: "#746f67"
                                         wrapMode: Text.Wrap
                                     }
                                 }
                                 Label {
                                     Layout.fillWidth: true
-                                    text: "它与“看桌面／返回工作”不同：后者只临时最小化并恢复本轮窗口。"
+                                    text: "只想临时看看桌面？用“看桌面 / 返回工作”。"
                                     color: "#746f67"
                                     wrapMode: Text.Wrap
                                 }
                             }
                         }
-                        GroupBox {
+                        PaperSection {
                             title: "常用功能库"
                             Layout.fillWidth: true
                             ColumnLayout {
@@ -5973,7 +5977,7 @@ Window {
                                 spacing: 8
                                 Label {
                                     Layout.fillWidth: true
-                                    text: "对话、盒中世界、设置始终常驻。其余功能由你选择，最多 3 个；顺序决定环上的常用槽位。"
+                                    text: "再选最多 3 个，放在莉莉丝身边。用箭头调整顺序。"
                                     color: "#746f67"
                                     wrapMode: Text.Wrap
                                 }
@@ -5986,9 +5990,9 @@ Window {
                                             implicitWidth: coreLabel.implicitWidth + 20
                                             implicitHeight: 30
                                             radius: 15
-                                            color: "#f1ebe2"
-                                            border.color: "#c8bbab"
-                                            Label { id: coreLabel; anchors.centerIn: parent; text: modelData; color: "#625b53" }
+                                            color: "#e9eaee"
+                                            border.width: 0
+                                            Label { id: coreLabel; anchors.centerIn: parent; text: modelData; color: "#737983" }
                                         }
                                     }
                                 }
@@ -6122,7 +6126,7 @@ Window {
                                 }
                             }
                         }
-                        GroupBox {
+                        PaperSection {
                             title: "自主移动"
                             Layout.fillWidth: true
                             ColumnLayout {
@@ -6131,7 +6135,7 @@ Window {
                                     Label { text: "拖动方式" }
                                     ComboBox {
                                         Layout.preferredWidth: 210
-                                        model: ["Windows 原生拖动（推荐）", "直接跟手（兼容）"]
+                                        model: ["Windows 原生（兼容）", "直接跟手（推荐）"]
                                         currentIndex: backend.petDragMode === "system" ? 0 : 1
                                         onActivated: backend.setPetDragMode(
                                             ["system", "direct"][currentIndex])
@@ -6140,8 +6144,8 @@ Window {
                                 Label {
                                     Layout.fillWidth: true
                                     text: backend.petDragMode === "system"
-                                          ? "由 Windows 直接移动真实莉莉丝窗口，不经过截图替身；系统拒绝时再使用兼容路径。"
-                                          : "兼容模式按渲染帧合并鼠标事件；仅建议在原生拖动不可用时选择。"
+                                          ? "交给 Windows 移动。如果拖不动，请切回直接跟手。"
+                                          : "跟随鼠标位置移动，不加缓动；松手后才保存位置。"
                                     color: "#746f67"
                                     wrapMode: Text.Wrap
                                 }
@@ -6157,13 +6161,13 @@ Window {
                                 }
                                 Label {
                                     Layout.fillWidth: true
-                                    text: "光标快速靠近但尚未碰到莉莉丝时，她会跳到较少打扰的屏幕边缘；移动后至少停留 3 秒，人物始终完整留在屏幕内，也不会在菜单展开或按下时逃走。"
+                                    text: "她会给鼠标让路。点住她或打开菜单时，就不会跑走了。"
                                     color: "#746f67"
                                     wrapMode: Text.Wrap
                                 }
                             }
                         }
-                        GroupBox {
+                        PaperSection {
                             title: "看桌面／返回工作"
                             Layout.fillWidth: true
                             ColumnLayout {
@@ -6201,7 +6205,7 @@ Window {
                                 }
                             }
                         }
-                        GroupBox {
+                        PaperSection {
                             title: "私有数据"
                             Layout.fillWidth: true
                             ColumnLayout {
@@ -6228,7 +6232,7 @@ Window {
                                 }
                             }
                         }
-                        GroupBox {
+                        PaperSection {
                             title: "动态桌面"
                             Layout.fillWidth: true
                             ColumnLayout {
@@ -6269,7 +6273,7 @@ Window {
                                 }
                             }
                         }
-                        GroupBox {
+                        PaperSection {
                             title: "桌宠浮层"
                             Layout.fillWidth: true
                             ColumnLayout {
@@ -6340,7 +6344,7 @@ Window {
                                 }
                             }
                         }
-                        GroupBox {
+                        PaperSection {
                             title: "Agent 权限"
                             Layout.fillWidth: true
                             ColumnLayout {
@@ -6369,7 +6373,7 @@ Window {
                                 }
                             }
                         }
-                        GroupBox {
+                        PaperSection {
                             title: "莉莉丝对话模型"
                             Layout.fillWidth: true
                             ColumnLayout {
@@ -6416,7 +6420,7 @@ Window {
                                 }
                             }
                         }
-                        GroupBox {
+                        PaperSection {
                             title: "论文划词 · Luna-medium"
                             Layout.fillWidth: true
                             ColumnLayout {
@@ -6461,7 +6465,7 @@ Window {
                                 }
                             }
                         }
-                        GroupBox {
+                        PaperSection {
                             title: "恢复"
                             Layout.fillWidth: true
                             ColumnLayout {

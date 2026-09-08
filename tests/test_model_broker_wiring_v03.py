@@ -375,7 +375,9 @@ def test_cancel_wins_before_deterministic_reply_commit_and_suppresses_publicatio
 ) -> None:
     broker = ModelTaskBroker()
     chat = ChatService(Database(tmp_path / "commit-fence.db"), model_broker=broker)
-    task = broker.submit(GPT_MODEL_NAME, ModelTaskKind.EXPLICIT_CHAT_REPLY)
+    # Deterministic identity replies are now only the tiny local model's
+    # safety path. Subscription greetings are generated normally.
+    task = broker.submit(MODEL_NAME, ModelTaskKind.EXPLICIT_CHAT_REPLY)
     entered = threading.Event()
     release = threading.Event()
     chunks: list[str] = []
@@ -397,7 +399,7 @@ def test_cancel_wins_before_deterministic_reply_commit_and_suppresses_publicatio
 
     canceller = threading.Thread(target=cancel_after_reply_starts, daemon=True)
     canceller.start()
-    chat._chat_worker("commit regression", None, task.id, GPT_MODEL_NAME)
+    chat._chat_worker("commit regression", None, task.id, MODEL_NAME)
     canceller.join(timeout=1)
 
     assert not canceller.is_alive()

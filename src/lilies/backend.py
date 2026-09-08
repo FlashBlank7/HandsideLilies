@@ -158,9 +158,9 @@ _CORE_QUICK_ACTIONS: tuple[dict[str, Any], ...] = (
 _OPTIONAL_QUICK_ACTIONS: tuple[dict[str, str], ...] = (
     {
         "action": "companion",
-        "label": "生活陪伴与屏幕观察",
+        "label": "陪伴与屏幕观察",
         "shortLabel": "陪伴",
-        "description": "立刻让莉莉丝说一句；观察状态与内容偏好仍可在设置中调整。",
+        "description": "听她说一句，或接着上次的话聊。",
     },
     {"action": "work", "label": "任务与工作台", "shortLabel": "工作", "description": "任务、提醒与工作进度。"},
     {"action": "focus", "label": "专注", "shortLabel": "专注", "description": "打开专注与休息控制。"},
@@ -620,6 +620,9 @@ class Backend(QObject):
         self.socket.start()
         self._desktop_items: list[dict[str, Any]] = []
         self._chat_text = ""
+        from .chat_timeline import ChatTimeline
+        self._chat_timeline = ChatTimeline(self)
+        self._chat_timeline.updated.connect(self.chatChanged)
         self._chat_open = False
         self._chat_busy = False
         self._model_status = self.chat.status()
@@ -652,16 +655,18 @@ class Backend(QObject):
         )
         if self._pet_avoidance_mode not in {"off", "gentle", "lively"}:
             self._pet_avoidance_mode = "gentle"
-        # Let Windows' compositor own a fresh installation's drag gesture.
-        # It keeps the transparent top-level window on the native input path
-        # instead of round-tripping every pointer frame through Python/QML.
-        # An explicitly persisted ``direct`` value remains a supported
-        # compatibility choice for window managers that reject system moves.
+        # A successful PostMessage from Qt does not prove that Windows entered
+        # its move loop (observed on this layered, non-activating pet HWND).
+        # Move the live window from coalesced global-pointer samples instead.
+        # Migrate the old default once; later explicit choices remain intact.
+        if self.database.get_setting("pet_drag_policy_revision", 0) < 2:
+            self.database.set_setting("pet_drag_mode", "direct")
+            self.database.set_setting("pet_drag_policy_revision", 2)
         self._pet_drag_mode = str(
-            self.database.get_setting("pet_drag_mode", "system")
+            self.database.get_setting("pet_drag_mode", "direct")
         )
         if self._pet_drag_mode not in {"direct", "system"}:
-            self._pet_drag_mode = "system"
+            self._pet_drag_mode = "direct"
         self._pet_geometry: dict[str, Any] = {}
         self._pet_cursor_sample: tuple[float, float, float] | None = None
         self._pet_avoidance_cooldown_until = 0.0
@@ -870,6 +875,10 @@ class Backend(QObject):
     @Property(str, notify=chatChanged)
     def chatText(self) -> str:
         return self._chat_text
+
+    @Property(QObject, constant=True)
+    def chatTimeline(self):
+        return self._chat_timeline
 
     @Property(bool, notify=chatOpenChanged)
     def chatOpen(self) -> bool:
@@ -4058,7 +4067,12 @@ class Backend(QObject):
     def sendMessage(self, text: str) -> None:
         if not text.strip() or self._chat_busy:
             return
+        # A worker may wait behind another model task before responseStarted.
+        # Reserve the UI turn now so fast Enter/clicks cannot add phantom rows.
+        self._chat_busy = True
+        self.chatBusyChanged.emit()
         self._chat_text += ("\n\n" if self._chat_text else "") + "你：" + text.strip() + "\n\n莉莉丝："
+        self._chat_timeline.begin_turn(text.strip())
         self.chatChanged.emit()
         self.chat.send(text)
 
@@ -4081,6 +4095,7 @@ class Backend(QObject):
             return
         self.chat.new_conversation()
         self._chat_text = ""
+        self._chat_timeline.reset_messages()
         self.chatChanged.emit()
 
     @Slot(str)
@@ -4302,14 +4317,17 @@ class Backend(QObject):
 
     def _on_chat_chunk(self, value: str) -> None:
         self._chat_text += value
-        self.chatChanged.emit()
+        self._chat_timeline.append_chunk(value)
 
     def _on_chat_finished(self, _value: str) -> None:
+        self._chat_timeline.finish(_value)
         self._chat_busy = False
         self.chatBusyChanged.emit()
         self._set_model_status(self.chat.status())
 
     def _on_chat_error(self, value: str) -> None:
+        self._chat_timeline.append_chunk("\n" + value)
+        self._chat_timeline.flush()
         self._chat_text += f"\n\n[本地模型] {value}"
         self.chatChanged.emit()
         self._set_status(value)
@@ -4416,6 +4434,9 @@ class Backend(QObject):
             )
             transcript.append(("你：" if role == "user" else "莉莉丝：") + text)
         self._chat_text = "\n\n".join(transcript)
+        self._chat_timeline.reset_messages(
+            self.database.recent_messages(self.chat.conversation_id, 200)
+        )
         self._chat_open = True
         self.chatChanged.emit()
         self.chatOpenChanged.emit()

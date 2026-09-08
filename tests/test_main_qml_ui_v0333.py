@@ -16,7 +16,8 @@ def test_main_qml_copy_and_local_paper_controls_are_explicit() -> None:
         PROJECT_ROOT / "src" / "lilies" / "companion_controller.py"
     ).read_text(encoding="utf-8")
 
-    assert "打开应用、文件夹、文件或网页：…" in qml
+    assert 'placeholderText: "说点什么…"' in qml
+    assert 'timelineModel: backend.chatTimeline' in qml
     assert "或输入执行命令" not in qml
     assert "component LiliesPaperButton: Button" in qml
     assert "component LiliesPaperScrollBar: ScrollBar" in qml

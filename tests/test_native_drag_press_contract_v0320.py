@@ -30,7 +30,7 @@ def test_character_press_prepares_and_only_event_time_drag_starts_native() -> No
     assert "function startQueuedNativeCharacterPress(" in starter_handler
 
 
-def test_system_move_is_the_recommended_default_and_direct_is_compatibility_mode() -> None:
+def test_direct_drag_is_recommended_and_system_move_stays_opt_in() -> None:
     source = (ROOT / "qml" / "Main.qml").read_text("utf-8")
     start = source.index("function tryNativeSystemMove(")
     end = source.index("function finishCharacterGesture(", start)
@@ -40,7 +40,7 @@ def test_system_move_is_the_recommended_default_and_direct_is_compatibility_mode
     assert handler.index('backend.petDragMode !== "system"') < handler.index(
         "nativeMoveController.tryStartSystemMove("
     )
-    assert 'model: ["Windows 原生拖动（推荐）", "直接跟手（兼容）"]' in source
+    assert 'model: ["Windows 原生（兼容）", "直接跟手（推荐）"]' in source
     assert 'currentIndex: backend.petDragMode === "system" ? 0 : 1' in source
     assert '["system", "direct"][currentIndex]' in source
     assert "Qt.NoDropShadowWindowHint" in source

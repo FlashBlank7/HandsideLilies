@@ -1,15 +1,15 @@
 {
   "id": "first-encounter",
-  "version": "0.3.54",
+  "version": "0.3.55",
   "title": "初遇",
   "renderers": ["scene2d", "video"],
   "defaultRenderer": "scene2d",
   "intro": {"playOnce": true, "durationMs": 6200, "replayable": true},
   "palette": {
-    "paper": "#eee6d8", "paperLight": "#fffdf7", "surface": "#fffdf8",
-    "surfaceRaised": "#fffaf0", "ink": "#4d4a45", "muted": "#8e887e",
-    "hairline": "#d4c6b3", "shadow": "#4d403222", "focus": "#6f817c",
-    "cord": "#9f3129", "crackLight": "#e9ffff"
+    "paper": "#efeff1", "paperLight": "#ffffff", "surface": "#fafafb",
+    "surfaceRaised": "#ffffff", "ink": "#30343a", "muted": "#80868f",
+    "hairline": "#e3e5e9", "shadow": "#26303c22", "focus": "#667b83",
+    "cord": "#985b64", "crackLight": "#e9ffff"
   },
   "dock": {
     "style": "paper-fold-minimal", "collapsedWidth": 64, "collapsedHeight": 6,

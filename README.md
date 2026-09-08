@@ -1,5 +1,14 @@
 # Lilies in the box
 
+### v0.3.55 跟手、留白与说话方式
+
+- 默认改为直接跟手：鼠标样本按显示帧合并，保持抓取点，不加追赶缓动。一次性迁移旧默认，之后手动选择仍保留。Windows 原生拖动仅作为兼容选项：Qt 的返回成功只能证明移动请求已发出，不能证明系统进入了持续拖动。
+- 按住时暂停命中区域重算、位置观察和后台刷新；松手恢复点击区域并延后保存位置。保留原有透明穿透、跨 DPI、缩放和中断恢复逻辑。自动测试不能替代真实鼠标手感验收。
+- 回复改成虚拟化的逐条消息列表；流式文本按 33ms 合并，只更新最后一条，不再让整段历史跟着每个输出片段重排。按下发送立即占用当前回合，避免模型排队时重复发送。
+- 界面统一为洁白、浅灰与少量暗红。设置用轻分区，缩短说明；径向菜单只显示短标签，展开缩至 220ms。盒子去掉内部同心圆，旋转缩至 320ms。“对话”始终打开对话，不被未读气泡改道。
+- 对话、论文划词和陪伴共用表达规则：直接回应，少客服套话、舞台动作和强行升华。订阅对话不再拦截问候为固定台词，也不附送那组人工身份问答；身份与称呼记忆仍固定注入。0.5B 的身份保护保留，不下载模型、不增加 API Key。
+- UI 预览位于 `artifacts/ui-v0355`；其中对话是排版样例，不冒充模型实测输出。数据仍固定 F 盘。候选版继续经过 `promote_v0355.ps1 -ValidateOnly` 发布门禁，旧版保留用于恢复。
+
 ### v0.3.54 真实窗口拖动与设置保护
 
 - 拖动采用真实窗口优先：由 `root.startSystemMove()` 请求 Windows 移动莉莉丝本身；不再默认消费原生按下后排队启动截图替身。只有平台拒绝时才尝试旧代理和直接跟随回退。采用 [Qt 的系统交互移动接口](https://doc.qt.io/qt-6/qwindow.html#startSystemMove)，实际鼠标手感仍需安装后验证。
@@ -419,19 +428,19 @@ cd "F:\code\Lilies in the box"
 
 这是一键发布证据构建：完成 PyInstaller 后会按依赖顺序重新生成并检查以下四份报告，任一步失败都会停止，旧报告会先被安全移除：
 
-1. `artifacts\packaged-self-test-v0354.json`
-2. `artifacts\packaged-compact-resource-v0354.json`
-3. `artifacts\packaged-windows-startup-v0354.json`
-4. `artifacts\pose-click-mask-v0354.json`
+1. `artifacts\packaged-self-test-v0355.json`
+2. `artifacts\packaged-compact-resource-v0355.json`
+3. `artifacts\packaged-windows-startup-v0355.json`
+4. `artifacts\pose-click-mask-v0355.json`
 
 需要逐步排查时，可用与一键脚本相同的顺序手动执行：
 
 ```powershell
-& .\dist\LiliesInTheBox\LiliesInTheBox.exe --self-test .\artifacts\packaged-self-test-v0354.json
+& .\dist\LiliesInTheBox\LiliesInTheBox.exe --self-test .\artifacts\packaged-self-test-v0355.json
 .\scripts\verify_packaged_compact_resources.ps1
 .\scripts\verify_packaged_windows_startup.ps1
 & .\.venv\Scripts\python.exe .\scripts\verify_pose_click_masks.py
-.\scripts\promote_v0354.ps1 -ValidateOnly
+.\scripts\promote_v0355.ps1 -ValidateOnly
 ```
 
 最后一条只验证、不复制：它与正式 promotion 使用同一套 EXE 版本、AdditionalFiles、三份打包报告、姿态点击报告与内容无关原生捕获探针门禁。只有全部通过后才运行不带 `-ValidateOnly` 的正式提升。

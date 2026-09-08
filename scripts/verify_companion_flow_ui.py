@@ -622,7 +622,7 @@ def main() -> int:
             and settings_library_entry["statusVisible"]
             and settings_library_entry["statusText"].startswith("陪伴 · ")
             and settings_library_entry["pageAfterOpen"] == 3
-            and companion_catalog.get("label") == "生活陪伴与屏幕观察"
+            and companion_catalog.get("label") == "陪伴与屏幕观察"
             and optional_entry
             == {
                 "pinned": True,
@@ -653,8 +653,9 @@ def main() -> int:
             and emitted_status["generationMode"] == "subscription"
             and cooldown["state"] == "cooldown"
             and cooldown["compactStatusLabel"] == "陪伴 · 安静间隔"
-            and awareness is not None
-            and str(awareness.property("text") or "") == "陪伴 · 1 条未读"
+            # Delivery remains inspectable on the companion page; the compact
+            # menu no longer adds a status subtitle to the chat entrance.
+            and awareness is None
             and outcome["deliveryUi"]["updated"]
             and outcome["deliveryUi"]["status"].startswith("投递 · 1 条未读")
             and outcome["deliveryUi"]["reopenText"] == "重新显示未读"

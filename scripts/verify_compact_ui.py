@@ -461,16 +461,11 @@ def main() -> int:
             "description": default_description,
             "screenshot": str(awareness_screenshot),
             "passed": (
-                # The compact line now reports the live companion state.  A
-                # smoke backend legitimately starts at "尚未启动", while
-                # resuming the controller advances it to "等待停顿".  Verify
-                # the semantic transition instead of requiring the old,
-                # static observation-mode copy on all three frames.
-                default_awareness.startswith("陪伴 · ")
-                and paused_awareness == "陪伴 · 已暂停"
-                and restored_awareness.startswith("陪伴 · ")
-                and restored_awareness != paused_awareness
-                and default_visible
+                # The v0.3.55 radial entrance is deliberately just one short
+                # label. Detailed sensing/delivery state remains in the
+                # companion page and accessible tooltip, not a second line.
+                default_awareness == paused_awareness == restored_awareness == ""
+                and not default_visible
                 and "应用感知已开启 · 不截图" in default_description
                 and "截图必须另行明确授权" in default_description
                 and "选择「陪伴」" in default_description
@@ -2430,8 +2425,8 @@ def main() -> int:
         and outcome.get("settingsClickWorked") is True
         and outcome.get("menuClosedAfterSettings") is True
         and outcome.get("desktopDiscoveryInRadialMenu", {}).get("label")
-            == "完整桌面入口"
-        and outcome.get("desktopDiscoveryInRadialMenu", {}).get("visible") is True
+            == ""
+        and outcome.get("desktopDiscoveryInRadialMenu", {}).get("visible") is False
         and outcome.get("desktopDiscoveryInRadialMenu", {}).get("shellModeBefore")
             == "compact"
         and outcome.get("desktopDiscoveryInRadialMenu", {}).get("actionIds")

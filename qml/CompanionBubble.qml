@@ -12,11 +12,11 @@ Window {
     // native QQuickWindow is truly exposed; it never receives bubble prose.
     property var nativePresentationController: null
     property string uiFontFamily: Qt.application.font.family
-    property color paperColor: "#fffdf8"
-    property color inkColor: "#4d4a45"
-    property color mutedColor: "#8e887e"
-    property color hairlineColor: "#d4c6b3"
-    property color cordColor: "#9f3129"
+    property color paperColor: "#fcfcfd"
+    property color inkColor: "#30343a"
+    property color mutedColor: "#80868f"
+    property color hairlineColor: "#e3e5e9"
+    property color cordColor: "#985b64"
     property bool suppressed: false
     // Pointer-critical pet movement temporarily removes this auxiliary
     // QQuickWindow without changing delivery state or cancelling a reply.
@@ -42,8 +42,10 @@ Window {
     readonly property bool detailIncludesSummary: detailText.indexOf(summaryText) >= 0
     readonly property string expandedDisplayText: detailIncludesSummary
         ? detailText : summaryText + "\n\n" + detailText
-    readonly property int collapsedCharacterLimit: Math.max(96,
-        Math.floor(Math.max(1, collapsedWidth - 54) / 15) * 7)
+    readonly property int collapsedCharacterLimit: Math.max(24,
+        Math.floor(Math.max(1, collapsedWidth - 56) / 15)
+        * Math.max(1, Math.floor((Math.min(260, maximumWindowHeight)
+                                 - collapsedChromeHeight - 16) / 20)))
     readonly property bool collapsedTextTruncated:
         summaryText.length > collapsedCharacterLimit
     readonly property string collapsedDisplayText: collapsedTextTruncated
@@ -70,15 +72,15 @@ Window {
         + headerRow.implicitHeight + actionRow.implicitHeight
         + (sourceVisible ? sourceLabel.implicitHeight : 0)
         + (effectiveBusy ? busyLabel.implicitHeight : 0)
-        + 9 * (2 + auxiliaryRowCount)
-        + 8
+        + 10 * (2 + auxiliaryRowCount)
     readonly property real expandedChromeHeight: collapsedChromeHeight
         + (replying ? replyRow.implicitHeight + 9 : 0)
-    property real collapsedWidth: Math.min(maximumWindowWidth, Math.max(380, Math.min(480,
-        300 + Math.sqrt(Math.max(1, summaryText.length)) * 15)))
+    property real collapsedWidth: Math.min(maximumWindowWidth, Math.max(340, Math.min(420,
+        280 + Math.sqrt(Math.max(1, summaryText.length)) * 12)))
     property real expandedWidth: Math.min(maximumWindowWidth, Math.max(collapsedWidth, 560))
-    property real collapsedHeight: Math.min(maximumWindowHeight, Math.max(224,
-        Math.min(340, summaryMeasure.implicitHeight + collapsedChromeHeight + 12)))
+    property real collapsedHeight: Math.min(maximumWindowHeight, Math.max(184,
+        Math.min(260, Math.max(54, summaryMeasure.implicitHeight + 12)
+                       + collapsedChromeHeight + 4)))
     property real expandedHeight: Math.min(maximumWindowHeight, Math.max(replying ? 330 : 250,
         Math.min(540, detailMeasure.implicitHeight + expandedChromeHeight + 12)))
     readonly property real leftSideRoom: subjectLeft - Screen.virtualX - screenMargin
@@ -205,23 +207,29 @@ Window {
         id: paperAction
         property string text: ""
         signal clicked()
-        implicitWidth: Math.max(76, actionLabel.implicitWidth + 28)
+        implicitWidth: Math.max(64, actionLabel.implicitWidth + 24)
         implicitHeight: 40
-        radius: 12
-        color: !enabled ? "#f5f1eb"
-                        : (actionHover.hovered ? "#efe7dc" : "#faf6ef")
+        radius: 8
+        color: "transparent"
+        border.width: 0
         border.color: actionHover.hovered && enabled
                       ? bubbleWindow.cordColor : bubbleWindow.hairlineColor
         opacity: enabled ? 1.0 : 0.48
         Accessible.role: Accessible.Button
         Accessible.name: text
+        Rectangle {
+            anchors.centerIn: parent
+            width: parent.width; height: 32; radius: 8
+            color: !paperAction.enabled ? "#f5f5f7"
+                  : (actionHover.hovered ? "#e9e8ed" : "#f0f1f4")
+        }
         Text {
             id: actionLabel
             anchors.centerIn: parent
             text: paperAction.text
             color: bubbleWindow.inkColor
             font.family: bubbleWindow.uiFontFamily
-            font.pixelSize: 14
+            font.pixelSize: 13
         }
         HoverHandler {
             id: actionHover
@@ -240,7 +248,7 @@ Window {
     Text {
         id: summaryMeasure
         visible: false
-        width: Math.max(1, bubbleWindow.collapsedWidth - 44)
+        width: Math.max(1, bubbleWindow.collapsedWidth - 56)
         text: bubbleWindow.collapsedDisplayText
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
@@ -251,7 +259,7 @@ Window {
     Text {
         id: detailMeasure
         visible: false
-        width: Math.max(1, bubbleWindow.expandedWidth - 44)
+        width: Math.max(1, bubbleWindow.expandedWidth - 56)
         text: bubbleWindow.expandedDisplayText
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
@@ -261,7 +269,7 @@ Window {
 
     Rectangle {
         anchors.fill: parent
-        radius: expanded ? 26 : 21
+        radius: 14
         color: paperColor
         border.color: hairlineColor
         border.width: 1
@@ -273,7 +281,7 @@ Window {
             anchors.right: bubbleWindow.placeOnRight ? undefined : parent.right
             anchors.top: parent.top
             anchors.bottom: parent.bottom
-            width: 6
+            width: 2
             radius: 3
             color: cordColor
             opacity: 0.78
@@ -462,7 +470,7 @@ Window {
                 objectName: "companionBusyLabel"
                 Layout.fillWidth: true
                 visible: bubbleWindow.effectiveBusy
-                text: "正在整理……"
+                text: "在想了"
                 color: mutedColor
                 font.family: bubbleWindow.uiFontFamily
                 font.pixelSize: 11
@@ -519,7 +527,7 @@ Window {
                     Layout.minimumWidth: 150
                     Layout.minimumHeight: 80
                     Layout.preferredHeight: 80
-                    placeholderText: "认真回复，或说“想听听别的”"
+                    placeholderText: "你怎么想？"
                     wrapMode: Text.Wrap
                     color: inkColor
                     font.family: bubbleWindow.uiFontFamily

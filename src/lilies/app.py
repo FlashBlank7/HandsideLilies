@@ -914,6 +914,8 @@ class CompactHitTestFilter(QAbstractNativeEventFilter):
             drag_active = bool(
                 getattr(controller, "native_character_press_active", False)
             )
+        if not drag_active and controller is not None:
+            drag_active = bool(getattr(controller, "_direct_character_drag_active", False))
         if drag_active:
             # The press already proved that this gesture began on an
             # interactive island. Re-walking the full QQuickItem tree for
@@ -1538,6 +1540,7 @@ class CompactPointerEventFilter(QObject):
         self._proxy_cache_age_ms = 0.0
         self._proxy_visual_stale = False
         self._drag_proxy_gesture_active = False
+        self._direct_character_drag_active = False
         self._diagnostic_phase = "idle"
         self._diagnostic_release_before_queued_start = False
         self._diagnostic_prestart_pointer_samples = 0
@@ -2035,6 +2038,8 @@ class CompactPointerEventFilter(QObject):
             self._schedule_filter_resume_retry()
 
     def _resume_native_drag_observers(self) -> None:
+        if self._direct_character_drag_active and not self._closing_drag_bridge:
+            return
         resume = getattr(self._native_drag_filter, "resume_drag_observers", None)
         if callable(resume):
             resume()
@@ -2386,8 +2391,20 @@ class CompactPointerEventFilter(QObject):
         """Fence pending image work from the initial Qt character press."""
         if not self._closing_drag_bridge:
             self._begin_drag_proxy_gesture()
+            # Direct drag needs Qt's mouse grab and coalescing filter, but not
+            # a periodic hit-map walk or two origin callbacks on each move.
+            # The native-mode suspension previously missed this path.
+            if not bool(self.root.property("nativeDragAwaitingThreshold")):
+                self._direct_character_drag_active = True
+                suspend = getattr(self._native_drag_filter, "suspend_drag_observers", None)
+                if callable(suspend):
+                    suspend()
 
     def _end_drag_proxy_gesture(self) -> None:
+        if self._direct_character_drag_active:
+            self._direct_character_drag_active = False
+            if not self._native_drag_filter_suspended:
+                self._resume_native_drag_observers()
         cache = self._drag_proxy_cache
         if cache is None or not self._drag_proxy_gesture_active:
             return
@@ -3916,6 +3933,7 @@ class CompactPointerEventFilter(QObject):
             self._drag_proxy_cache = None
         self._drag_proxy_gesture_active = False
         self._closing_drag_bridge = True
+        self._direct_character_drag_active = False
         if self._root_move_guard is not None:
             self._root_move_guard.close()
         self._publish_drag_proxy_runtime_state(
@@ -5338,7 +5356,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.54")
+    app.setApplicationVersion("0.3.55")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:
@@ -5891,6 +5909,10 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(1050, finish_windows_startup_probe)
     if args.self_test:
         output = Path(args.self_test).resolve()
+        # This unattended package check exercises the local identity safety
+        # path, not a person's subscription or network availability. Normal
+        # chat no longer short-circuits GPT greetings into that fixed reply.
+        backend.chat._gpt.executable = None
         finished = {"value": False}
         self_test_started = {"value": False}
 

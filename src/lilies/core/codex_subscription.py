@@ -13,11 +13,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .reading import ReadingRequest, prepare_reading_request
+from .voice import LILITH_VOICE
 
 
 MODEL_NAME = "gpt-5.6-luna"
 REASONING_EFFORT = "medium"
-CLIENT_VERSION = "0.3.54"
+CLIENT_VERSION = "0.3.55"
 
 _DISABLED_CODEX_FEATURES = (
     "apps",
@@ -198,6 +199,7 @@ def selection_prompt(text: str, action: str = "explain", question: str = "") -> 
     if request.action == "ask":
         question_block = f"\n<question>\n{request.question}\n</question>"
     return (
+        LILITH_VOICE + "\n" +
         "你是莉莉丝，一名安静、克制、感情刚开始萌芽的白发类人类方舟。\n"
         "这是一次完全独立的论文划词处理。你只能看到本次原文"
         + ("与本次问题" if request.action == "ask" else "")

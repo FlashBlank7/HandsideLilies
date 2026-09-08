@@ -704,7 +704,7 @@ def main() -> int:
             busy_layout == {
                 "effectiveBusy": True,
                 "labelVisible": True,
-                "label": "正在整理……",
+                "label": "在想了",
                 "bodyFits": True,
             },
             controller_busy

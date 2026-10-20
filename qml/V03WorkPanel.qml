@@ -12,12 +12,12 @@ Window {
 
     property var appBackend: null
     signal connectorRequested(string providerName)
-    property color paper: "#fffaf2"
-    property color paperRaised: "#fffdf9"
-    property color ink: "#4a4641"
-    property color mutedInk: "#887f76"
-    property color hairline: "#dacdbd"
-    property color cord: "#91332f"
+    property color paper: "#fafafb"
+    property color paperRaised: "#ffffff"
+    property color ink: "#353b45"
+    property color mutedInk: "#7c8491"
+    property color hairline: "#e6e8ee"
+    property color cord: "#985c69"
     property color calm: "#668779"
     property string lastNotice: ""
     property string activeSection: "work"
@@ -41,12 +41,12 @@ Window {
         : activeSection === "connectors" ? "日历与 Slack 信笺"
         : "任务与专注"
     readonly property string sectionCaption: activeSection === "world"
-        ? "现实里的完成，会在这只盒子里留下确定的陈设与共同痕迹。"
+        ? "完成的事，会变成盒子里的陈设和回忆。"
         : activeSection === "growth"
-          ? "共鸣只记录真实完成；服装、姿态和盒中陈设都按明确里程碑解锁。"
+          ? "按完成记录解锁服装和姿态。休息和延期都不扣分。"
           : activeSection === "connectors"
-            ? "外部事项只在你主动连接后出现；任何写入都必须先看预览再确认。"
-            : "现实事项完成后，成长会被准确记录；失败、延期和休息都不会扣分。"
+            ? "连接后查看日程和消息。修改或发送前，仍需你确认。"
+            : "记下手头的事，留一段时间专心做。延期、失败和休息都不扣分。"
     readonly property real presentationAreaWidth: {
         var areaWidth = Number(presentationArea.width)
         return isFinite(areaWidth) && areaWidth > 0 ? areaWidth : Screen.width
@@ -433,8 +433,9 @@ Window {
         property string anchorName: ""
         activeFocusOnTab: anchorName !== ""
         Layout.fillWidth: true
-        implicitHeight: cardLayout.implicitHeight + 28
-        radius: 15
+        Layout.alignment: Qt.AlignTop
+        implicitHeight: cardLayout.implicitHeight + 40
+        radius: 16
         color: root.paperRaised
         border.color: root.highlightedAnchor === anchorName && anchorName !== ""
                       ? root.cord : root.hairline
@@ -445,23 +446,24 @@ Window {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            anchors.margins: 14
-            spacing: 9
+            anchors.margins: 20
+            spacing: 14
 
             Text {
                 visible: paperCard.heading !== ""
                 Layout.fillWidth: true
                 text: paperCard.heading
                 color: root.ink
-                font.pixelSize: 15
-                font.weight: Font.DemiBold
+                font.pixelSize: 17
+                font.weight: Font.Medium
             }
             Text {
                 visible: paperCard.caption !== ""
                 Layout.fillWidth: true
                 text: paperCard.caption
                 color: root.mutedInk
-                font.pixelSize: 11
+                font.pixelSize: 13
+                lineHeight: 1.4
                 wrapMode: Text.WordWrap
             }
         }
@@ -470,10 +472,11 @@ Window {
     component QuietButton: Button {
         id: quietButton
         property bool accent: false
-        implicitHeight: 36
+        implicitHeight: 40
         leftPadding: 14
         rightPadding: 14
-        font.pixelSize: 12
+        font.pixelSize: 14
+        opacity: enabled ? 1 : 0.45
         contentItem: Text {
             text: quietButton.text
             color: quietButton.accent ? "white" : root.ink
@@ -484,8 +487,9 @@ Window {
         }
         background: Rectangle {
             radius: 11
-            color: quietButton.accent ? root.cord : (quietButton.hovered ? "#eee6db" : "#f8f3ec")
-            border.color: quietButton.accent ? root.cord : root.hairline
+            color: quietButton.accent ? root.cord : (quietButton.hovered ? "#eceef2" : "#f4f5f7")
+            border.width: quietButton.visualFocus ? 1 : 0
+            border.color: root.cord
         }
     }
 
@@ -496,14 +500,14 @@ Window {
         implicitWidth: pillText.implicitWidth + 18
         implicitHeight: 24
         radius: 12
-        color: good ? "#e5f0eb" : "#f1ebe2"
-        border.color: good ? "#a8c0b7" : root.hairline
+        color: good ? "#edf3f0" : "#f0f1f4"
+        border.width: 0
         Text {
             id: pillText
             anchors.centerIn: parent
             text: statusPill.label
             color: statusPill.good ? "#4c7565" : root.mutedInk
-            font.pixelSize: 10
+            font.pixelSize: 12
         }
     }
 
@@ -521,34 +525,123 @@ Window {
         }
     }
 
+    component PaperTab: TabButton {
+        id: tab
+        implicitHeight: 42
+        contentItem: Text {
+            text: tab.text
+            font.pixelSize: 14
+            color: tab.checked ? root.cord : root.mutedInk
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        background: Rectangle {
+            radius: 10
+            color: tab.checked ? "#f2e9ec" : tab.hovered ? "#f0f1f4" : "transparent"
+            border.width: tab.visualFocus ? 1 : 0
+            border.color: root.cord
+        }
+    }
+
+    component PaperPicker: ComboBox {
+        id: picker
+        implicitHeight: 40
+        leftPadding: 12; rightPadding: 26
+        font.pixelSize: 14
+        contentItem: Text {
+            text: picker.displayText
+            font: picker.font
+            color: root.ink
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        indicator: Item {
+            x: picker.width - 21; y: (picker.height - height) / 2
+            width: 10; height: 8
+            Rectangle { x: 0; y: 3; width: 6; height: 1.5; rotation: 45; color: root.mutedInk; antialiasing: true }
+            Rectangle { x: 4; y: 3; width: 6; height: 1.5; rotation: -45; color: root.mutedInk; antialiasing: true }
+        }
+        background: Rectangle {
+            color: picker.down ? "#eceef2" : "#f4f5f7"
+            radius: 10
+            border.width: picker.visualFocus ? 1 : 0
+            border.color: root.cord
+        }
+    }
+
+    component PaperNumber: SpinBox {
+        id: number
+        implicitHeight: 40
+        implicitWidth: 140
+        leftPadding: 34; rightPadding: 34
+        font.pixelSize: 14
+        palette.text: root.ink
+        background: Rectangle {
+            radius: 10
+            color: "#f4f5f7"
+            border.width: number.visualFocus ? 1 : 0
+            border.color: root.cord
+        }
+        up.indicator: Rectangle {
+            x: number.width - width
+            height: number.height; implicitWidth: 32
+            color: number.up.pressed ? "#e5e7ed" : "transparent"
+            radius: 10
+            Text { anchors.centerIn: parent; text: "+"; font.pixelSize: 20; color: root.mutedInk }
+        }
+        down.indicator: Rectangle {
+            height: number.height; implicitWidth: 32
+            color: number.down.pressed ? "#e5e7ed" : "transparent"
+            radius: 10
+            Text { anchors.centerIn: parent; text: "−"; font.pixelSize: 20; color: root.mutedInk }
+        }
+    }
+
+    component PaperInput: TextField {
+        id: input
+        implicitHeight: 40
+        padding: 12
+        font.pixelSize: 14
+        color: root.ink
+        placeholderTextColor: "#9297a1"
+        selectByMouse: true
+        background: Rectangle {
+            radius: 10
+            color: "#ffffff"
+            border.color: input.activeFocus ? root.cord : root.hairline
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: root.paper
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 18
-            spacing: 12
+            anchors.margins: 24
+            spacing: 18
 
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 2
+                    spacing: 8
                     Text {
                         objectName: "workPanelSectionHeading"
                         text: root.sectionHeading
                         color: root.ink
-                        font.pixelSize: 22
-                        font.weight: Font.DemiBold
+                        font.pixelSize: 26
+                        font.weight: Font.Medium
                     }
                     Text {
                         objectName: "workPanelSectionCaption"
                         Layout.fillWidth: true
                         text: root.sectionCaption
                         color: root.mutedInk
-                        font.pixelSize: 11
+                        font.pixelSize: 13
+                        lineHeight: 1.4
                         wrapMode: Text.WordWrap
                     }
                 }
@@ -583,19 +676,19 @@ Window {
                 Layout.fillWidth: true
                 background: Rectangle { color: "transparent" }
                 onCurrentIndexChanged: root.syncSectionFromTab(currentIndex)
-                TabButton {
+                PaperTab {
                     objectName: "workPanelWorkTab"
                     text: root.narrowViewport ? "任务" : "任务与专注"
                 }
-                TabButton {
+                PaperTab {
                     objectName: "workPanelGrowthTab"
                     text: root.narrowViewport ? "共鸣" : "共鸣与衣橱"
                 }
-                TabButton {
+                PaperTab {
                     objectName: "workPanelConnectorsTab"
                     text: root.narrowViewport ? "信笺" : "日历与 Slack"
                 }
-                TabButton {
+                PaperTab {
                     objectName: "workPanelWorldTab"
                     text: root.narrowViewport ? "盒中" : "盒中世界"
                 }
@@ -619,11 +712,11 @@ Window {
 
                         PaperCard {
                             heading: "任务收件箱"
-                            caption: "Calendar 和 Slack 不会自动变成任务；只有你确认后才会创建。"
+                            caption: "日历和 Slack 不会自动转为任务，添加前会先问你。"
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                TextField {
+                                PaperInput {
                                     id: newTaskTitle
                                     objectName: "workPanelTaskTitleInput"
                                     Layout.fillWidth: true
@@ -636,13 +729,13 @@ Window {
                                         border.color: newTaskTitle.activeFocus ? root.cord : root.hairline
                                     }
                                 }
-                                ComboBox {
+                                PaperPicker {
                                     id: taskPriority
                                     objectName: "workPanelTaskPriorityInput"
                                     model: ["普通", "较高", "重要"]
                                     implicitWidth: 88
                                 }
-                                ComboBox {
+                                PaperPicker {
                                     id: taskCategory
                                     objectName: "workPanelTaskCategoryInput"
                                     model: ["日常", "项目", "论文", "收件箱"]
@@ -747,11 +840,11 @@ Window {
                                 anchorName: "focus"
                                 Layout.fillWidth: true
                                 heading: "专注"
-                                caption: "只记录显式会话。完成 25 分钟有效专注可获得 +8 共鸣，每日最多四次。"
+                                caption: "只记录这段专注时间。每完成 25 分钟有效专注，+8 共鸣；每天最多 4 次。"
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    SpinBox {
+                                    PaperNumber {
                                         id: focusMinutes
                                         objectName: "focusMinutesInput"
                                         from: 5
@@ -836,7 +929,7 @@ Window {
                             caption: "提醒由本地调度器执行；模型不可用时仍然会准时工作。"
                             RowLayout {
                                 Layout.fillWidth: true
-                                TextField {
+                                PaperInput {
                                     id: reminderTitle
                                     objectName: "workPanelReminderTitleInput"
                                     Layout.fillWidth: true
@@ -847,7 +940,7 @@ Window {
                                         border.color: reminderTitle.activeFocus ? root.cord : root.hairline
                                     }
                                 }
-                                SpinBox {
+                                PaperNumber {
                                     id: reminderDelay
                                     objectName: "workPanelReminderDelayInput"
                                     from: 1

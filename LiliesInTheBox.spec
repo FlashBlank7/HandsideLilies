@@ -75,6 +75,7 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     version=str(version_resource),
+    icon=str(Path(SPECPATH) / 'assets' / 'icons' / 'lilies-app.ico'),
     codesign_identity=None,
     entitlements_file=None,
 )

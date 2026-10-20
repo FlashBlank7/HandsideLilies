@@ -9,8 +9,8 @@ $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $SourceRoot = Join-Path $ProjectRoot 'dist\LiliesInTheBox'
 $SourceExe = Join-Path $SourceRoot 'LiliesInTheBox.exe'
-$ExpectedFileVersion = '0.3.55.0'
-$ExpectedProductVersion = '0.3.55'
+$ExpectedFileVersion = '0.3.56.0'
+$ExpectedProductVersion = '0.3.56'
 $AllowedBase = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'Programs'))
 $Target = [IO.Path]::GetFullPath($InstallRoot)
 
@@ -37,7 +37,7 @@ function Assert-ReleaseExecutable([string]$Path) {
 Assert-SafeChildPath $Target $AllowedBase
 # This preflight is deliberately before process shutdown, deletion, copying,
 # shortcuts and manifest writes.  An old or unversioned EXE must never be
-# relabelled as v0.3.55 by a successful-looking install manifest.
+# relabelled as v0.3.56 by a successful-looking install manifest.
 Assert-ReleaseExecutable $SourceExe
 
 $TargetExe = Join-Path $Target 'LiliesInTheBox.exe'
@@ -103,7 +103,7 @@ Copy-Item -Path (Join-Path $SourceRoot '*') -Destination $Target -Recurse -Force
 
 $manifest = [ordered]@{
     id = 'lilies-in-the-box'
-    version = '0.3.55'
+    version = '0.3.56'
     installedAt = [DateTimeOffset]::UtcNow.ToString('o')
     source = $SourceRoot
     executable = $TargetExe
@@ -121,6 +121,7 @@ if (-not $NoShortcuts) {
     # the legacy forced-compact argument.
     $shortcut.Arguments = ''
     $shortcut.WorkingDirectory = $Target
+    $shortcut.IconLocation = (Join-Path $Target '_internal\assets\icons\lilies-app.ico') + ',0'
     $shortcut.Description = 'Lilies in the box'
     $shortcut.Save()
 
@@ -129,6 +130,7 @@ if (-not $NoShortcuts) {
     $desktopShortcut.TargetPath = $TargetExe
     $desktopShortcut.Arguments = '--visual'
     $desktopShortcut.WorkingDirectory = $Target
+    $desktopShortcut.IconLocation = (Join-Path $Target '_internal\assets\icons\lilies-app.ico') + ',0'
     $desktopShortcut.Description = 'Open the full Lilies desktop explicitly'
     $desktopShortcut.Save()
 
@@ -137,6 +139,7 @@ if (-not $NoShortcuts) {
     $petShortcut.TargetPath = $TargetExe
     $petShortcut.Arguments = '--compact'
     $petShortcut.WorkingDirectory = $Target
+    $petShortcut.IconLocation = (Join-Path $Target '_internal\assets\icons\lilies-app.ico') + ',0'
     $petShortcut.Description = '仅启动 Lilies 桌宠，不展开完整桌面'
     $petShortcut.Save()
     # Startup follows the user's persisted mode; it must not force the

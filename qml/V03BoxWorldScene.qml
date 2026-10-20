@@ -11,6 +11,7 @@ Window {
     transientParent: null
 
     property var appBackend: null
+    property var sharedWorldState: null
     property var presentationArea: ({})
     property bool requestedVisible: false
     property bool stayOnTopWhenPresented: false
@@ -51,7 +52,9 @@ Window {
     readonly property real areaRight: finiteAreaValue("right", areaLeft + areaWidth)
     readonly property real areaBottom: finiteAreaValue("bottom", areaTop + areaHeight)
 
-    readonly property var boxWorldInfo: backendValue("boxWorldStatus", ({ objects: [] }))
+    readonly property var boxWorldInfo: sharedWorldState !== null
+                                        ? sharedWorldState
+                                        : backendValue("boxWorldStatus", ({ objects: [] }))
     readonly property var boxWorldObjects: boxWorldInfo.objects || []
     readonly property var growthInfo: boxWorldInfo.growth
                                        || backendValue("growthStatus", ({ points: 0, stage: "初遇" }))
@@ -543,6 +546,9 @@ Window {
 
     Item {
         id: body
+        // Both layouts derive from the container, never from each other.
+        // At a viewport breakpoint reciprocal width bindings can re-enter.
+        readonly property real sidebarWidth: Math.max(278, Math.min(334, width * 0.29))
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: titleBar.bottom
@@ -553,7 +559,7 @@ Window {
             objectName: "boxWorldSceneStage"
             x: root.narrowViewport ? 12 : 22
             y: 14
-            width: root.narrowViewport ? body.width - 24 : body.width - infoPanel.width - 58
+            width: root.narrowViewport ? body.width - 24 : body.width - body.sidebarWidth - 58
             height: body.height - 28
             radius: 24
             clip: true
@@ -773,7 +779,7 @@ Window {
             x: root.narrowViewport ? worldStage.x + 14 : worldStage.x + worldStage.width + 16
             y: root.narrowViewport ? worldStage.y + worldStage.height - height - 14 : worldStage.y + 10
             width: root.narrowViewport ? worldStage.width - 28
-                                       : Math.max(278, Math.min(334, body.width * 0.29))
+                                       : body.sidebarWidth
             height: root.microViewport
                     ? Math.max(88, Math.min(98, worldStage.height - 20))
                     : (root.narrowViewport

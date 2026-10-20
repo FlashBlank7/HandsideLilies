@@ -61,6 +61,7 @@ from .paths import (
     configure_qt_cache_environment,
     data_root,
     disable_qt_disk_caches_for_recovery,
+    project_root,
     qml_path,
 )
 from .drag_proxy_snapshot import DragProxySnapshotCache
@@ -1455,6 +1456,12 @@ class CompactPointerEventFilter(QObject):
         self._system_window_moving_messages = 0
         self._native_mouse_moves_suppressed = 0
         self._direct_move_commits = 0
+        self._direct_pointer_flushes = 0
+        self._direct_pointer_gesture = 0
+        self._direct_pointer_timer = QTimer(self)
+        self._direct_pointer_timer.setSingleShot(True)
+        self._direct_pointer_timer.setInterval(0)
+        self._direct_pointer_timer.timeout.connect(self._flush_direct_pointer)
         self._completion_watchdog_polls = 0
         self._completion_queued_by = ""
         self._completion_delivery_retries = 0
@@ -2655,6 +2662,8 @@ class CompactPointerEventFilter(QObject):
         )
 
     def _reset_drag_diagnostics(self) -> None:
+        self._direct_pointer_timer.stop()
+        self._direct_pointer_flushes = 0
         if self._drag_diagnostics_timer.isActive():
             self._drag_diagnostics_timer.stop()
             # A rapid second press must never wake the disk worker in its hot
@@ -3793,6 +3802,7 @@ class CompactPointerEventFilter(QObject):
             ),
             "nativeMouseMovesSuppressed": self._native_mouse_moves_suppressed,
             "directMoveCommits": self._direct_move_commits,
+            "directPointerFlushes": self._direct_pointer_flushes,
             "proxyRealGeometryCommits": self._proxy_real_geometry_commits,
             "proxyBitmapWidth": self._proxy_bitmap_width,
             "proxyBitmapHeight": self._proxy_bitmap_height,
@@ -3933,6 +3943,7 @@ class CompactPointerEventFilter(QObject):
             self._drag_proxy_cache = None
         self._drag_proxy_gesture_active = False
         self._closing_drag_bridge = True
+        self._direct_pointer_timer.stop()
         self._direct_character_drag_active = False
         if self._root_move_guard is not None:
             self._root_move_guard.close()
@@ -3995,9 +4006,9 @@ class CompactPointerEventFilter(QObject):
     def takeLatestPointerEvent(self, after_serial: int) -> dict[str, object]:
         """Return the newest native pointer sample without waking QML per event.
 
-        ``eventFilter`` only updates these Python fields. QML consumes the
-        newest point on the Qt Quick frame clock, turning a 500/1000 Hz mouse
-        into at most one QWindow geometry submission per display frame.
+        ``eventFilter`` stages fields and queues one GUI-turn wakeup. A burst
+        of mouse packets produces one latest-point commit without waiting for
+        the render clock; QML's frame callback is only a missed-event fallback.
         """
 
         after = int(after_serial)
@@ -4226,11 +4237,41 @@ class CompactPointerEventFilter(QObject):
             )
         self._end_drag_proxy_gesture()
 
+    def _queue_direct_pointer(self) -> None:
+        if self._closing_drag_bridge or self._direct_pointer_timer.isActive():
+            return
+        self._direct_pointer_gesture = int(
+            self.root.property("nativeSystemMoveGestureSerial") or 0
+        )
+        self._direct_pointer_timer.start()
+
+    def _flush_direct_pointer(self) -> None:
+        # Never let a delayed mouse packet move a released/cancelled gesture,
+        # a new press, or a window whose position is now owned by Windows.
+        if self._closing_drag_bridge or self._active_system_move_serial > 0:
+            return
+        try:
+            if (not bool(self.root.property("manualDragActive"))
+                    or bool(self.root.property("nativeSystemMoveActive"))
+                    or bool(self.root.property("nativeSystemMoveStartPending"))
+                    or int(self.root.property("nativeSystemMoveGestureSerial") or 0)
+                       != self._direct_pointer_gesture):
+                return
+            follow = getattr(self.root, "followCapturedPointerEvent", None)
+            if callable(follow):
+                follow()
+                self._direct_pointer_flushes += 1
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            # Hidden/destroyed QML windows cannot retain pending work. The
+            # frame fallback remains available for compatibility roots.
+            return
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.root and event.type() in {
             QEvent.Type.Hide,
             QEvent.Type.Close,
         }:
+            self._direct_pointer_timer.stop()
             self.cancelNativeCharacterPress()
             return False
         if watched is self.root and event.type() == QEvent.Type.WinIdChange:
@@ -4266,10 +4307,16 @@ class CompactPointerEventFilter(QObject):
         if event.type() == QEvent.Type.MouseButtonPress:
             self._last_direct_position = None
             self._reset_drag_diagnostics()
+        elif event.type() in {QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick}:
+            self._direct_pointer_timer.stop()
         point = event.globalPosition()
         self.serial += 1
         self._latest_global_x = float(point.x())
         self._latest_global_y = float(point.y())
+        if (event.type() == QEvent.Type.MouseMove
+                and bool(self.root.property("manualDragActive"))
+                and not bool(self.root.property("nativeDragAwaitingThreshold"))):
+            self._queue_direct_pointer()
         # Once QML has accepted the character press, native global positions
         # are the sole direct-drag authority.  Consuming only MouseMove here
         # prevents the same high-rate event stream from also traversing the
@@ -5045,6 +5092,14 @@ def packaged_compact_startup_contract(
 
 
 def tray_icon() -> QIcon:
+    # Use the same multi-resolution artwork as Explorer and the shortcuts.
+    # Keep the small drawn fallback for incomplete source checkouts only.
+    for filename in ("lilies-app.ico", "lilies-app.png"):
+        path = project_root() / "assets" / "icons" / filename
+        if path.is_file():
+            icon = QIcon(str(path))
+            if not icon.isNull() and icon.availableSizes():
+                return icon
     pixmap = QPixmap(96, 96)
     pixmap.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pixmap)
@@ -5356,7 +5411,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.55")
+    app.setApplicationVersion("0.3.56.post3")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:

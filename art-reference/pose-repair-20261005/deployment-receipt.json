@@ -1,0 +1,91 @@
+{
+  "patch": "20261005-continuous-pose-repair",
+  "executableUnchanged": true,
+  "executableSha256": "23918A436EADED02A4FF4B6BD8E8E180AD3E7E34678F70DDE12CB76CAF462851",
+  "previousPids": [
+    43100
+  ],
+  "newPid": 20624,
+  "resourceCount": 12,
+  "files": [
+    {
+      "relative": "_internal\\qml\\V03PetBody.qml",
+      "sha256": "AA378C72A89B670468709CD61680F613A51D342FDBCFED6361E2911E20874E1D",
+      "existed": true
+    },
+    {
+      "relative": "_internal\\qml\\ContinuousPetImage.qml",
+      "sha256": "EEA16C16F4A7D43C2F3D281A062685F6256F4F1F71B4D4B9471767AF7138C40B",
+      "existed": false
+    },
+    {
+      "relative": "_internal\\qml\\shaders\\pet-continuous.vert",
+      "sha256": "7E3FE5FD0D13C3577AF76A0316C8FA0EA9F6E6AF2FD4EDA0335121A4BAD6D006",
+      "existed": false
+    },
+    {
+      "relative": "_internal\\qml\\shaders\\pet-continuous.vert.qsb",
+      "sha256": "2C11EF57223F28E70F56820A2EF588BD2313E541306198AD7D3244C11260B7FB",
+      "existed": false
+    },
+    {
+      "relative": "_internal\\qml\\shaders\\pet-continuous.frag",
+      "sha256": "582434E7EC502142FE182D02B5F9D3A5CC1ADDC06350A683672DDA0CB211547E",
+      "existed": false
+    },
+    {
+      "relative": "_internal\\qml\\shaders\\pet-continuous.frag.qsb",
+      "sha256": "E6C31788550C7C524A2AAC95AF3FF44AFBC95B5C093CC40CED534373F63A4A19",
+      "existed": false
+    },
+    {
+      "relative": "_internal\\themes\\first-encounter\\theme.json",
+      "sha256": "B84B3F9F6F8DC442B7DD54EF44DF322197A26884C8B2F2D2C71DF9FF72AC69C9",
+      "existed": true
+    },
+    {
+      "relative": "_internal\\themes\\first-encounter\\assets\\lilith-pose-corner-grip-v2.png",
+      "sha256": "06E2DB96D2DABEB3AB952F5B0BA78CCD2EAC299B144C14FF8227AE6C10450122",
+      "existed": false
+    },
+    {
+      "relative": "_internal\\themes\\first-encounter\\assets\\lilith-pose-window-curl-v3.png",
+      "sha256": "1F6C1F7935F6D3265DB07DA9AA3162D92737FD14F8453A7E9041DE90CB33C530",
+      "existed": false
+    },
+    {
+      "relative": "_internal\\themes\\first-encounter\\assets\\lilith-pose-window-dangle-v2.png",
+      "sha256": "5FF9F47A31948CE2CAC408967A5CADBAEA75BC82B2198DD37436EF9C3ED987BA",
+      "existed": false
+    },
+    {
+      "relative": "_internal\\themes\\first-encounter\\assets\\lilith-pose-window-prone-v3.png",
+      "sha256": "90E7D5678EE01D5837418960FCD4CA4A60077AF6B9B60957922E28CCBF1E92E9",
+      "existed": false
+    },
+    {
+      "relative": "_internal\\themes\\first-encounter\\assets\\lilith-pose-edge-lean-v2.png",
+      "sha256": "802D37419DD8F9E3BD6ACD44C03634F66F4A9AE88AB874264228E32B7F302335",
+      "existed": false
+    }
+  ],
+  "rollback": "F:\\CodeField\\lilies-pose-repair-20261005\\rollback",
+  "regressionTestsPassed": 39,
+  "nativeStartupPassed": true,
+  "gpuPoseChecksPassed": true,
+  "privacySettingsChanged": false,
+  "userDataDeleted": false,
+  "generatedBy": "built-in imagegen",
+  "generatedPoseCount": 5,
+  "restartedAt": "2026-10-05T00:36:43.2327323Z",
+  "runtimeVerified": true,
+  "runtimeShellMode": "compact",
+  "qtResponsive": true,
+  "installedResourceHashMismatches": 0,
+  "userDesktopCapturedByVerifier": false,
+  "nativeUserApplicationInteractionVerified": false,
+  "verificationScope": "Owned QML fixtures on D3D11 and software, 39 targeted regression tests, packaged self-test, hidden native startup, running app heartbeat and installed resource hashes.",
+  "prompts": "F:\\code\\Lilies in the box\\art-reference\\pose-repair-20261005\\prompts.json",
+  "gpuFixtureNote": "Early off-desktop fixture anchored to a zero-sized hidden Window content item; corrected fixture uses explicit local coordinates. No position compensation was added to production renderer.",
+  "deployNote": "First replacement attempt stopped before any staged payload was installed because PowerShell marshalled null as an empty backup path. Baseline resources were restored; validated staged files were then atomically moved over exact targets and verified by SHA256."
+}

@@ -652,6 +652,10 @@ def main() -> int:
         }
         click_action("settings")
         QApplication.processEvents()
+        # v0.3.56 separates desktop controls from the optional function library.
+        settings_navigation = root.findChild(QQuickItem, "settingsNavigation")
+        settings_navigation.setProperty("section", "desktop")
+        QTest.qWait(80)
         settings_screenshot = (
             PROJECT_ROOT / "artifacts" / "desktop-discovery-settings.png"
         )
@@ -731,6 +735,18 @@ def main() -> int:
         # must be disabled before QML can optimistically toggle its local
         # checked state while the backend rejects the request.
         action_ids = ("companion", "work", "lilies-desktop", "focus")
+        settings_navigation.setProperty("section", "daily")
+        QTest.qWait(80)
+
+        def reveal_library_item(item: QQuickItem) -> None:
+            scroll = root.findChild(QQuickItem, "mainSettingsPage")
+            flick = scroll.property("contentItem")
+            position = item.mapToItem(scroll, QPointF()).y()
+            shift = max(0, position + item.height() + 12 - scroll.height())
+            if position < 8:
+                shift = position - 8
+            flick.setProperty("contentY", max(0, float(flick.property("contentY")) + shift))
+            QTest.qWait(40)
 
         def function_checkbox(action_id: str) -> QQuickItem | None:
             return next(
@@ -763,6 +779,7 @@ def main() -> int:
             if checkbox is None:
                 choices.append({"action": action_id, "found": False})
                 continue
+            reveal_library_item(checkbox)
             QTest.mouseClick(
                 chat_window,
                 Qt.MouseButton.LeftButton,
@@ -791,6 +808,7 @@ def main() -> int:
         fourth_before = bool(fourth and fourth.property("checked"))
         fourth_enabled = bool(fourth and fourth.isEnabled())
         if fourth is not None:
+            reveal_library_item(fourth)
             QTest.mouseClick(
                 chat_window,
                 Qt.MouseButton.LeftButton,

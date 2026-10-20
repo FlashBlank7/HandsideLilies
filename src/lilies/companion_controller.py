@@ -183,6 +183,10 @@ _CAPTURE_REASON_CODES = frozenset(
         "model-request-starting",
         "native-grab-failed",
         "native-print-failed",
+        "native-helper-timeout",
+        "native-helper-invalid-request",
+        "native-helper-frame-empty",
+        "native-helper-process-failed",
         "native-print-staged",
         "presentation-suppressed",
         "privacy-suppressed",
@@ -1239,6 +1243,10 @@ class CompanionController(QObject):
             "browser-capture-paused": "浏览器像素观察暂不开放，本次只使用应用类别",
             "native-grab-failed": "系统未能取得活动窗口画面",
             "native-print-failed": "目标窗口没有返回可用画面，本次保持安静",
+            "native-helper-timeout": "窗口截图超时，稍后会重新尝试",
+            "native-helper-invalid-request": "截图窗口或暂存位置已失效",
+            "native-helper-frame-empty": "窗口只返回空白或受保护画面，没有发送给模型",
+            "native-helper-process-failed": "截图辅助进程未完成，请重试",
             "native-print-staged": "目标窗口画面已在隔离进程中准备",
             "protected-black": "受保护或黑屏画面已拒绝",
             "low-information": "画面信息不足，本次没有生成屏幕对话",
@@ -1502,6 +1510,24 @@ class CompanionController(QObject):
                 "cooldown": "陪伴 · 安静间隔",
             }.get(gate_reason, compact_status_label)
 
+        capture_retry_seconds = max(
+            0.0, self._generation_attempt_not_before - time.monotonic()
+        )
+        if (
+            not self._busy and self._smart_observation
+            and not bool(self._delivery_record.get("unread"))
+            and self._activity_enabled and not self.activity.paused
+            and state not in quiet_states and bool(gate.get("allowed", False))
+            and self._last_capture_status.get("outcome") == "failed"
+        ):
+            compact_status_label = "陪伴 · 上次截图未成功"
+            effective_state_label = "上次截图未成功"
+            effective_state_detail = capture_reason_labels.get(
+                str(self._last_capture_status.get("reason", "")), "请稍后重试"
+            )
+            if capture_retry_seconds > 0:
+                effective_state_detail += f" · 约 {max(1, round(capture_retry_seconds))} 秒后重试"
+
         cached_news = sum(
             1 for item in self._content_items if item.category is ContentCategory.NEWS
         )
@@ -1520,6 +1546,7 @@ class CompanionController(QObject):
                 "modality": modality,
                 "modalityProbeBusy": self._probe_busy,
                 "modalityRetrySeconds": round(modality_retry_seconds, 1),
+                "captureRetrySeconds": round(capture_retry_seconds, 1),
                 "modalityProbeState": (
                     "checking"
                     if self._probe_busy
@@ -3054,8 +3081,11 @@ class CompanionController(QObject):
                             }
                         )
                         return
+                    except NativeCaptureHelperError as exc:
+                        staged = None
+                        capture_attempt_failed = True
+                        record_capture("failed", exc.reason)
                     except (
-                        NativeCaptureHelperError,
                         CaptureEncodeError,
                         OSError,
                         RuntimeError,

@@ -1,0 +1,129 @@
+{
+  "gpuRequested": true,
+  "gpuAvailable": true,
+  "deformationReady": true,
+  "imageReady": true,
+  "shaderLog": "",
+  "directionsChecked": 9,
+  "frames": [
+    {
+      "direction": [
+        0,
+        0
+      ],
+      "bounds": [
+        0.0,
+        0.0,
+        0.18888888888888888,
+        0.4
+      ],
+      "intact": false
+    },
+    {
+      "direction": [
+        0,
+        -1
+      ],
+      "bounds": [
+        0.0,
+        0.0,
+        0.18888888888888888,
+        0.4
+      ],
+      "intact": false
+    },
+    {
+      "direction": [
+        1,
+        -1
+      ],
+      "bounds": [
+        0.0,
+        0.0,
+        0.18888888888888888,
+        0.4
+      ],
+      "intact": false
+    },
+    {
+      "direction": [
+        1,
+        0
+      ],
+      "bounds": [
+        0.0,
+        0.0,
+        0.18888888888888888,
+        0.4
+      ],
+      "intact": false
+    },
+    {
+      "direction": [
+        1,
+        1
+      ],
+      "bounds": [
+        0.0,
+        0.0,
+        0.18888888888888888,
+        0.4
+      ],
+      "intact": false
+    },
+    {
+      "direction": [
+        0,
+        1
+      ],
+      "bounds": [
+        0.0,
+        0.0,
+        0.18888888888888888,
+        0.4
+      ],
+      "intact": false
+    },
+    {
+      "direction": [
+        -1,
+        1
+      ],
+      "bounds": [
+        0.0,
+        0.0,
+        0.18888888888888888,
+        0.4
+      ],
+      "intact": false
+    },
+    {
+      "direction": [
+        -1,
+        0
+      ],
+      "bounds": [
+        0.0,
+        0.0,
+        0.18888888888888888,
+        0.4
+      ],
+      "intact": false
+    },
+    {
+      "direction": [
+        -1,
+        -1
+      ],
+      "bounds": [
+        0.0,
+        0.0,
+        0.18888888888888888,
+        0.4
+      ],
+      "intact": false
+    }
+  ],
+  "warnings": [],
+  "passed": false
+}

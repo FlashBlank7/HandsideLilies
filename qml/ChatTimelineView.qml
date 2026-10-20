@@ -7,6 +7,14 @@ Item {
     required property var timelineModel
     property bool busy: false
     property bool followTail: true
+    // Only our paragraph markup is accepted. User/model text is always escaped;
+    // pasted HTML, image URLs and links cannot become live rich-text content.
+    function spacedPlainText(value) {
+        var escaped = String(value).replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                .replace(/\r\n?/g, "\n").replace(/\n/g, "<br/>")
+        return "<p style='line-height:145%; white-space:pre-wrap; margin:0'>" + escaped + "</p>"
+    }
     property color ink: "#30343a"
 
     function revealTail() {
@@ -54,7 +62,7 @@ Item {
         anchors.fill: parent
         clip: true
         model: timeline.timelineModel
-        spacing: 20
+        spacing: 24
         topMargin: 18
         bottomMargin: 24
         boundsBehavior: Flickable.StopAtBounds
@@ -77,7 +85,7 @@ Item {
             required property string messageText
             readonly property bool fromUser: roleName === "user"
             width: ListView.view.width
-            height: messageBody.implicitHeight + 55
+            height: messageBody.implicitHeight + 58
             Rectangle {
                 x: messageRow.fromUser ? 40 : 0
                 width: parent.width - (messageRow.fromUser ? 46 : 6)
@@ -92,23 +100,23 @@ Item {
                     Text {
                         text: messageRow.fromUser ? "你" : "莉莉丝"
                         color: messageRow.fromUser ? "#858a91" : "#985c63"
-                        font.pixelSize: 11
+                        font.pixelSize: 12
                     }
                     TextEdit {
                         id: messageBody
                         objectName: "chatMessageBody"
                         width: parent.width
-                        text: messageRow.messageText || (timeline.busy ? "···" : "")
+                        text: timeline.spacedPlainText(messageRow.messageText || (timeline.busy ? "···" : ""))
                         readOnly: true
                         selectByMouse: true
                         wrapMode: TextEdit.Wrap
-                        textFormat: TextEdit.PlainText
+                        textFormat: TextEdit.RichText
                         font.family: "Microsoft YaHei UI"
                         font.pixelSize: 16
                         color: timeline.ink
                         selectionColor: "#e2d6d9"
                         selectedTextColor: "#25282d"
-                        // QTextDocument keeps natural paragraph spacing;
+                        // A fixed paragraph style keeps multiline replies airy;
                         // only this tail item changes during generation.
                     }
                 }

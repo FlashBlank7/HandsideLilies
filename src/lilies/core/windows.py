@@ -75,7 +75,8 @@ class WINDOWPLACEMENT(ctypes.Structure):
         ("ptMinPosition", POINT),
         ("ptMaxPosition", POINT),
         ("rcNormalPosition", RECT),
-        ("rcDevice", RECT),
+        # rcDevice in WinUser.h is guarded by _MAC. On Windows the ABI is
+        # 44 bytes; GetWindowPlacement tolerates 60 but Set rejects it (87).
     ]
 
 
@@ -160,7 +161,6 @@ def placement_to_dict(value: WINDOWPLACEMENT) -> dict[str, Any]:
         "minPosition": _point_values(value.ptMinPosition),
         "maxPosition": _point_values(value.ptMaxPosition),
         "normalPosition": _rect_values(value.rcNormalPosition),
-        "device": _rect_values(value.rcDevice),
     }
 
 
@@ -190,7 +190,10 @@ def placement_from_dict(source: dict[str, Any]) -> WINDOWPLACEMENT:
     min_position = _int_values(source.get("minPosition"), 2, "minPosition")
     max_position = _int_values(source.get("maxPosition"), 2, "maxPosition")
     normal = _int_values(source.get("normalPosition"), 4, "normalPosition")
-    device = _int_values(source.get("device", [0, 0, 0, 0]), 4, "device")
+    # Accept old journals, but never append their legacy Mac-only field to
+    # the native Windows structure.
+    if "device" in source:
+        _int_values(source["device"], 4, "device")
     value = WINDOWPLACEMENT()
     value.length = ctypes.sizeof(WINDOWPLACEMENT)
     value.flags = flags
@@ -198,7 +201,6 @@ def placement_from_dict(source: dict[str, Any]) -> WINDOWPLACEMENT:
     value.ptMinPosition = POINT(*min_position)
     value.ptMaxPosition = POINT(*max_position)
     value.rcNormalPosition = RECT(*normal)
-    value.rcDevice = RECT(*device)
     return value
 
 

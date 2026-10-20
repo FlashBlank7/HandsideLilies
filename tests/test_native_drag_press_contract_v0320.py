@@ -298,5 +298,5 @@ def test_release_clamp_tracks_visible_figure_and_rechecks_after_pose_transition(
     timer_end = source.index("function applyHabitatState()", timer_start)
     timer = source[timer_start:timer_end]
     assert "interval: 340" in timer
-    assert "petWindow.manualDragActive || backend.habitatState.attached" in timer
+    assert "petWindow.manualDragActive || desktop.habitatSnapshot.attached" in timer
     assert "desktop.clampDraggedFigureToArea(area, true)" in timer

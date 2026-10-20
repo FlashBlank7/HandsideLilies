@@ -35,7 +35,7 @@ def test_direct_character_drag_uses_the_atomic_window_position_bridge() -> None:
     assert "self.root.setPosition(target)" in app_source
 
 
-def test_high_rate_pointer_events_are_coalesced_to_one_move_per_drag_frame() -> None:
+def test_high_rate_pointer_events_are_coalesced_without_waiting_for_a_frame() -> None:
     source = _main_source()
     event_start = source.index("function followPointerEvent(")
     event_end = source.index("function followPendingPointerEvent(", event_start)
@@ -45,6 +45,8 @@ def test_high_rate_pointer_events_are_coalesced_to_one_move_per_drag_frame() -> 
     frame_handler = source[frame_start:frame_end]
 
     assert "dragPointerEventPending = true" in event_handler
+    assert "if (!pointerFlushQueued)" in event_handler
+    assert "Qt.callLater(flushQueuedPointerEvent)" in event_handler
     assert "followPointerAt(" not in event_handler
     assert "if (followPendingPointerEventInternal(true))" in frame_handler
     assert "followCapturedPointerEventInternal(true)" in frame_handler

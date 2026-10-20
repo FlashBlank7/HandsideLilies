@@ -1,5 +1,14 @@
 # Lilies in the box
 
+### v0.3.56 界面与阅读节奏
+
+- 设置分成常用功能、莉莉丝、桌面、对话与阅读、数据与恢复；支持跨分组搜索。切换分组只改变显示，不销毁输入控件，不会丢掉未应用的频率草稿。
+- 陪伴分成日常陪伴、出现频率、聊些什么、屏幕与隐私、内容来源。常用开关留在首页，运行记录和详细规则移到对应分组，授权确认仍保留完整说明。
+- 统一冷白纸面、暗红点缀、圆角控件和更宽松的卡片间距；任务与专注页同步调整。正文和说明增大行距，不再堆在一整页长列表里。
+- 对话历史搜索按需展开；回复使用约 1.45 倍行距。展示前转义原文，HTML、图片和链接不会被当成可执行或可加载的富文本。聊天保存内容不变。
+- 离屏验收覆盖 680px / 520px 窗口、10 组页面、搜索、真实点击、频率跨页草稿与保存、旧输入和桌面切换回归。预览在 `artifacts/ui-v0356`，对话是排版样例。
+- 保留直接跟手、33ms 流式刷新和身份与称呼规则；数据仍固定 F 盘。发布检查：`promote_v0356.ps1 -ValidateOnly`。不会自动启动开发窗口。
+
 ### v0.3.55 跟手、留白与说话方式
 
 - 默认改为直接跟手：鼠标样本按显示帧合并，保持抓取点，不加追赶缓动。一次性迁移旧默认，之后手动选择仍保留。Windows 原生拖动仅作为兼容选项：Qt 的返回成功只能证明移动请求已发出，不能证明系统进入了持续拖动。
@@ -428,19 +437,19 @@ cd "F:\code\Lilies in the box"
 
 这是一键发布证据构建：完成 PyInstaller 后会按依赖顺序重新生成并检查以下四份报告，任一步失败都会停止，旧报告会先被安全移除：
 
-1. `artifacts\packaged-self-test-v0355.json`
-2. `artifacts\packaged-compact-resource-v0355.json`
-3. `artifacts\packaged-windows-startup-v0355.json`
-4. `artifacts\pose-click-mask-v0355.json`
+1. `artifacts\packaged-self-test-v0356.json`
+2. `artifacts\packaged-compact-resource-v0356.json`
+3. `artifacts\packaged-windows-startup-v0356.json`
+4. `artifacts\pose-click-mask-v0356.json`
 
 需要逐步排查时，可用与一键脚本相同的顺序手动执行：
 
 ```powershell
-& .\dist\LiliesInTheBox\LiliesInTheBox.exe --self-test .\artifacts\packaged-self-test-v0355.json
+& .\dist\LiliesInTheBox\LiliesInTheBox.exe --self-test .\artifacts\packaged-self-test-v0356.json
 .\scripts\verify_packaged_compact_resources.ps1
 .\scripts\verify_packaged_windows_startup.ps1
 & .\.venv\Scripts\python.exe .\scripts\verify_pose_click_masks.py
-.\scripts\promote_v0355.ps1 -ValidateOnly
+.\scripts\promote_v0356.ps1 -ValidateOnly
 ```
 
 最后一条只验证、不复制：它与正式 promotion 使用同一套 EXE 版本、AdditionalFiles、三份打包报告、姿态点击报告与内容无关原生捕获探针门禁。只有全部通过后才运行不带 `-ValidateOnly` 的正式提升。

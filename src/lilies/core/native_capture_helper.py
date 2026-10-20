@@ -47,6 +47,16 @@ _HELPER_STORAGE_FAILED = 24
 class NativeCaptureHelperError(RuntimeError):
     """A content-free failure from the bounded helper process."""
 
+    REASONS = frozenset({
+        "native-print-failed", "native-helper-timeout", "native-helper-invalid-request",
+        "native-helper-frame-empty", "native-helper-process-failed",
+        "encode-failed", "encode-storage-failed",
+    })
+
+    def __init__(self, message: str, *, reason: str = "native-print-failed") -> None:
+        super().__init__(message)
+        self.reason = reason if reason in self.REASONS else "native-print-failed"
+
 
 def native_capture_helper_available() -> bool:
     """Return whether production may launch the isolated helper.
@@ -224,10 +234,20 @@ def stage_window_capture_with_helper(
                 raise CaptureCancelled("native capture helper cancelled")
             if time.monotonic() >= deadline:
                 _stop_process(process)
-                raise NativeCaptureHelperError("native capture helper timed out")
+                raise NativeCaptureHelperError("native capture helper timed out", reason="native-helper-timeout")
             time.sleep(0.02)
-        if process.returncode != _HELPER_SUCCESS or not destination.is_file():
-            raise NativeCaptureHelperError("native capture helper failed")
+        if process.returncode != _HELPER_SUCCESS:
+            reason = {
+                _HELPER_INVALID_REQUEST: "native-helper-invalid-request",
+                _HELPER_CAPTURE_FAILED: "native-print-failed",
+                _HELPER_ENCODE_FAILED: "encode-failed",
+                _HELPER_NO_VISUAL_EVIDENCE: "native-helper-frame-empty",
+                _HELPER_STORAGE_FAILED: "encode-storage-failed",
+            }.get(process.returncode, "native-helper-process-failed")
+            raise NativeCaptureHelperError("native capture helper failed", reason=reason)
+        if not destination.is_file():
+            raise NativeCaptureHelperError("native capture helper produced no image",
+                                           reason="native-helper-process-failed")
 
         try:
             with Image.open(destination) as verification:

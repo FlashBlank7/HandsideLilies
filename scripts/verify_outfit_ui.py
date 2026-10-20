@@ -117,14 +117,11 @@ def main() -> int:
     window = engine.rootObjects()[0]
     pet = window.findChild(QQuickItem, "outfitPet")
     frame = window.findChild(QQuickItem, "petFigureFrame")
-    head = window.findChild(QQuickItem, "petHairHeadImage")
-    shoulder = window.findChild(QQuickItem, "petShoulderHandsImage")
-    skirt = window.findChild(QQuickItem, "petSkirtImage")
-    if any(value is None for value in (pet, frame, head, shoulder, skirt)):
-        raise RuntimeError("outfit layers failed to load")
-    assert pet is not None and frame is not None
-    assert head is not None and shoulder is not None and skirt is not None
-    image_items = (head, shoulder, skirt)
+    continuous = window.findChild(QQuickItem, "petContinuousFigure")
+    texture = window.findChild(QQuickItem, "petContinuousTexture")
+    if any(value is None for value in (pet, frame, continuous, texture)):
+        raise RuntimeError("continuous outfit failed to load")
+    image_items = (texture,)
 
     results: dict[str, object] = {}
     reference_foot_y: float | None = None
@@ -156,22 +153,10 @@ def main() -> int:
 
         expected_image_x = horizontal_offset * frame_width
         expected_image_y = vertical_offset * frame_height
-        slice_offsets = {
-            "head": [float(head.x()), float(head.y())],
-            "shoulder": [
-                float(shoulder.x()),
-                float(shoulder.y()) + frame_height * 0.315,
-            ],
-            "skirt": [
-                float(skirt.x()),
-                float(skirt.y()) + frame_height * 0.600,
-            ],
-        }
-        slice_offsets_consistent = all(
-            abs(value[0] - expected_image_x) <= 0.05
-            and abs(value[1] - expected_image_y) <= 0.05
-            for value in slice_offsets.values()
-        )
+        continuous_offset = [float(continuous.x()), float(continuous.y())]
+        continuous_offset_consistent = (
+            abs(continuous_offset[0] - expected_image_x) <= 0.05
+            and abs(continuous_offset[1] - expected_image_y) <= 0.05)
         source_values = [_source_path(item) for item in image_items]
         observed_sources.setdefault(expected_source, []).append(outfit_id)
         anchor_version = int(pet.property("outfitAnchorVersion"))
@@ -182,7 +167,7 @@ def main() -> int:
             and sources_ready
             and abs(frame_ratio - expected_ratio) <= 1e-6
             and anchor_version == int(bundle["anchorVersion"]) == int(spec["anchorVersion"])
-            and slice_offsets_consistent
+            and continuous_offset_consistent
             and reference_foot_y is not None
             and abs(foot_world_y - reference_foot_y) <= 0.05
             and reference_center_x is not None
@@ -203,8 +188,8 @@ def main() -> int:
             "verticalOffset": round(vertical_offset, 9),
             "centerWorldX": round(center_world_x, 4),
             "footWorldY": round(foot_world_y, 4),
-            "sliceOffsets": slice_offsets,
-            "sliceOffsetsConsistent": slice_offsets_consistent,
+            "continuousOffset": continuous_offset,
+            "continuousOffsetConsistent": continuous_offset_consistent,
             "implementationStatus": str(bundle.get("implementationStatus", "")),
             "visualAliasOf": str(bundle.get("visualAliasOf", "")),
             "passed": passed,

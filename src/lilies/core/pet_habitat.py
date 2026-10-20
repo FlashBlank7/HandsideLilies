@@ -16,6 +16,7 @@ from typing import Callable, Mapping
 
 from .win_event import WinEvent, WinEventKind
 from .window_catalog import WindowRecord, WindowRect
+from .pet_snap import EdgeAttachment, choose_drop_edge
 
 
 class FloatingMode(str, Enum):
@@ -697,6 +698,7 @@ class PetHabitatController:
         self._avoidance_recent_targets: list[tuple[int, float, float, float]] = []
         self._last_candidate: HabitatCandidate | None = None
         self._last_candidate_handle: int | None = None
+        self._drop_attachment: EdgeAttachment | None = None
 
     def set_floating_mode(self, mode: str | FloatingMode) -> None:
         self._floating_mode = FloatingMode(mode)
@@ -759,7 +761,7 @@ class PetHabitatController:
         self._avoidance_last_now = current
         if self._presence is not PresenceMode.NORMAL or current < self._avoidance_ready_at:
             return False
-        if self._detached_app_identity is not None:
+        if self._detached_app_identity is not None or self._drop_attachment is not None:
             # Manual placement is authoritative even while the foreground is
             # temporarily an unmanaged/Lilies surface with no HabitatHost.
             return False
@@ -925,6 +927,7 @@ class PetHabitatController:
         self.update_foreground(value, now)
 
     def detach(self) -> bool:
+        self._drop_attachment = None
         if self._host is None:
             # A hostless desktop drag is still an explicit user placement.
             # Keep it authoritative until a real external application becomes
@@ -941,10 +944,80 @@ class PetHabitatController:
         if self._host is None:
             return False
         self._detached_app_identity = None
+        self._drop_attachment = None
         return True
+
+    def release_near_edge(self, x: float, y: float, figure: WindowRect,
+                          work_area: WindowRect) -> bool:
+        """One decision after release, never on the native move hot path."""
+        self.set_desktop_position(x, y)
+        self.detach()
+        host = self._host
+        if self._presence is not PresenceMode.NORMAL or (host and (host.sensitive or host.full_screen)):
+            return False
+        attachment = choose_drop_edge(figure, work_area, host)
+        if attachment is None:
+            return False
+        self._drop_attachment = attachment
+        self._detached_app_identity = None
+        self.clear_avoidance()
+        return True
+
+    def _dropped_candidate(self) -> HabitatCandidate | None:
+        attachment = self._drop_attachment
+        if attachment is None:
+            return None
+        host = self._host
+        if attachment.host_handle:
+            if (host is None or host.handle != attachment.host_handle
+                    or host.stable_app_identity != attachment.host_identity
+                    or not host.visible or host.minimized or host.rect is None):
+                self._drop_attachment = None
+                return None
+            rect = host.rect
+            work = host.work_area or attachment.work_area
+        else:
+            rect = work = attachment.work_area
+        w,h = self.pet_width,self.pet_height
+        side = attachment.edge
+        f = attachment.fraction
+        if side in {'left','right'}:
+            ax = float(rect.left if side == 'left' else rect.right)
+            if not attachment.host_handle:
+                # Keep the lean artwork's hair beyond its hand anchor inside
+                # the display, including at the largest supported pet size.
+                inset = max(10.0, h * .017 + 1.0)
+                ax += inset if side == 'left' else -inset
+            ay = _clamp(rect.top + rect.height*f,work.top+h*.24,work.bottom-h*.38)
+            x = _clamp(ax-w*(.30 if side=='left' else .70),work.left-w*.30,work.right-w*.70)
+            y = _clamp(ay-h*.40,work.top,work.bottom-h)
+            pose = 'edge-peek-'+side
+            variant = 'caption-side-lean' if attachment.host_handle else 'screen-edge-watch'
+            profile,scale,motion = 'drop-edge',.82,'screen-watch'
+        else:
+            ax = _clamp(rect.left+rect.width*f, work.left+w*.22, work.right-w*.22)
+            if side == 'top':
+                # No pixels may extend above the monitor. On its top edge the
+                # hanging pose rests just inside the work area, below its hair.
+                ay = max(float(rect.top),work.top+h*.22)
+                pose,variant,profile,scale,motion = 'perch-top','window-perch','drop-top',.86,'perch-breathe'
+                if attachment.host_handle and rect.width >= 1000 and rect.top-work.top > h*.27:
+                    variant='wide-window-sprawl'
+                y = _clamp(ay-h*.28,work.top,work.bottom-h)
+            else:
+                ay = min(float(rect.bottom),work.bottom-h*.10)
+                pose,variant,profile,scale,motion = 'title-sit','compact-title-curl','drop-bottom',.78,'title-curl'
+                y = _clamp(ay-h*.68,work.top,work.bottom-h)
+            x = _clamp(ax-w*.5,work.left,work.right-w)
+        return HabitatCandidate(x=x,y=y,scale=scale,pose=pose,side=side,
+            anchor_x=ax,anchor_y=ay,profile=profile,size_class='medium',strategy='edge',
+            anchor_norm_x=_clamp((ax-x)/w,0,1),anchor_norm_y=_clamp((ay-y)/h,0,1),
+            mirror=side=='right',pose_variant=variant,motion_style=motion,motion_period=4.5)
 
     def remove_host(self, handle: int) -> None:
         if self._host and self._host.handle == int(handle):
+            if self._drop_attachment and self._drop_attachment.host_handle == int(handle):
+                self._drop_attachment = None
             self._host = None
             self._foreground_since = None
             self._last_candidate = None
@@ -1008,6 +1081,14 @@ class PetHabitatController:
             return common
         if self._presence is PresenceMode.SILENT or (host and host.full_screen):
             common.update(state="silent", reason="full-screen", visible=False)
+            return common
+        if host and host.sensitive:
+            common.update(state="blocked", reason="sensitive-window", visible=False)
+            return common
+        dropped = self._dropped_candidate()
+        if dropped is not None:
+            common.update(dropped.to_dict())
+            common.update(state="attached", reason="edge-drop", attached=True)
             return common
         if host is None:
             if self._detached_app_identity is not None:

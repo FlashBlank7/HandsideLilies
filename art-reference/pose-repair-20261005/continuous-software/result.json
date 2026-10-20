@@ -1,0 +1,10 @@
+{
+  "gpuRequested": false,
+  "gpuAvailable": false,
+  "deformationReady": false,
+  "imageReady": true,
+  "shaderLog": "",
+  "directionsChecked": 9,
+  "warnings": [],
+  "passed": true
+}

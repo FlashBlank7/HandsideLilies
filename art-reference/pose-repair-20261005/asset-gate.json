@@ -1,0 +1,1278 @@
+{
+  "assets": {
+    "poseEdgeLeanV1": {
+      "actualAspectRatio": 0.562799043062201,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "poseEdgeLeanV1",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 37745,
+      "clickMaskRelation": {
+        "alphaThreshold": 16,
+        "maskPixels": 644056,
+        "minimumSubjectCoverage": 0.9,
+        "minimumSubjectPrecision": 0.2,
+        "overlapPixels": 586710,
+        "subjectCoverage": 0.9983256592716618,
+        "subjectPixels": 587694,
+        "subjectPrecision": 0.9109611586570112
+      },
+      "cornerTransparentRatios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 0.562799043062201,
+      "declaredPixelSize": [
+        941,
+        1672
+      ],
+      "declaredSha256": "802d37419dd8f9e3bd6acd44c03634f66f4a9ae88ab874264228e32b7f302335",
+      "errors": [],
+      "exactOpaqueRatio": 0.00044173204724689706,
+      "format": "PNG",
+      "greenBoundaryPixels": 48,
+      "greenBoundaryRatio": 0.001271691614783415,
+      "habitatVariants": [
+        "caption-side-lean",
+        "cautious-return",
+        "screen-edge-watch"
+      ],
+      "manifestPath": "assets/lilith-pose-edge-lean-v2.png",
+      "meaningfulAlphaBounds": [
+        17,
+        43,
+        652,
+        1630
+      ],
+      "minimumSize": [
+        941,
+        1672
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.018065887353878853,
+        0.025717703349282296,
+        0.6928799149840595,
+        0.9748803827751196
+      ],
+      "optional": true,
+      "passed": true,
+      "pixelSize": [
+        941,
+        1672
+      ],
+      "qmlAspectRatio": {
+        "denominator": 1672.0,
+        "numerator": 941.0,
+        "ratio": 0.562799043062201
+      },
+      "resolutionTier": "production-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-edge-lean-v2.png",
+      "sha256": "802d37419dd8f9e3bd6acd44c03634f66f4a9ae88ab874264228e32b7f302335",
+      "silhouetteDistinctness": {
+        "baselineAsset": "poseEdgePeek",
+        "differenceRatio": 0.45518507188742735,
+        "directIntersectionOverUnion": 0.5448149281125727,
+        "intersectionOverUnion": 0.5448149281125727,
+        "matchedMirroredBaseline": false,
+        "maxIntersectionOverUnion": 0.82,
+        "minDifferenceRatio": 0.18,
+        "mirroredIntersectionOverUnion": 0.49364093463472347
+      },
+      "solidRatio": 0.3672820830939294,
+      "status": "verified",
+      "transparentPixels": 963322,
+      "transparentRatio": 0.612273667939533,
+      "transparentRgbLeakPixels": 8,
+      "transparentRgbLeakRatio": 8.304595971025265e-06,
+      "validated": true,
+      "whiteFringeRiskPixels": 296,
+      "whiteFringeRiskRatio": 0.007842098291164393
+    },
+    "poseEdgePeek": {
+      "actualAspectRatio": 0.36612903225806454,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "poseEdgePeek",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 3350,
+      "clickMaskRelation": {
+        "alphaThreshold": 16,
+        "maskPixels": 116025,
+        "minimumSubjectCoverage": 0.9,
+        "minimumSubjectPrecision": 0.2,
+        "overlapPixels": 55473,
+        "subjectCoverage": 0.9989195613419048,
+        "subjectPixels": 55533,
+        "subjectPrecision": 0.4781124757595346
+      },
+      "cornerTransparentRatios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 0.3661290322580645,
+      "declaredPixelSize": [
+        227,
+        620
+      ],
+      "errors": [],
+      "exactOpaqueRatio": 0.0017265880346738667,
+      "format": "PNG",
+      "greenBoundaryPixels": 0,
+      "greenBoundaryRatio": 0.0,
+      "manifestPath": "assets/lilith-pose-edge-peek-v1.png",
+      "meaningfulAlphaBounds": [
+        23,
+        23,
+        204,
+        597
+      ],
+      "minimumSize": [
+        220,
+        600
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.1013215859030837,
+        0.037096774193548385,
+        0.8986784140969163,
+        0.9629032258064516
+      ],
+      "passed": true,
+      "pixelSize": [
+        227,
+        620
+      ],
+      "qmlAspectRatio": {
+        "denominator": 620.0,
+        "numerator": 227.0,
+        "ratio": 0.36612903225806454
+      },
+      "resolutionTier": "legacy-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-edge-peek-v1.png",
+      "sha256": "077610bf775e4b9a186e8c24ebdc9b7c872fa0de1ad84a73fd821707851ea1a6",
+      "solidRatio": 0.3773198806309507,
+      "transparentPixels": 85207,
+      "transparentRatio": 0.6054213443228649,
+      "transparentRgbLeakPixels": 0,
+      "transparentRgbLeakRatio": 0.0,
+      "whiteFringeRiskPixels": 11,
+      "whiteFringeRiskRatio": 0.0032835820895522386
+    },
+    "poseExpansionSheet": {
+      "actualAspectRatio": 0.9624413145539906,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "poseExpansionSheet",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 67908,
+      "clickMaskRelation": null,
+      "cornerTransparentRatios": [
+        0.9997479838709677,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 0.9624413145539906,
+      "declaredPixelSize": [
+        1230,
+        1278
+      ],
+      "declaredSha256": "6f6cfe5f995e4f81adef40475059ba2218085a67d059d6020cd4ba60ba5ad481",
+      "errors": [],
+      "exactOpaqueRatio": 0.0004026871254628039,
+      "format": "PNG",
+      "greenBoundaryPixels": 62,
+      "greenBoundaryRatio": 0.000912999941096778,
+      "manifestPath": "assets/lilith-pose-expansion-sheet-v1.png",
+      "meaningfulAlphaBounds": [
+        116,
+        23,
+        1116,
+        1245
+      ],
+      "minimumSize": [
+        1230,
+        1278
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.0943089430894309,
+        0.017996870109546165,
+        0.9073170731707317,
+        0.9741784037558685
+      ],
+      "passed": true,
+      "pixelSize": [
+        1230,
+        1278
+      ],
+      "qmlAspectRatio": null,
+      "resolutionTier": "production-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-expansion-sheet-v1.png",
+      "sha256": "6f6cfe5f995e4f81adef40475059ba2218085a67d059d6020cd4ba60ba5ad481",
+      "solidRatio": 0.26809229359899234,
+      "spriteSheet": {
+        "errors": [],
+        "layout": "2x2-custom-clips",
+        "passed": true,
+        "sprites": {
+          "box-support": {
+            "anchor": [
+              0.5,
+              0.5
+            ],
+            "aspectRatio": 0.6119791666666666,
+            "boundaryPixels": 20883,
+            "clickMask": {
+              "rect": [
+                0.07,
+                0.03,
+                0.88,
+                0.92
+              ],
+              "type": "rect"
+            },
+            "cordAnchor": [
+              0.58,
+              0.44
+            ],
+            "cornerTransparentRatios": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "edgeInsets": [
+              46,
+              38,
+              46,
+              46
+            ],
+            "errors": [],
+            "greenBoundaryPixels": 15,
+            "greenBoundaryRatio": 0.0007182876023559833,
+            "meaningfulAlphaBounds": [
+              46,
+              38,
+              424,
+              722
+            ],
+            "minimumEdgeInset": 8,
+            "normalizedSubjectBounds": [
+              0.09787234042553192,
+              0.049479166666666664,
+              0.902127659574468,
+              0.9401041666666666
+            ],
+            "passed": true,
+            "poseId": "box-support",
+            "quadrant": "bottom-left",
+            "solidRatio": 0.301385195035461,
+            "sourceRect": [
+              70,
+              510,
+              470,
+              768
+            ],
+            "spriteId": "box-support",
+            "subjectCenter": [
+              305.0,
+              890.0
+            ],
+            "subjectInDeclaredQuadrant": true,
+            "transparentPixels": 233303,
+            "transparentRatio": 0.646340314716312,
+            "transparentRgbLeakPixels": 0,
+            "transparentRgbLeakRatio": 0.0,
+            "whiteFringeRiskPixels": 61,
+            "whiteFringeRiskRatio": 0.0029210362495809988
+          },
+          "presenting": {
+            "anchor": [
+              0.5,
+              0.5
+            ],
+            "aspectRatio": 0.6099290780141844,
+            "boundaryPixels": 18092,
+            "clickMask": {
+              "rect": [
+                0.06,
+                0.02,
+                0.9,
+                0.96
+              ],
+              "type": "rect"
+            },
+            "cordAnchor": [
+              0.39,
+              0.39
+            ],
+            "cornerTransparentRatios": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "edgeInsets": [
+              38,
+              23,
+              44,
+              32
+            ],
+            "errors": [],
+            "greenBoundaryPixels": 25,
+            "greenBoundaryRatio": 0.0013818262215343799,
+            "meaningfulAlphaBounds": [
+              38,
+              23,
+              386,
+              673
+            ],
+            "minimumEdgeInset": 8,
+            "normalizedSubjectBounds": [
+              0.08837209302325581,
+              0.032624113475177303,
+              0.8976744186046511,
+              0.9546099290780142
+            ],
+            "passed": true,
+            "poseId": "presenting",
+            "quadrant": "top-right",
+            "solidRatio": 0.3237539172027049,
+            "sourceRect": [
+              730,
+              0,
+              430,
+              705
+            ],
+            "spriteId": "presenting",
+            "subjectCenter": [
+              942.0,
+              348.0
+            ],
+            "subjectInDeclaredQuadrant": true,
+            "transparentPixels": 188757,
+            "transparentRatio": 0.6226521523998021,
+            "transparentRgbLeakPixels": 0,
+            "transparentRgbLeakRatio": 0.0,
+            "whiteFringeRiskPixels": 62,
+            "whiteFringeRiskRatio": 0.003426929029405262
+          },
+          "reading": {
+            "anchor": [
+              0.5,
+              0.5
+            ],
+            "aspectRatio": 0.94,
+            "boundaryPixels": 15170,
+            "clickMask": {
+              "rect": [
+                0.08,
+                0.03,
+                0.9,
+                0.93
+              ],
+              "type": "rect"
+            },
+            "cordAnchor": [
+              0.557,
+              0.702
+            ],
+            "cornerTransparentRatios": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "edgeInsets": [
+              50,
+              26,
+              25,
+              39
+            ],
+            "errors": [],
+            "greenBoundaryPixels": 14,
+            "greenBoundaryRatio": 0.0009228740936058009,
+            "meaningfulAlphaBounds": [
+              50,
+              26,
+              445,
+              461
+            ],
+            "minimumEdgeInset": 8,
+            "normalizedSubjectBounds": [
+              0.10638297872340426,
+              0.052,
+              0.9468085106382979,
+              0.922
+            ],
+            "passed": true,
+            "poseId": "reading",
+            "quadrant": "top-left",
+            "solidRatio": 0.5348170212765957,
+            "sourceRect": [
+              120,
+              8,
+              470,
+              500
+            ],
+            "spriteId": "reading",
+            "subjectCenter": [
+              367.5,
+              251.5
+            ],
+            "subjectInDeclaredQuadrant": true,
+            "transparentPixels": 95995,
+            "transparentRatio": 0.4084893617021277,
+            "transparentRgbLeakPixels": 0,
+            "transparentRgbLeakRatio": 0.0,
+            "whiteFringeRiskPixels": 75,
+            "whiteFringeRiskRatio": 0.004943968358602505
+          },
+          "resting": {
+            "anchor": [
+              0.5,
+              0.5
+            ],
+            "aspectRatio": 0.856401384083045,
+            "boundaryPixels": 13605,
+            "clickMask": {
+              "rect": [
+                0.05,
+                0.05,
+                0.88,
+                0.91
+              ],
+              "type": "rect"
+            },
+            "cordAnchor": [
+              0.53,
+              0.38
+            ],
+            "cornerTransparentRatios": [
+              0.9986206896551724,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "edgeInsets": [
+              34,
+              39,
+              52,
+              33
+            ],
+            "errors": [],
+            "greenBoundaryPixels": 8,
+            "greenBoundaryRatio": 0.0005880191106210951,
+            "meaningfulAlphaBounds": [
+              34,
+              39,
+              443,
+              545
+            ],
+            "minimumEdgeInset": 8,
+            "normalizedSubjectBounds": [
+              0.06868686868686869,
+              0.06747404844290658,
+              0.8949494949494949,
+              0.9429065743944637
+            ],
+            "passed": true,
+            "poseId": "resting",
+            "quadrant": "bottom-right",
+            "solidRatio": 0.31040159379259724,
+            "sourceRect": [
+              665,
+              700,
+              495,
+              578
+            ],
+            "spriteId": "resting",
+            "subjectCenter": [
+              903.5,
+              992.0
+            ],
+            "subjectInDeclaredQuadrant": true,
+            "transparentPixels": 185125,
+            "transparentRatio": 0.6470413477333893,
+            "transparentRgbLeakPixels": 0,
+            "transparentRgbLeakRatio": 0.0,
+            "whiteFringeRiskPixels": 49,
+            "whiteFringeRiskRatio": 0.003601617052554208
+          }
+        }
+      },
+      "transparentPixels": 1089742,
+      "transparentRatio": 0.693246561573597,
+      "transparentRgbLeakPixels": 0,
+      "transparentRgbLeakRatio": 0.0,
+      "whiteFringeRiskPixels": 247,
+      "whiteFringeRiskRatio": 0.003637273958885551
+    },
+    "poseFocusKneel": {
+      "actualAspectRatio": 0.8333333333333334,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "poseFocusKneel",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 42787,
+      "clickMaskRelation": {
+        "alphaThreshold": 16,
+        "maskPixels": 897267,
+        "minimumSubjectCoverage": 0.9,
+        "minimumSubjectPrecision": 0.2,
+        "overlapPixels": 617892,
+        "subjectCoverage": 0.9574955719711585,
+        "subjectPixels": 645321,
+        "subjectPrecision": 0.6886378302110743
+      },
+      "cornerTransparentRatios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 0.8333333333333334,
+      "declaredPixelSize": [
+        1145,
+        1374
+      ],
+      "declaredSha256": "bde04df0eb20e3e248df4d2fb46a3773d1376a516772c368c275d12a199b0376",
+      "errors": [],
+      "exactOpaqueRatio": 0.00024154128766931725,
+      "format": "PNG",
+      "greenBoundaryPixels": 34,
+      "greenBoundaryRatio": 0.0007946338841236825,
+      "manifestPath": "assets/lilith-pose-focus-kneel-v1.png",
+      "meaningfulAlphaBounds": [
+        178,
+        28,
+        972,
+        1307
+      ],
+      "minimumSize": [
+        1145,
+        1374
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.1554585152838428,
+        0.020378457059679767,
+        0.8489082969432314,
+        0.9512372634643377
+      ],
+      "passed": true,
+      "pixelSize": [
+        1145,
+        1374
+      ],
+      "qmlAspectRatio": {
+        "denominator": 1374.0,
+        "numerator": 1145.0,
+        "ratio": 0.8333333333333334
+      },
+      "resolutionTier": "production-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-focus-kneel-v1.png",
+      "sha256": "bde04df0eb20e3e248df4d2fb46a3773d1376a516772c368c275d12a199b0376",
+      "solidRatio": 0.40368922535166507,
+      "transparentPixels": 900963,
+      "transparentRatio": 0.5726835872695029,
+      "transparentRgbLeakPixels": 0,
+      "transparentRgbLeakRatio": 0.0,
+      "whiteFringeRiskPixels": 420,
+      "whiteFringeRiskRatio": 0.009816065627410196
+    },
+    "poseListeningLive": {
+      "actualAspectRatio": 0.511400651465798,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "poseListeningLive",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 4202,
+      "clickMaskRelation": {
+        "alphaThreshold": 16,
+        "maskPixels": 118534,
+        "minimumSubjectCoverage": 0.9,
+        "minimumSubjectPrecision": 0.2,
+        "overlapPixels": 78361,
+        "subjectCoverage": 0.9725949186411648,
+        "subjectPixels": 80569,
+        "subjectPrecision": 0.661084583326303
+      },
+      "cornerTransparentRatios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 0.511400651465798,
+      "declaredPixelSize": [
+        314,
+        614
+      ],
+      "errors": [],
+      "exactOpaqueRatio": 0.0017531484055685802,
+      "format": "PNG",
+      "greenBoundaryPixels": 0,
+      "greenBoundaryRatio": 0.0,
+      "manifestPath": "assets/lilith-pose-listening-live-v1.png",
+      "meaningfulAlphaBounds": [
+        23,
+        23,
+        291,
+        591
+      ],
+      "minimumSize": [
+        300,
+        600
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.0732484076433121,
+        0.03745928338762215,
+        0.9267515923566879,
+        0.9625407166123778
+      ],
+      "passed": true,
+      "pixelSize": [
+        314,
+        614
+      ],
+      "qmlAspectRatio": {
+        "denominator": 614.0,
+        "numerator": 314.0,
+        "ratio": 0.511400651465798
+      },
+      "resolutionTier": "legacy-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-listening-live-v1.png",
+      "sha256": "a015bfa0f72a8e18aba6c9c01fe14f74e567fc77b1345bc009027f88f1a83ad9",
+      "solidRatio": 0.4029025498454325,
+      "transparentPixels": 112227,
+      "transparentRatio": 0.5821023257743937,
+      "transparentRgbLeakPixels": 0,
+      "transparentRgbLeakRatio": 0.0,
+      "whiteFringeRiskPixels": 9,
+      "whiteFringeRiskRatio": 0.002141837220371252
+    },
+    "poseMicroCornerGripV1": {
+      "actualAspectRatio": 0.562799043062201,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "poseMicroCornerGripV1",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 35675,
+      "clickMaskRelation": {
+        "alphaThreshold": 16,
+        "maskPixels": 695591,
+        "minimumSubjectCoverage": 0.9,
+        "minimumSubjectPrecision": 0.2,
+        "overlapPixels": 625586,
+        "subjectCoverage": 0.9973201204590708,
+        "subjectPixels": 627267,
+        "subjectPrecision": 0.8993589623787542
+      },
+      "cornerTransparentRatios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 0.562799043062201,
+      "declaredPixelSize": [
+        941,
+        1672
+      ],
+      "declaredSha256": "06e2db96d2dabeb3ab952f5b0ba78ccd2eac299b144c14ff8227ae6c10450122",
+      "errors": [],
+      "exactOpaqueRatio": 0.0003247842822203804,
+      "format": "PNG",
+      "greenBoundaryPixels": 25,
+      "greenBoundaryRatio": 0.000700770847932726,
+      "habitatVariants": [
+        "micro-corner-grip"
+      ],
+      "manifestPath": "assets/lilith-pose-corner-grip-v2.png",
+      "meaningfulAlphaBounds": [
+        178,
+        29,
+        832,
+        1636
+      ],
+      "minimumSize": [
+        941,
+        1672
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.1891604675876727,
+        0.017344497607655503,
+        0.8841657810839533,
+        0.9784688995215312
+      ],
+      "optional": true,
+      "passed": true,
+      "pixelSize": [
+        941,
+        1672
+      ],
+      "qmlAspectRatio": {
+        "denominator": 1672.0,
+        "numerator": 941.0,
+        "ratio": 0.562799043062201
+      },
+      "resolutionTier": "production-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-corner-grip-v2.png",
+      "sha256": "06e2db96d2dabeb3ab952f5b0ba78ccd2eac299b144c14ff8227ae6c10450122",
+      "silhouetteDistinctness": {
+        "baselineAsset": "poseEdgePeek",
+        "differenceRatio": 0.3930117501546073,
+        "directIntersectionOverUnion": 0.6069882498453927,
+        "intersectionOverUnion": 0.6069882498453927,
+        "matchedMirroredBaseline": false,
+        "maxIntersectionOverUnion": 0.82,
+        "minDifferenceRatio": 0.18,
+        "mirroredIntersectionOverUnion": 0.39105995717344755
+      },
+      "solidRatio": 0.39253517331150306,
+      "status": "verified",
+      "transparentPixels": 924534,
+      "transparentRatio": 0.5876205706033997,
+      "transparentRgbLeakPixels": 8,
+      "transparentRgbLeakRatio": 8.65300789370645e-06,
+      "validated": true,
+      "whiteFringeRiskPixels": 306,
+      "whiteFringeRiskRatio": 0.008577435178696566
+    },
+    "posePerchProne": {
+      "actualAspectRatio": 1.0027472527472527,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "posePerchProne",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 3222,
+      "clickMaskRelation": {
+        "alphaThreshold": 16,
+        "maskPixels": 95894,
+        "minimumSubjectCoverage": 0.9,
+        "minimumSubjectPrecision": 0.2,
+        "overlapPixels": 82065,
+        "subjectCoverage": 0.9632833683518599,
+        "subjectPixels": 85193,
+        "subjectPrecision": 0.8557886833378522
+      },
+      "cornerTransparentRatios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 1.0027472527472527,
+      "declaredPixelSize": [
+        365,
+        364
+      ],
+      "errors": [],
+      "exactOpaqueRatio": 0.0012193286165888906,
+      "format": "PNG",
+      "greenBoundaryPixels": 0,
+      "greenBoundaryRatio": 0.0,
+      "manifestPath": "assets/lilith-pose-perch-prone-v1.png",
+      "meaningfulAlphaBounds": [
+        18,
+        18,
+        347,
+        346
+      ],
+      "minimumSize": [
+        360,
+        360
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.049315068493150684,
+        0.04945054945054945,
+        0.9506849315068493,
+        0.9505494505494505
+      ],
+      "passed": true,
+      "pixelSize": [
+        365,
+        364
+      ],
+      "qmlAspectRatio": {
+        "denominator": 364.0,
+        "numerator": 365.0,
+        "ratio": 1.0027472527472527
+      },
+      "resolutionTier": "legacy-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-perch-prone-v1.png",
+      "sha256": "0c3fb289c52fbd8b1ea15b5997ae87725e5fcbf376b8cdd473bf59c074de38ab",
+      "solidRatio": 0.6248155953635406,
+      "transparentPixels": 47667,
+      "transparentRatio": 0.3587761553514978,
+      "transparentRgbLeakPixels": 0,
+      "transparentRgbLeakRatio": 0.0,
+      "whiteFringeRiskPixels": 1,
+      "whiteFringeRiskRatio": 0.00031036623215394165
+    },
+    "poseTitleSit": {
+      "actualAspectRatio": 0.5912162162162162,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "poseTitleSit",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 4433,
+      "clickMaskRelation": {
+        "alphaThreshold": 16,
+        "maskPixels": 118635,
+        "minimumSubjectCoverage": 0.9,
+        "minimumSubjectPrecision": 0.2,
+        "overlapPixels": 85507,
+        "subjectCoverage": 0.9316314745810725,
+        "subjectPixels": 91782,
+        "subjectPrecision": 0.7207569435664012
+      },
+      "cornerTransparentRatios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 0.5912162162162162,
+      "declaredPixelSize": [
+        350,
+        592
+      ],
+      "errors": [],
+      "exactOpaqueRatio": 0.0015057915057915057,
+      "format": "PNG",
+      "greenBoundaryPixels": 0,
+      "greenBoundaryRatio": 0.0,
+      "manifestPath": "assets/lilith-pose-title-sit-v1.png",
+      "meaningfulAlphaBounds": [
+        22,
+        22,
+        328,
+        570
+      ],
+      "minimumSize": [
+        340,
+        580
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.06285714285714286,
+        0.037162162162162164,
+        0.9371428571428572,
+        0.9628378378378378
+      ],
+      "passed": true,
+      "pixelSize": [
+        350,
+        592
+      ],
+      "qmlAspectRatio": {
+        "denominator": 592.0,
+        "numerator": 350.0,
+        "ratio": 0.5912162162162162
+      },
+      "resolutionTier": "legacy-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-title-sit-v1.png",
+      "sha256": "80ded5718e24a7e0aa70f10bebb550621d4d8aaeadfb0cad3108edc8a38394af",
+      "solidRatio": 0.4284314671814672,
+      "transparentPixels": 115418,
+      "transparentRatio": 0.5570366795366796,
+      "transparentRgbLeakPixels": 0,
+      "transparentRgbLeakRatio": 0.0,
+      "whiteFringeRiskPixels": 12,
+      "whiteFringeRiskRatio": 0.0027069704489059328
+    },
+    "poseWideWindowSprawlV1": {
+      "actualAspectRatio": 2.0,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "poseWideWindowSprawlV1",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 39679,
+      "clickMaskRelation": {
+        "alphaThreshold": 16,
+        "maskPixels": 1008238,
+        "minimumSubjectCoverage": 0.9,
+        "minimumSubjectPrecision": 0.2,
+        "overlapPixels": 754106,
+        "subjectCoverage": 0.9959336225625177,
+        "subjectPixels": 757185,
+        "subjectPrecision": 0.7479444337547285
+      },
+      "cornerTransparentRatios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 2.0,
+      "declaredPixelSize": [
+        1774,
+        887
+      ],
+      "declaredSha256": "90e7d5678ee01d5837418960fcd4ca4a60077af6b9b60957922e28ccbf1e92e9",
+      "errors": [],
+      "exactOpaqueRatio": 0.00045311902222888804,
+      "format": "PNG",
+      "greenBoundaryPixels": 51,
+      "greenBoundaryRatio": 0.0012853146500667858,
+      "habitatVariants": [
+        "panoramic-prone",
+        "wide-window-sprawl"
+      ],
+      "manifestPath": "assets/lilith-pose-window-prone-v3.png",
+      "meaningfulAlphaBounds": [
+        51,
+        54,
+        1751,
+        843
+      ],
+      "minimumSize": [
+        1774,
+        887
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.02874859075535513,
+        0.060879368658399095,
+        0.9870349492671928,
+        0.9503945885005637
+      ],
+      "optional": true,
+      "passed": true,
+      "pixelSize": [
+        1774,
+        887
+      ],
+      "qmlAspectRatio": {
+        "denominator": 887.0,
+        "numerator": 1774.0,
+        "ratio": 2.0
+      },
+      "resolutionTier": "production-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-window-prone-v3.png",
+      "sha256": "90e7d5678ee01d5837418960fcd4ca4a60077af6b9b60957922e28ccbf1e92e9",
+      "silhouetteDistinctness": {
+        "baselineAsset": "posePerchProne",
+        "differenceRatio": 0.6803,
+        "directIntersectionOverUnion": 0.3185133379958038,
+        "intersectionOverUnion": 0.3197,
+        "matchedMirroredBaseline": true,
+        "maxIntersectionOverUnion": 0.82,
+        "minDifferenceRatio": 0.18,
+        "mirroredIntersectionOverUnion": 0.3197
+      },
+      "solidRatio": 0.4747244744009995,
+      "status": "verified",
+      "transparentPixels": 791395,
+      "transparentRatio": 0.5029398718048118,
+      "transparentRgbLeakPixels": 26,
+      "transparentRgbLeakRatio": 3.285337915958529e-05,
+      "validated": true,
+      "whiteFringeRiskPixels": 289,
+      "whiteFringeRiskRatio": 0.007283449683711787
+    },
+    "poseWindowDangleV1": {
+      "actualAspectRatio": 0.562799043062201,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "poseWindowDangleV1",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 37443,
+      "clickMaskRelation": {
+        "alphaThreshold": 16,
+        "maskPixels": 707514,
+        "minimumSubjectCoverage": 0.9,
+        "minimumSubjectPrecision": 0.2,
+        "overlapPixels": 638475,
+        "subjectCoverage": 0.9960748278836988,
+        "subjectPixels": 640991,
+        "subjectPrecision": 0.9024203054639202
+      },
+      "cornerTransparentRatios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 0.562799043062201,
+      "declaredPixelSize": [
+        941,
+        1672
+      ],
+      "declaredSha256": "5ff9f47a31948ce2cac408967a5cadbaea75bc82b2198dd37436ef9c3ed987ba",
+      "errors": [],
+      "exactOpaqueRatio": 0.00023834462980947685,
+      "format": "PNG",
+      "greenBoundaryPixels": 31,
+      "greenBoundaryRatio": 0.0008279251128381807,
+      "habitatVariants": [
+        "window-perch",
+        "window-perch-tucked"
+      ],
+      "manifestPath": "assets/lilith-pose-window-dangle-v2.png",
+      "meaningfulAlphaBounds": [
+        105,
+        18,
+        845,
+        1615
+      ],
+      "minimumSize": [
+        941,
+        1672
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.11158342189160468,
+        0.01076555023923445,
+        0.89798087141339,
+        0.9659090909090909
+      ],
+      "optional": true,
+      "passed": true,
+      "pixelSize": [
+        941,
+        1672
+      ],
+      "qmlAspectRatio": {
+        "denominator": 1672.0,
+        "numerator": 941.0,
+        "ratio": 0.562799043062201
+      },
+      "resolutionTier": "production-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-window-dangle-v2.png",
+      "sha256": "5ff9f47a31948ce2cac408967a5cadbaea75bc82b2198dd37436ef9c3ed987ba",
+      "silhouetteDistinctness": {
+        "baselineAsset": "posePerchProne",
+        "differenceRatio": 0.6815113350125944,
+        "directIntersectionOverUnion": 0.3184886649874055,
+        "intersectionOverUnion": 0.3184886649874055,
+        "matchedMirroredBaseline": false,
+        "maxIntersectionOverUnion": 0.82,
+        "minDifferenceRatio": 0.18,
+        "mirroredIntersectionOverUnion": 0.3184886649874055
+      },
+      "solidRatio": 0.40183315621679067,
+      "status": "verified",
+      "transparentPixels": 908653,
+      "transparentRatio": 0.5775268344273882,
+      "transparentRgbLeakPixels": 0,
+      "transparentRgbLeakRatio": 0.0,
+      "validated": true,
+      "whiteFringeRiskPixels": 203,
+      "whiteFringeRiskRatio": 0.00542157412600486
+    },
+    "poseWindowProneV2": {
+      "actualAspectRatio": 1.0,
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "assetKey": "poseWindowProneV2",
+      "bands": [
+        "R",
+        "G",
+        "B",
+        "A"
+      ],
+      "boundaryPixels": 29888,
+      "clickMaskRelation": {
+        "alphaThreshold": 16,
+        "maskPixels": 599391,
+        "minimumSubjectCoverage": 0.9,
+        "minimumSubjectPrecision": 0.2,
+        "overlapPixels": 556883,
+        "subjectCoverage": 0.9986496567653451,
+        "subjectPixels": 557636,
+        "subjectPrecision": 0.9290813509045014
+      },
+      "cornerTransparentRatios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "declaredAspectRatio": 1.0,
+      "declaredPixelSize": [
+        1254,
+        1254
+      ],
+      "declaredSha256": "1f6c1f7935f6d3265db07da9aa3162d92737fd14f8453a7e9041de90cb33c530",
+      "errors": [],
+      "exactOpaqueRatio": 0.0002594568195172577,
+      "format": "PNG",
+      "greenBoundaryPixels": 22,
+      "greenBoundaryRatio": 0.0007360813704496788,
+      "habitatVariants": [
+        "compact-title-curl"
+      ],
+      "manifestPath": "assets/lilith-pose-window-curl-v3.png",
+      "meaningfulAlphaBounds": [
+        263,
+        32,
+        1001,
+        1199
+      ],
+      "minimumSize": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "normalizedMeaningfulAlphaBounds": [
+        0.20972886762360446,
+        0.025518341307814992,
+        0.7982456140350878,
+        0.956140350877193
+      ],
+      "optional": true,
+      "passed": true,
+      "pixelSize": [
+        1254,
+        1254
+      ],
+      "qmlAspectRatio": {
+        "denominator": 1254.0,
+        "numerator": 1254.0,
+        "ratio": 1.0
+      },
+      "resolutionTier": "production-v1",
+      "resolvedPath": "F:\\code\\Lilies in the box\\themes\\first-encounter\\assets\\lilith-pose-window-curl-v3.png",
+      "sha256": "1f6c1f7935f6d3265db07da9aa3162d92737fd14f8453a7e9041de90cb33c530",
+      "silhouetteDistinctness": {
+        "baselineAsset": "poseTitleSit",
+        "differenceRatio": 0.3378852186750323,
+        "directIntersectionOverUnion": 0.6391264786169245,
+        "intersectionOverUnion": 0.6621147813249677,
+        "matchedMirroredBaseline": true,
+        "maxIntersectionOverUnion": 0.82,
+        "minDifferenceRatio": 0.18,
+        "mirroredIntersectionOverUnion": 0.6621147813249677
+      },
+      "solidRatio": 0.34953412238730797,
+      "status": "verified",
+      "transparentPixels": 997026,
+      "transparentRatio": 0.6340323405294446,
+      "transparentRgbLeakPixels": 7,
+      "transparentRgbLeakRatio": 7.020880097409696e-06,
+      "validated": true,
+      "whiteFringeRiskPixels": 172,
+      "whiteFringeRiskRatio": 0.005754817987152034
+    }
+  },
+  "errors": [],
+  "gateVersion": 3,
+  "optionalArtworkKeys": [
+    "poseEdgeLeanV1",
+    "poseMicroCornerGripV1",
+    "poseWideWindowSprawlV1",
+    "poseWindowDangleV1",
+    "poseWindowProneV2"
+  ],
+  "passed": true,
+  "qml": "F:\\code\\Lilies in the box\\qml\\V03PetBody.qml",
+  "qmlArtworkKeys": [
+    "poseEdgeLeanV1",
+    "poseEdgePeek",
+    "poseFocusKneel",
+    "poseListeningLive",
+    "poseMicroCornerGripV1",
+    "posePerchProne",
+    "poseTitleSit",
+    "poseWideWindowSprawlV1",
+    "poseWindowDangleV1",
+    "poseWindowProneV2"
+  ],
+  "runtimeArtworkKeys": [
+    "poseEdgePeek",
+    "poseExpansionSheet",
+    "poseFocusKneel",
+    "poseListeningLive",
+    "posePerchProne",
+    "poseTitleSit"
+  ],
+  "schemaVersion": 3,
+  "spriteSheetKeys": [
+    "poseExpansionSheet"
+  ],
+  "theme": "F:\\code\\Lilies in the box\\themes\\first-encounter\\theme.json"
+}

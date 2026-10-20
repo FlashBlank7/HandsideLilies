@@ -1,0 +1,192 @@
+{
+  "gpu": true,
+  "poses": [
+    {
+      "name": "corner",
+      "mirror": false,
+      "asset": "poseMicroCornerGripV1",
+      "ready": true,
+      "blend": 1.0,
+      "contactError": 1.3124684344280652e-05,
+      "frame": [
+        315.68107715311004,
+        214.689,
+        162.64892344497608,
+        289.0
+      ],
+      "aspectError": 0.0,
+      "cordInside": true,
+      "cornerTransparent": true,
+      "passed": true
+    },
+    {
+      "name": "corner",
+      "mirror": true,
+      "asset": "poseMicroCornerGripV1",
+      "ready": true,
+      "blend": 1.0,
+      "contactError": 1.466813591195373e-05,
+      "frame": [
+        221.66999940191386,
+        214.689,
+        162.64892344497608,
+        289.0
+      ],
+      "aspectError": 0.0,
+      "cordInside": true,
+      "cornerTransparent": true,
+      "passed": true
+    },
+    {
+      "name": "curl",
+      "mirror": false,
+      "asset": "poseWindowProneV2",
+      "ready": true,
+      "blend": 1.0,
+      "contactError": 7.960070730720245e-06,
+      "frame": [
+        225.73000000000002,
+        117.00122000000005,
+        248.53999999999996,
+        248.53999999999996
+      ],
+      "aspectError": 0.0,
+      "cordInside": true,
+      "cornerTransparent": true,
+      "passed": true
+    },
+    {
+      "name": "curl",
+      "mirror": true,
+      "asset": "poseWindowProneV2",
+      "ready": true,
+      "blend": 1.0,
+      "contactError": 7.960070730720245e-06,
+      "frame": [
+        225.73000000000002,
+        117.00122000000005,
+        248.53999999999996,
+        248.53999999999996
+      ],
+      "aspectError": 0.0,
+      "cordInside": true,
+      "cornerTransparent": true,
+      "passed": true
+    },
+    {
+      "name": "dangle",
+      "mirror": false,
+      "asset": "poseWindowDangleV1",
+      "ready": true,
+      "blend": 1.0,
+      "contactError": 1.346280677799207e-05,
+      "frame": [
+        302.83181220095696,
+        245.85476,
+        94.33637559808611,
+        167.61999999999998
+      ],
+      "aspectError": 0.0,
+      "cordInside": true,
+      "cornerTransparent": true,
+      "passed": true
+    },
+    {
+      "name": "dangle",
+      "mirror": true,
+      "asset": "poseWindowDangleV1",
+      "ready": true,
+      "blend": 1.0,
+      "contactError": 1.346280677799207e-05,
+      "frame": [
+        302.83181220095696,
+        245.85476,
+        94.33637559808611,
+        167.61999999999998
+      ],
+      "aspectError": 0.0,
+      "cordInside": true,
+      "cornerTransparent": true,
+      "passed": true
+    },
+    {
+      "name": "prone",
+      "mirror": false,
+      "asset": "poseWideWindowSprawlV1",
+      "ready": true,
+      "blend": 1.0,
+      "contactError": 6.97167402662942e-06,
+      "frame": [
+        247.7518,
+        172.77244000000005,
+        335.23999999999995,
+        167.61999999999998
+      ],
+      "aspectError": 0.0,
+      "cordInside": true,
+      "cornerTransparent": true,
+      "passed": true
+    },
+    {
+      "name": "prone",
+      "mirror": true,
+      "asset": "poseWideWindowSprawlV1",
+      "ready": true,
+      "blend": 1.0,
+      "contactError": 130.74360679354234,
+      "frame": [
+        247.7518,
+        172.77244000000005,
+        335.23999999999995,
+        167.61999999999998
+      ],
+      "aspectError": 0.0,
+      "cordInside": true,
+      "cornerTransparent": true,
+      "passed": false
+    },
+    {
+      "name": "wall",
+      "mirror": false,
+      "asset": "poseEdgeLeanV1",
+      "ready": true,
+      "blend": 1.0,
+      "contactError": 5.707000099661678e-06,
+      "frame": [
+        343.168745215311,
+        229.428,
+        162.64892344497608,
+        289.0
+      ],
+      "aspectError": 0.0,
+      "cordInside": true,
+      "cornerTransparent": true,
+      "passed": true
+    },
+    {
+      "name": "wall",
+      "mirror": true,
+      "asset": "poseEdgeLeanV1",
+      "ready": true,
+      "blend": 1.0,
+      "contactError": 1.0958447254605829e-05,
+      "frame": [
+        194.18233133971293,
+        229.428,
+        162.64892344497608,
+        289.0
+      ],
+      "aspectError": 0.0,
+      "cordInside": true,
+      "cornerTransparent": true,
+      "passed": true
+    }
+  ],
+  "outfitFallback": {
+    "usesArtwork": false,
+    "rotation": -1.0,
+    "passed": true
+  },
+  "warnings": [],
+  "passed": false
+}

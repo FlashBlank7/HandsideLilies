@@ -63,6 +63,7 @@ from .core.orchestration import (
 )
 from .core.permissions import PermissionBroker, PermissionMode
 from .core.pet_habitat import PetHabitatController
+from .core.pet_snap import logical_host
 from .core.productivity import (
     BoxWorldService,
     EventOutbox,
@@ -1855,7 +1856,7 @@ class Backend(QObject):
             # pet's manual-detach scope.  Keep the last external HabitatHost
             # intact while the person types in chat/settings instead of
             # reattaching fifteen seconds after that panel closes.
-            self.pet_habitat.update_foreground(active)
+            self.pet_habitat.update_foreground(self._logical_habitat_host(active))
         self._reconcile_presence_from_catalog(active)
         if groups_changed:
             self.windowGroupsChanged.emit()
@@ -3503,6 +3504,42 @@ class Backend(QObject):
         self._habitat_status = self.pet_habitat.status()
         self.habitatChanged.emit()
 
+    @staticmethod
+    def _logical_habitat_host(value: dict | None) -> dict | None:
+        if value is None:
+            return None
+        screens = []
+        for screen in QGuiApplication.screens():
+            geometry = screen.geometry()
+            screens.append(dict(left=geometry.x(),top=geometry.y(),
+                                width=geometry.width(),height=geometry.height(),
+                                dpr=screen.devicePixelRatio()))
+        return logical_host(value, screens)
+
+    @Slot('QVariantMap', result=bool)
+    def finishPetPlacement(self, placement: dict) -> bool:
+        """Called once after the native drag loop, using cached host geometry."""
+        from .core.window_catalog import WindowRect
+        keys = ('x','y','width','height','figureLeft','figureTop','figureWidth','figureHeight')
+        try:
+            values = {key: float(placement[key]) for key in keys}
+            if not all(math.isfinite(v) and abs(v)<1e7 for v in values.values()):
+                return False
+            if min(values[key] for key in ('width','height','figureWidth','figureHeight')) <= 0:
+                return False
+        except (KeyError,TypeError,ValueError):
+            return False
+        left=values['x']+values['figureLeft']
+        top=values['y']+values['figureTop']
+        figure=WindowRect(round(left),round(top),round(left+values['figureWidth']),round(top+values['figureHeight']))
+        area=self.screenWorkAreaAt((figure.left+figure.right)/2,(figure.top+figure.bottom)/2)
+        work=WindowRect.from_value(area)
+        if work is None: return False
+        self.pet_habitat.set_pet_size(values['width'],values['height'])
+        snapped=self.pet_habitat.release_near_edge(values['x'],values['y'],figure,work)
+        self._sync_habitat_state()
+        return snapped
+
     @Slot()
     def refreshSystemStatus(self) -> None:
         self._system_status = system_status()
@@ -3923,12 +3960,20 @@ class Backend(QObject):
         try:
             self.shell.ensure_recovery_monitor()
             self._desktop_peek_status = self.desktop_peek.toggle()
-            if self._desktop_peek_status.get("active"):
+            if "restored" in self._desktop_peek_status:
+                count = int(self._desktop_peek_status.get("restored", 0))
+                failed = int(self._desktop_peek_status.get("failed", 0))
+                if failed:
+                    self._set_status(f"已恢复 {count} 个窗口 · 还有 {failed} 个待重试")
+                else:
+                    self._set_status(f"已返回工作 · 恢复 {count} 个窗口")
+            elif self._desktop_peek_status.get("active"):
                 count = int(self._desktop_peek_status.get("minimized", 0))
                 self._set_status(f"已临时收起 {count} 个窗口 · 再按一次返回工作")
+            elif self._desktop_peek_status.get("failed"):
+                self._set_status("窗口没有收起，Windows 拒绝了请求；可以再试一次")
             else:
-                count = int(self._desktop_peek_status.get("restored", 0))
-                self._set_status(f"已返回工作 · 恢复 {count} 个窗口")
+                self._set_status("当前没有需要收起的窗口")
         except (OSError, RuntimeError, ValueError) as exc:
             self._desktop_peek_status = self.desktop_peek.status()
             self._desktop_peek_status["error"] = str(exc)

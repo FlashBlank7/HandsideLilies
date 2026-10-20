@@ -108,6 +108,8 @@ def main() -> int:
 
         backend.setChatOpen(True)
         chat_window.setProperty("page", 3)
+        companion_navigation = _required(root, QQuickItem, "companionNavigation")
+        companion_navigation.setProperty("section", "frequency")
         chat_window.show()
         app.processEvents()
         frequency.setProperty("currentIndex", 4)
@@ -119,22 +121,30 @@ def main() -> int:
         companion_content = float(companion_scroll.property("contentWidth") or 0.0)
         companion_rects = {
             str(item.objectName()): _rect_in(item, companion_scroll)
-            for item in companion_targets
+            for item in companion_targets[:4]
         }
+        companion_navigation.setProperty("section", "observation")
+        QTest.qWait(40)
+        companion_rects.update({str(item.objectName()): _rect_in(item, companion_scroll)
+                                for item in companion_targets[4:]})
         companion_inside = all(
             rect[0] >= -1.0 and rect[2] <= companion_available + 1.0
             for rect in companion_rects.values()
         )
 
         chat_window.setProperty("page", 4)
+        navigation = _required(root, QQuickItem, "settingsNavigation")
+        navigation.setProperty("section", "desktop")
         QTest.qWait(40)
         app.processEvents()
         main_available = float(main_scroll.property("availableWidth") or 0.0)
         main_content = float(main_scroll.property("contentWidth") or 0.0)
         main_rects = {
             "compactDesktopShellToggle": _rect_in(desktop_toggle, main_scroll),
-            "modelFallbackDescription": _rect_in(wrapped_model_label, main_scroll),
         }
+        navigation.setProperty("section", "model")
+        QTest.qWait(40)
+        main_rects["modelFallbackDescription"] = _rect_in(wrapped_model_label, main_scroll)
         main_inside = all(
             rect[0] >= -1.0 and rect[2] <= main_available + 1.0
             for rect in main_rects.values()

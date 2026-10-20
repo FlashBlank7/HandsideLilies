@@ -248,7 +248,7 @@ class DesktopPeekService:
             )
 
         if not entries:
-            return {"active": False, "minimized": 0, "skipped": len(handles)}
+            return {"active": False, "minimized": 0, "skipped": len(handles), "failed": 0}
 
         transaction = {
             "version": JOURNAL_VERSION,
@@ -282,10 +282,11 @@ class DesktopPeekService:
 
         if not minimized:
             self._clear()
-            return {"active": False, "minimized": 0, "skipped": len(handles)}
+            return {"active": False, "minimized": 0, "skipped": len(handles), "failed": len(entries)}
         return {
             "active": True,
             "minimized": minimized,
+            "failed": len(entries) - minimized,
             "skipped": len(handles) - minimized,
             "transactionId": transaction["transactionId"],
         }

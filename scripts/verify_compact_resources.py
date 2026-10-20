@@ -19,28 +19,18 @@ from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from lilies.app import configure_quick_window_resource_lifecycle
+from lilies.app import (
+    PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOWS,
+    configure_quick_window_resource_lifecycle,
+)
 from lilies.backend import Backend
 from lilies.paths import qml_path
 
 
-EXPECTED_QML_WINDOW_COUNT = 16
-EXPECTED_NAMED_QML_WINDOWS = (
-    "boxWorldSceneWindow",
-    "chatWindow",
-    "companionBubbleWindow",
-    "focusDiversionBubbleWindow",
-    "paperDock",
-    "petWindow",
-    "selectionBubble",
-    "selectionQuestion",
-    "v03AllWindowsDrawer",
-    "v03ConnectorSetup",
-    "v03FocusTimerAura",
-    "v03PaperFoldDock",
-    "v03WindowPreviewShelf",
-    "v03WorkPanel",
-    "windowShelf",
+EXPECTED_QML_WINDOW_COUNT = len(PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOWS)
+EXPECTED_NAMED_QML_WINDOWS = tuple(
+    sorted(name for name in PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOWS
+           if name != "desktopRootWindow")
 )
 
 

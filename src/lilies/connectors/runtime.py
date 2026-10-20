@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Mapping
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from .assistance import (
     AssistanceMaterial,
@@ -588,21 +588,40 @@ class _RuntimeBase:
             (self.connector_id, self.account_id, max(1, min(int(limit), 100))),
         ).fetchall()
         result: list[dict[str, Any]] = []
+        axes = self.axes
         for row in rows:
             metadata = json.loads(row[7] or "{}")
             content: dict[str, Any] = {}
-            if row[6] and self.axes.retention is not RetentionTier.METADATA:
-                entry = self.vault.get(str(row[6]), namespace=self.connector_id)
-                if entry:
-                    try:
-                        content = json.loads(entry.content.decode("utf-8"))
-                    except (UnicodeError, ValueError):
-                        content = {}
+            expected_content_id = f"{self.connector_id}:{self.account_id}:{row[0]}"
+            if row[6] == expected_content_id and axes.retention is not RetentionTier.METADATA:
+                try:
+                    entry = self.vault.get(str(row[6]), namespace=self.connector_id)
+                    if entry and str(entry.metadata.get("remoteId", "")) == str(row[0]):
+                        decoded = json.loads(entry.content.decode("utf-8"))
+                        if isinstance(decoded, dict):
+                            content = decoded
+                except Exception:
+                    # An unavailable vault/item must not advertise usable model
+                    # material or prevent the remaining metadata from rendering.
+                    content = {}
+            if axes.assistance not in {AssistanceMode.ASSIST, AssistanceMode.CONFIRM_EXECUTE}:
+                assistance_state = "policy-disabled"
+            elif axes.retention is RetentionTier.METADATA:
+                assistance_state = "metadata-only"
+            elif not bounded_external_content(content, provider=self.connector_id):
+                assistance_state = "content-unavailable"
+            else:
+                assistance_state = "available"
             result.append(
                 {
+                    **metadata, **content,
                     "id": str(row[0]), "remoteId": str(row[0]), "sourceId": str(row[1]),
                     "occurredAt": str(row[2]), "endAt": str(row[3]), "state": str(row[4]),
-                    "link": str(row[5]), **metadata, **content,
+                    "link": str(row[5]),
+                    # A display receipt, never a capability. issue_assistance
+                    # still revalidates the selected item at the time of use.
+                    # External metadata/content cannot overwrite these fields.
+                    "assistanceState": assistance_state,
                 }
             )
         return result
@@ -1182,15 +1201,10 @@ class SlackRuntime(_RuntimeBase):
         redirect_uri = str(value.get("redirectUri", ""))
         if not redirect_uri:
             raise ValueError("Slack redirect URI must be configured in the custom app")
-        scopes = ["im:history", "channels:history"]
-        if self.axes.scope is not ScopeMode.NECESSARY:
-            scopes.extend(scope for scope in USER_MESSAGE_SCOPES if scope not in scopes)
-        if self.axes.assistance is AssistanceMode.CONFIRM_EXECUTE:
-            scopes.extend(USER_WRITE_SCOPES)
         return self._connector().create_authorization(
             client_id=str(value["clientId"]),
             redirect_uri=redirect_uri,
-            user_scopes=tuple(dict.fromkeys(scopes)),
+            user_scopes=tuple(self._authorization_scopes(self.axes)),
         )
 
     def exchange(self, code: str, authorization: SlackPkceAuthorization) -> dict[str, Any]:
@@ -1242,19 +1256,78 @@ class SlackRuntime(_RuntimeBase):
     def manifest(self) -> dict[str, Any]:
         configuration = self._configuration()
         redirect_uri = str(configuration.get("redirectUri", ""))
+        return self._manifest_for(self.axes, redirect_uri)
+
+    @staticmethod
+    def _authorization_scopes(axes: ConnectorPolicyAxes) -> list[str]:
+        scopes = ["im:history", "channels:history"]
+        if axes.scope is not ScopeMode.NECESSARY:
+            scopes.extend(scope for scope in USER_MESSAGE_SCOPES if scope not in scopes)
+        if axes.assistance is AssistanceMode.CONFIRM_EXECUTE:
+            scopes.extend(USER_WRITE_SCOPES)
+        return list(dict.fromkeys(scopes))
+
+    @staticmethod
+    def _manifest_for(axes: ConnectorPolicyAxes, redirect_uri: str) -> dict[str, Any]:
         manifest = SlackConnector.generate_manifest(
             SlackManifestOptions(
-                include_write_scope=self.axes.assistance is AssistanceMode.CONFIRM_EXECUTE,
+                include_write_scope=axes.assistance is AssistanceMode.CONFIRM_EXECUTE,
                 redirect_urls=(redirect_uri,) if redirect_uri else (),
             )
         )
-        scopes = ["im:history", "channels:history"]
-        if self.axes.scope is not ScopeMode.NECESSARY:
-            scopes.extend(scope for scope in USER_MESSAGE_SCOPES if scope not in scopes)
-        if self.axes.assistance is AssistanceMode.CONFIRM_EXECUTE:
-            scopes.extend(USER_WRITE_SCOPES)
-        manifest["oauth_config"]["scopes"]["user"] = list(dict.fromkeys(scopes))
+        scopes = SlackRuntime._authorization_scopes(axes)
+        manifest["oauth_config"]["scopes"]["user"] = scopes
+        # Subscribing to private/group events without their history scopes
+        # makes the necessary-scope bootstrap invalid. Do not add permissions
+        # just to satisfy an over-broad event list.
+        manifest["settings"]["event_subscriptions"]["user_events"] = [
+            event for event in manifest["settings"]["event_subscriptions"]["user_events"]
+            if event.removeprefix("message.") + ":history" in scopes
+        ]
         return manifest
+
+    @staticmethod
+    def preview_manifest(value: Mapping[str, Any]) -> dict[str, Any]:
+        """Pure, pre-account preview: no runtime, policy writes or credentials.
+
+        Only manifest-affecting draft fields cross this boundary. In particular
+        this is NOT configure(), an authorization or a token validation step.
+        """
+        if not isinstance(value, Mapping) or set(value) - {"policy", "redirectUri"}:
+            raise ValueError("配置预览只接受信息范围、协助档位与本机回调地址")
+        policy = value.get("policy", {})
+        if not isinstance(policy, Mapping) or set(policy) - {"scope", "assistance"}:
+            raise ValueError("配置预览的权限格式不正确")
+        if any(not isinstance(item, str) for item in policy.values()):
+            raise ValueError("请选择有效的信息范围与协助档位")
+        try:
+            axes = ConnectorPolicyAxes.from_mapping(policy)
+        except (TypeError, ValueError):
+            raise ValueError("请选择有效的信息范围与协助档位") from None
+        redirect = value.get("redirectUri", "")
+        if not isinstance(redirect, str) or len(redirect) > 512:
+            raise ValueError("本机回调地址格式不正确")
+        # Match the currently supported local receiver, not arbitrary remote
+        # URLs or custom URI schemes which this application cannot receive.
+        if redirect:
+            try:
+                parsed = urlparse(redirect)
+                valid = (
+                    redirect == redirect.strip()
+                    and not any(ord(char) < 33 or ord(char) == 127 for char in redirect)
+                    and parsed.scheme == "http"
+                    and parsed.hostname == "127.0.0.1"
+                    and parsed.port is not None and 1 <= parsed.port <= 65535
+                    and parsed.username is None and parsed.password is None
+                    and not parsed.query and not parsed.fragment and not parsed.params
+                    and parsed.path.startswith("/")
+                    and "\\" not in redirect
+                )
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError("请使用带固定端口的 http://127.0.0.1 本机回调地址，不含参数或片段")
+        return SlackRuntime._manifest_for(axes, redirect)
 
     def socket_url(self) -> str:
         return self._connector().request_socket_url()

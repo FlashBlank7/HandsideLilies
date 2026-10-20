@@ -75,7 +75,9 @@ def test_companion_bubbles_high_dpi_layout_placement_and_focus() -> None:
         "companionCategoryLabel": "科普",
         "companionDetailButton": "详细点",
         "companionReplyButton": "回复",
-        "companionSceneLabel": "· 高 DPI 桌面",
+        # A staged local capture is not proof that the model saw an image.
+        # This legacy fixture intentionally contains no generation receipt.
+        "companionSceneLabel": "依据未记录",
         "companionSourceLabel": "起始来源 · 本地验证来源 · 2026-08-29",
     }
     assert outcome["busyLayout"] == {

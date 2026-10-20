@@ -15,4 +15,9 @@ if (-not (Test-Path -LiteralPath $Python)) {
 }
 $env:PYTHONPATH = Join-Path $ProjectRoot 'src'
 & $Python -m lilies --restore
-Write-Host 'Windows desktop and taskbar restore request completed.'
+$restoreExitCode = $LASTEXITCODE
+if ($restoreExitCode -ne 0) {
+    Write-Error 'Windows recovery could not be verified. The backup and pending window journal are retained; no successful recovery is claimed.' -ErrorAction Continue
+    exit $restoreExitCode
+}
+Write-Host 'Windows recovery state verified (window visibility, login shell, and pending desktop-peek journal).'

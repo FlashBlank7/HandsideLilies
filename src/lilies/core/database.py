@@ -824,6 +824,106 @@ class Database:
             self._apply_audit_result_migration(db)
             self._apply_audit_privacy_migration(db)
             self._apply_proactive_provenance_migration(db)
+            self._apply_chat_revision_migration(db)
+            self._apply_paper_notebook_migration(db)
+            self._apply_work_resumption_migration(db)
+            self._apply_shared_world_migration(db)
+
+    @staticmethod
+    def _apply_shared_world_migration(db: sqlite3.Connection) -> None:
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM schema_migrations WHERE version=10").fetchone():
+                db.execute("""CREATE TABLE world_records (
+                    record_id TEXT PRIMARY KEY,
+                    shelf TEXT NOT NULL CHECK(shelf IN ('papers','letters','projects')),
+                    source_id TEXT NOT NULL,
+                    source_hash TEXT NOT NULL DEFAULT '',
+                    occurred_at TEXT NOT NULL,
+                    saved_at TEXT NOT NULL,
+                    visibility TEXT NOT NULL DEFAULT 'visible' CHECK(visibility IN ('visible','hidden','removed')),
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(shelf,source_id,source_hash)
+                )""")
+                db.execute("CREATE INDEX world_record_shelf ON world_records(shelf,visibility,occurred_at DESC)")
+                db.execute("INSERT INTO schema_migrations VALUES(10,?,?)", ("source-linked-shared-world", utc_now()))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+    @staticmethod
+    def _apply_work_resumption_migration(db: sqlite3.Connection) -> None:
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM schema_migrations WHERE version=9").fetchone():
+                db.execute("""CREATE TABLE work_resumptions (
+                    record_id TEXT PRIMARY KEY, title TEXT NOT NULL,
+                    task_id TEXT NOT NULL DEFAULT '', task_title TEXT NOT NULL DEFAULT '',
+                    next_step TEXT NOT NULL, payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL, resumed_at TEXT
+                )""")
+                db.execute("CREATE INDEX work_resumption_recent ON work_resumptions(created_at)")
+                db.execute("""CREATE TABLE work_resumption_runs (
+                    run_id TEXT PRIMARY KEY, record_id TEXT REFERENCES work_resumptions(record_id) ON DELETE SET NULL,
+                    started_at TEXT NOT NULL, finished_at TEXT, result_json TEXT
+                )""")
+                db.execute("INSERT INTO schema_migrations VALUES(9,?,?)", ("explicit-work-resumption", utc_now()))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+    @staticmethod
+    def _apply_paper_notebook_migration(db: sqlite3.Connection) -> None:
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM schema_migrations WHERE version=8").fetchone():
+                db.execute("""CREATE TABLE papers (
+                    paper_id TEXT PRIMARY KEY, title TEXT NOT NULL,
+                    source_uri TEXT NOT NULL UNIQUE, source_kind TEXT NOT NULL,
+                    last_page INTEGER NOT NULL DEFAULT 1 CHECK(last_page BETWEEN 1 AND 100000),
+                    locator TEXT NOT NULL DEFAULT '', next_step TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                )""")
+                db.execute("""CREATE TABLE paper_annotations (
+                    card_id TEXT PRIMARY KEY REFERENCES reading_cards(card_id) ON DELETE CASCADE,
+                    paper_id TEXT NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
+                    page INTEGER NOT NULL CHECK(page BETWEEN 1 AND 100000),
+                    locator TEXT NOT NULL DEFAULT '', source_uri TEXT NOT NULL,
+                    mark TEXT NOT NULL DEFAULT 'unmarked'
+                        CHECK(mark IN ('unmarked','understood','question','citation')),
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                )""")
+                db.execute("CREATE INDEX paper_annotation_lookup ON paper_annotations(paper_id,updated_at)")
+                db.execute("INSERT INTO schema_migrations VALUES(8,?,?)", ("explicit-paper-notebook", utc_now()))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+    @staticmethod
+    def _apply_chat_revision_migration(db: sqlite3.Connection) -> None:
+        """Archive replaced replies without duplicating turns or indexing drafts."""
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM schema_migrations WHERE version=7").fetchone():
+                db.execute("""CREATE TABLE message_revisions (
+                    revision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    archived_at TEXT NOT NULL,
+                    FOREIGN KEY(message_id) REFERENCES messages(message_id) ON DELETE CASCADE
+                )""")
+                db.execute("CREATE INDEX message_revision_lookup ON message_revisions(message_id,revision_id)")
+                db.execute("CREATE INDEX IF NOT EXISTS conversation_messages_lookup ON messages(conversation_id,created_at)")
+                db.execute("INSERT INTO schema_migrations VALUES(7,?,?)",
+                           ("conversation-reply-revisions", utc_now()))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
     @staticmethod
     def _apply_productivity_migration(db: sqlite3.Connection) -> None:
@@ -1114,14 +1214,15 @@ class Database:
                 created_at=str(row["created_at"]),
             )
         for row in db.execute(
-            "SELECT card_id,title,source_text,answer,question,created_at FROM reading_cards"
+            "SELECT card_id,kind,title,source_text,answer,question,created_at FROM reading_cards"
         ).fetchall():
             if db.execute(
                 "SELECT 1 FROM memory_fragments WHERE source_type='reading-card' AND source_id=?",
                 (row["card_id"],),
             ).fetchone():
                 continue
-            content = f"{row['title']}。原文：{row['source_text']}。莉莉丝的说明：{row['answer']}"
+            content = (f"用户留下的问题：{row['source_text']}" if row["kind"] == "question-note"
+                       else f"{row['title']}。原文：{row['source_text']}。莉莉丝的说明：{row['answer']}")
             if row["question"]:
                 content += f"。追问：{row['question']}"
             self._upsert_memory_fragment(
@@ -1389,11 +1490,93 @@ class Database:
     def recent_messages(self, conversation_id: str, limit: int = 24) -> list[dict[str, Any]]:
         with self.connect() as db:
             rows = db.execute(
-                """SELECT role,content,metadata_json,created_at FROM messages
-                   WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?""",
+                """SELECT message_id,role,content,metadata_json,created_at FROM messages
+                   WHERE conversation_id=? ORDER BY rowid DESC LIMIT ?""",
                 (conversation_id, limit),
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
+
+    def conversation_page(
+        self, conversation_id: str, *, anchor: str = "", before: int = 0,
+        after: int = 0, limit: int = 80,
+    ) -> dict[str, Any]:
+        """Bounded history browsing; an explicit anchor must belong to this chat.
+
+        Rowids order insertion consistently, including equal timestamps and
+        wall-clock changes. Cursors are scoped to the selected conversation.
+        """
+        size = max(10, min(int(limit), 200))
+        if sum(bool(v) for v in (anchor, before, after)) > 1:
+            raise ValueError("只能指定一个对话位置")
+        with self.connect() as db:
+            conversation = db.execute("SELECT * FROM conversations WHERE conversation_id=?",
+                                      (conversation_id,)).fetchone()
+            if conversation is None:
+                raise KeyError("这段对话已不存在")
+            base = "SELECT rowid AS cursor,* FROM messages WHERE conversation_id=?"
+            if anchor:
+                pivot = db.execute(base + " AND message_id=?", (conversation_id, anchor)).fetchone()
+                if pivot is None:
+                    raise KeyError("这句话已不存在，或不属于这段对话")
+                left = db.execute(base + " AND rowid<? ORDER BY rowid DESC LIMIT ?",
+                                  (conversation_id, pivot["cursor"], size // 2)).fetchall()
+                right = db.execute(base + " AND rowid>=? ORDER BY rowid LIMIT ?",
+                                   (conversation_id, pivot["cursor"], size - len(left))).fetchall()
+                rows = list(reversed(left)) + list(right)
+            elif after:
+                rows = db.execute(base + " AND rowid>? ORDER BY rowid LIMIT ?",
+                                  (conversation_id, int(after), size)).fetchall()
+            else:
+                clause = " AND rowid<?" if before else ""
+                arguments = (conversation_id, int(before), size) if before else (conversation_id, size)
+                rows = list(reversed(db.execute(base + clause + " ORDER BY rowid DESC LIMIT ?", arguments).fetchall()))
+            first = int(rows[0]["cursor"]) if rows else 0
+            last = int(rows[-1]["cursor"]) if rows else 0
+            return {
+                "conversationId": conversation_id, "title": conversation["title"],
+                "messages": [dict(row) for row in rows],
+                "before": first, "after": last,
+                "hasOlder": bool(first and db.execute(base + " AND rowid<? LIMIT 1", (conversation_id, first)).fetchone()),
+                "hasNewer": bool(last and db.execute(base + " AND rowid>? LIMIT 1", (conversation_id, last)).fetchone()),
+                "anchorIndex": next((i for i, row in enumerate(rows) if row["message_id"] == anchor), -1),
+            }
+
+    def replace_assistant_reply(self, message_id: str, expected_content: str, content: str) -> None:
+        """Commit a successful retry atomically; cancelled/failed drafts never call this."""
+        if not content.strip():
+            raise ValueError("回答不能为空")
+        now = utc_now()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM messages WHERE message_id=? AND role='assistant'", (message_id,)).fetchone()
+            if row is None or row["content"] != expected_content:
+                raise ValueError("原回答已经变化，请重新打开对话")
+            db.execute("INSERT INTO message_revisions(message_id,content,metadata_json,archived_at) VALUES(?,?,?,?)",
+                       (message_id, row["content"], row["metadata_json"], now))
+            db.execute("UPDATE messages SET content=? WHERE message_id=?", (content, message_id))
+            fragment = db.execute("SELECT * FROM memory_fragments WHERE source_type='message' AND source_id=?", (message_id,)).fetchone()
+            self._upsert_memory_fragment(
+                db, source_type="message", source_id=message_id, role="assistant",
+                conversation_id=row["conversation_id"], content=content,
+                enabled=bool(fragment["enabled"]) if fragment else True,
+                importance=0.35, created_at=row["created_at"],
+            )
+            if fragment:
+                # Old summaries must not keep a superseded reply in model context.
+                partition = str(fragment["partition_id"])
+                summaries = db.execute("""SELECT summary FROM memory_fragments
+                    WHERE partition_id=? AND enabled=1 AND forgotten=0 AND summary!=''
+                    ORDER BY importance DESC,updated_at DESC LIMIT 4""", (partition,)).fetchall()
+                db.execute("UPDATE memory_partitions SET summary=?,updated_at=? WHERE partition_id=?",
+                           ("；".join(str(v["summary"])[:180] for v in summaries), now, partition))
+            db.execute("UPDATE conversations SET updated_at=? WHERE conversation_id=?", (now, row["conversation_id"]))
+
+    def reply_revisions(self, message_id: str) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT revision_id,content,archived_at FROM message_revisions WHERE message_id=? ORDER BY revision_id DESC",
+                (message_id,),
+            ).fetchall()]
 
     def search_messages(self, query: str, limit: int = 40) -> list[dict[str, Any]]:
         needle = query.strip()
@@ -1524,12 +1707,13 @@ class Database:
         title: str = "",
         metadata: dict[str, Any] | None = None,
         card_id: str | None = None,
+        paper_context: Mapping[str, Any] | None = None,
     ) -> str:
         source = str(source_text).strip()
         response = str(answer).strip()
-        if not source or not response:
-            raise ValueError("论文卡片需要原文和回答")
         card_kind = str(kind).strip().casefold() or "explain"
+        if not source or (not response and card_kind != "question-note"):
+            raise ValueError("论文卡片需要原文和回答")
         value = card_id or uuid.uuid4().hex
         now = utc_now()
         card_title = str(title).strip()
@@ -1537,6 +1721,23 @@ class Database:
             compact = " ".join(source.split())
             card_title = compact[:72] + ("…" if len(compact) > 72 else "")
         with self.connect() as db:
+            context = dict(paper_context or {})
+            paper = None
+            if context:
+                paper = db.execute("SELECT * FROM papers WHERE paper_id=? AND source_uri=?",
+                                   (context.get("paperId"), context.get("sourceUri"))).fetchone()
+                if paper is None:
+                    raise ValueError("原论文记录已经变化，未保存这张卡片，请重新选择出处")
+                page = context.get("page", 1)
+                if isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= 100000:
+                    raise ValueError("页码超出范围")
+                previous = db.execute("SELECT * FROM paper_annotations WHERE card_id=?", (value,)).fetchone()
+                if previous is not None and (
+                    previous["paper_id"] != paper["paper_id"] or previous["page"] != page
+                    or previous["source_uri"] != paper["source_uri"]
+                    or previous["locator"] != str(context.get("locator", ""))[:200]
+                ):
+                    raise ValueError("已保存卡片的出处不能被另一段选区覆盖")
             db.execute(
                 """INSERT INTO reading_cards
                    (card_id,kind,title,source_text,answer,question,metadata_json,created_at,updated_at)
@@ -1557,7 +1758,15 @@ class Database:
                     now,
                 ),
             )
-            index_content = f"{card_title}。原文：{source}。莉莉丝的说明：{response}"
+            if paper is not None:
+                db.execute("""INSERT INTO paper_annotations
+                    (card_id,paper_id,page,locator,source_uri,mark,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?)
+                    ON CONFLICT(card_id) DO NOTHING""",
+                    (value, paper["paper_id"], page, str(context.get("locator", ""))[:200],
+                     paper["source_uri"], "question" if card_kind == "question-note" else "unmarked", now, now))
+            index_content = (f"用户留下的问题：{source}" if card_kind == "question-note"
+                             else f"{card_title}。原文：{source}。莉莉丝的说明：{response}")
             if question:
                 index_content += f"。追问：{str(question).strip()}"
             self._upsert_memory_fragment(

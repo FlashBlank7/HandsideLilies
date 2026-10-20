@@ -265,6 +265,8 @@ def main() -> int:
         # A bubble's "mute this app" action must have a visible, title-free
         # undo path.  Exercise the shipped delegates and their real onClicked
         # handlers; only the synthetic process identity may reach the row.
+        root.findChild(QQuickItem, "companionNavigation").setProperty("section", "observation")
+        QTest.qWait(50)
         policy_empty_initial = bool(application_policy_empty.isVisible())
         companion.setPolicy("wps.exe", "blocked")
         policy_row_created = wait_for(

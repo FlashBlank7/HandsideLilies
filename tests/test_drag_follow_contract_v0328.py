@@ -35,7 +35,7 @@ def test_direct_character_drag_uses_the_atomic_window_position_bridge() -> None:
     assert "self.root.setPosition(target)" in app_source
 
 
-def test_high_rate_pointer_events_are_coalesced_to_one_move_per_drag_frame() -> None:
+def test_high_rate_pointer_events_are_coalesced_without_waiting_for_a_frame() -> None:
     source = _main_source()
     event_start = source.index("function followPointerEvent(")
     event_end = source.index("function followPendingPointerEvent(", event_start)
@@ -45,6 +45,8 @@ def test_high_rate_pointer_events_are_coalesced_to_one_move_per_drag_frame() -> 
     frame_handler = source[frame_start:frame_end]
 
     assert "dragPointerEventPending = true" in event_handler
+    assert "if (!pointerFlushQueued)" in event_handler
+    assert "Qt.callLater(flushQueuedPointerEvent)" in event_handler
     assert "followPointerAt(" not in event_handler
     assert "if (followPendingPointerEventInternal(true))" in frame_handler
     assert "followCapturedPointerEventInternal(true)" in frame_handler
@@ -241,9 +243,9 @@ def test_local_drag_release_flushes_before_persistence_and_unlock() -> None:
         assert active_handler.index("flushPendingTranslation()") < active_handler.index(
             finalizer
         )
-        assert active_handler.index("flushPendingTranslation()") < active_handler.rindex(
-            "setPetInteractionLock("
-        )
+        release = ("finishGestureOwnership(false)" if handler_id == "componentMoveDrag"
+                   else "setPetInteractionLock(")
+        assert active_handler.index("flushPendingTranslation()") < active_handler.rindex(release)
 
 
 def test_grid_packed_actions_do_not_accept_or_save_right_drag_layouts() -> None:
@@ -256,7 +258,9 @@ def test_grid_packed_actions_do_not_accept_or_save_right_drag_layouts() -> None:
     active_handler = handler[active_start:active_end]
 
     assert "enabled: !compactWindow.actionGridMode" in handler
-    guard = active_handler.index("if (!compactWindow.actionGridMode)")
+    guard = active_handler.index("var shouldSave = !compactWindow.actionGridMode")
+    assert guard < active_handler.index("finishGestureOwnership(false)")
+    assert active_handler.index("if (shouldSave)") < active_handler.index("backend.saveComponentLayout(")
     save = active_handler.index("backend.saveComponentLayout(")
     assert guard < save
 

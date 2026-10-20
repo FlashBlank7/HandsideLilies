@@ -92,27 +92,26 @@ def test_every_baked_pose_declares_truthful_outfit_artwork_policy() -> None:
     assert fallback_count >= 9
 
 
-def test_visual_alias_dress_gets_the_same_baked_pose_coverage() -> None:
-    """An exact artwork alias must not silently fall back to the standing pose.
+def test_independent_summer_dress_never_silently_changes_to_baked_old_clothes() -> None:
+    """The new cotton dress remains equipped in every compatible pose.
 
-    ``summer-cotton-dress`` currently points at the byte-identical approved
-    first-encounter master.  Every baked first-encounter pose therefore also
-    represents that alias truthfully; keeping it out of ``artworkOutfits``
-    made window perching, edge peeking and the unlocked activity poses appear
-    to do nothing after the user selected the summer dress.
+    Existing baked poses depict first-encounter clothes. Summer uses the
+    layered habitat/activity renderer until matching painted poses exist.
     """
 
     raw = json.loads(THEME_PATH.read_text(encoding="utf-8"))
     assets = raw["assets"]
-    assert assets["desktopPetSummer"] == assets["desktopPet"]
+    assert assets["desktopPetSummer"] != assets["desktopPet"]
 
     theme = ThemeManifest.load(THEME_PATH)
     baked = [bundle for bundle in theme.pose_bundles() if bundle.artwork_asset]
     assert baked
     for bundle in baked:
         assert "first-encounter" in bundle.artwork_outfits
-        assert "summer-cotton-dress" in bundle.artwork_outfits
+        assert "summer-cotton-dress" not in bundle.artwork_outfits
         assert theme.pose_accepts_outfit(bundle.pose_id, "summer-cotton-dress")
+    for variant in raw["character"]["habitatPoseVariants"].values():
+        assert "summer-cotton-dress" not in variant.get("artworkOutfits", [])
 
 
 def test_theme_rejects_pose_artwork_without_outfit_representation(tmp_path: Path) -> None:

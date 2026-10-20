@@ -68,7 +68,7 @@ def test_first_encounter_exposes_visual_tokens_and_character_states():
     project = Path(__file__).resolve().parents[1]
     theme = ThemeManifest.load(project / "themes" / "first-encounter" / "theme.json")
     public = theme.public()
-    assert public["palette"]["surface"] == "#fffdf8"
+    assert public["palette"]["surface"] == "#fafafb"
     assert public["ui"]["language"] == "paper-porcelain"
     assert public["character"]["defaultPose"] == "idle-prayer"
     assert "reading" in public["character"]["poses"]

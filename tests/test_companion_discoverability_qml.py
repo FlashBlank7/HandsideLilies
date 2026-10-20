@@ -25,14 +25,13 @@ def test_unread_companion_has_a_persistent_pet_level_recovery_target() -> None:
 def test_companion_page_exposes_two_distinct_modes_and_safe_manual_try() -> None:
     source = _main_qml()
     assert 'objectName: "companionRunModeLabel"' in source
-    assert 'text: "主动陪伴运行模式"' in source
+    assert 'text: "日常陪伴"' in source
     assert 'objectName: "companionSmartObservationStatusLabel"' in source
     assert 'text: "智能屏幕理解"' in source
     assert '? "已授权" : "未授权"' in source
-    assert '"生成一条场景陪伴"' in source
-    assert "这是只使用当前应用类别的场景级生成" in source
-    assert "不截图，也不是截图能力测试" in source
-    assert "仍会遵守暂停与敏感窗口静默" in source
+    assert '"来聊一句"' in source
+    assert "只看应用类别，不截图" in source
+    assert "暂停或敏感界面下不会出现" in source
 
     authorize_start = source.index(
         'objectName: "companionSmartObservationAuthorizeButton"'
@@ -86,9 +85,10 @@ def test_one_shot_screen_observation_hides_chat_before_guarded_dispatch() -> Non
 
 def test_one_shot_screen_observation_copy_promises_no_generic_fallback() -> None:
     source = _main_qml()
-    assert "只截取一次当前的非浏览器活动窗口" in source
-    assert "就直接失败，绝不退回泛化文字" in source
-    assert "约 350 毫秒后再观察，让原应用恢复前台" in source
+    assert "只观察当前的非浏览器窗口" in source
+    assert "检查不通过时不发送" in source
+    assert "不用泛化文字冒充观察结果" in source
+    assert "约 350 毫秒后让原应用恢复前台" in source
     assert "单次窗口观察会直接失败，不生成泛化文字" in source
 
 

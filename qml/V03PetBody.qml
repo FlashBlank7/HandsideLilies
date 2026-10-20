@@ -10,7 +10,21 @@ Item {
     property string pose: "idle-prayer"
     property bool paused: false
     property bool lowPower: false
+    readonly property point continuousMotionDirection: {
+        var pulse = appBackend ? (appBackend.inputPulse || ({})) : ({})
+        var directions = {
+            "north": [0, -1], "north-east": [0.707, -0.707],
+            "east": [1, 0], "south-east": [0.707, 0.707],
+            "south": [0, 1], "south-west": [-0.707, 0.707],
+            "west": [-1, 0], "north-west": [-0.707, -0.707]
+        }
+        var d = directions[String(pulse.cursorDirection || "none")] || [0, 0]
+        return Qt.point(d[0], d[1])
+    }
     property bool inputEnabled: true
+    property string quietActivity: "idle"
+    property var reactionEvent: ({})
+    property bool quietSuppressed: false
     // A manual drag changes from a host-edge silhouette to the free-standing
     // silhouette.  During that gesture the exact grabbed pixels must stay
     // under the pointer, so habitat-driven geometry changes snap once instead
@@ -196,11 +210,12 @@ Item {
     property real renderedPoseArtworkRatio: poseArtworkAspectRatio
     property real renderedPoseCordAnchorX: poseArtworkCordAnchor.x
     property real renderedPoseCordAnchorY: poseArtworkCordAnchor.y
-    // Kept public so the off-screen gate can prove the regional silhouette is
-    // distinct even with whole-frame rotation neutralised.
+    // Kept public for geometry diagnostics. Large pose changes use complete
+    // artwork; the intact fallback must never be rotated to fake lying down.
     property real layeredBodyRotationMultiplier: 1.0
     readonly property real layeredPoseRotation: (poseRotation
-                                                   + variantBodyRotation
+                                                   + (usesProceduralLayeredFallback
+                                                      ? variantBodyRotation : 0.0)
                                                    * (variantLayeredSideAware
                                                       ? habitatSideSign : 1.0))
                                                   * layeredBodyRotationMultiplier
@@ -231,6 +246,7 @@ Item {
     property real renderedVariantHeadClipEnd: variantHeadClipEnd
     property real renderedVariantTorsoClipEnd: variantTorsoClipEnd
     readonly property bool poseTransitionRunning: presentationTransition.running
+                                                   || quietMotion.animating
                                                    || characterScaleAnimation.running
                                                    || anchorXAnimation.running
                                                    || anchorYAnimation.running
@@ -264,6 +280,7 @@ Item {
     function activeTransitionAnimations() {
         var active = []
         if (presentationTransition.running) active.push("presentation")
+        if (quietMotion.animating) active.push("quiet-response")
         if (characterScaleAnimation.running) active.push("character-scale")
         if (anchorXAnimation.running) active.push("anchor-x")
         if (anchorYAnimation.running) active.push("anchor-y")
@@ -533,7 +550,7 @@ Item {
     // Outfit canvases share anchor contract v2.  Preserve each source's exact
     // aspect ratio, then align its solid-alpha subject inside the stable
     // figure frame.  The frame, rope endpoints and native hit bounds do not
-    // jump when clothes change; all three breathing slices receive the same
+    // jump when clothes change; the intact continuous mesh receives the same
     // image-space offset.
     readonly property int outfitAnchorVersion: 2
     readonly property real outfitArtworkAspectRatio: {
@@ -558,7 +575,7 @@ Item {
     }
     readonly property real outfitFeetY: {
         switch (outfitAssetKey) {
-        case "desktopPetSummer": return 1599.0 / 1672.0
+        case "desktopPetSummer": return 1602.0 / 1672.0
         case "desktopPetHome": return 1607.0 / 1672.0
         case "desktopPetReading": return 1646.0 / 1672.0
         case "desktopPetFocus": return 1595.0 / 1666.0
@@ -617,6 +634,7 @@ Item {
     readonly property bool usesOptionalHabitatArtwork: {
         var optionalKey = String(habitatVariantDefinition.optionalArtworkAsset || "")
         return optionalKey !== "" && poseArtworkKey === optionalKey
+                && poseArtworkRepresentsOutfit(outfitId)
     }
     readonly property var poseArtworkDefinition: {
         if (!appBackend)
@@ -686,7 +704,7 @@ Item {
                 ? Qt.point(anchorX, anchorY) : Qt.point(0.5, 0.5)
     }
     readonly property point optionalPoseArtworkAnchor: Qt.point(
-        variantArtworkSideAware && habitatMirror
+        habitatMirror
         ? 1.0 - poseArtworkAnchor.x : poseArtworkAnchor.x,
         poseArtworkAnchor.y)
     readonly property point poseArtworkCordAnchor: {
@@ -698,8 +716,7 @@ Item {
         var anchorY = Number(values[1])
         if (!isFinite(anchorX) || !isFinite(anchorY))
             return Qt.point(outfitSupportCordX, outfitSupportCordY)
-        if (usesOptionalHabitatArtwork
-                && variantArtworkSideAware && habitatMirror)
+        if (usesOptionalHabitatArtwork && habitatMirror)
             anchorX = 1.0 - anchorX
         return Qt.point(anchorX, anchorY)
     }
@@ -892,11 +909,11 @@ Item {
         if (manifestRatio > 0.0)
             return manifestRatio
         switch (poseArtworkKey) {
-        case "poseMicroCornerGripV1": return 1536.0 / 1536.0
-        case "poseWindowProneV2": return 1536.0 / 1024.0
-        case "poseWindowDangleV1": return 1280.0 / 1536.0
-        case "poseWideWindowSprawlV1": return 2048.0 / 1024.0
-        case "poseEdgeLeanV1": return 1024.0 / 2048.0
+        case "poseMicroCornerGripV1": return 941.0 / 1672.0
+        case "poseWindowProneV2": return 1254.0 / 1254.0
+        case "poseWindowDangleV1": return 941.0 / 1672.0
+        case "poseWideWindowSprawlV1": return 1774.0 / 887.0
+        case "poseEdgeLeanV1": return 941.0 / 1672.0
         case "posePerchProne": return 365.0 / 364.0
         case "poseTitleSit": return 350.0 / 592.0
         case "poseEdgePeek": return 227.0 / 620.0
@@ -936,6 +953,13 @@ Item {
                 + artworkSupportCordPoint.x * artworkWeight,
             layeredSupportCordPoint.y * (1.0 - artworkWeight)
                 + artworkSupportCordPoint.y * artworkWeight)
+    }
+    readonly property point notebookGripPoint: {
+        var tracking = figureFrame.x + figureFrame.y + figureFrame.width + figureFrame.height
+                     + renderedLayeredBodyRotation + renderedArtworkBlend
+        var layered = figureFrame.mapToItem(root, figureFrame.width * 0.50, figureFrame.height * 0.46)
+        return Qt.point(layered.x * (1 - renderedArtworkBlend) + artworkSupportCordPoint.x * renderedArtworkBlend,
+                        layered.y * (1 - renderedArtworkBlend) + artworkSupportCordPoint.y * renderedArtworkBlend)
     }
     readonly property bool characterHovered: characterPointer.containsMouse
     readonly property bool characterPressed: characterPointer.pressed
@@ -1067,6 +1091,7 @@ Item {
         var biasSign = variantArtworkSideAware ? habitatSideSign : 1.0
         return baseRotation * variantArtworkMotionGain
              + variantArtworkRotationBias * biasSign
+             + quietMotion.artworkResponse
     }
     // A baked bitmap cannot breathe by stretching as a whole without making
     // the head, feet and contact edge rubbery.  Keep these public transform
@@ -1402,6 +1427,18 @@ Item {
         root.characterReleased(moved)
         if (!moved)
             root.characterClicked()
+    }
+
+    QuietPetMotion {
+        id: quietMotion
+        anchors.fill: parent; z: 5
+        activity: root.quietActivity
+        reaction: root.reactionEvent
+        motionAllowed: root.animationRunning && !root.interactionSnap && !root.geometryFrozenForInteraction
+        suppressed: root.quietSuppressed
+        readingArtwork: root.pose === "reading" && root.usesPoseArtwork && root.renderedArtworkBlend > 0.99
+        figure: Qt.rect(root.figureLeft, root.figureTop, root.figureWidth, root.figureHeight)
+        grip: root.notebookGripPoint
     }
 
     Timer {
@@ -2179,6 +2216,10 @@ Item {
                                  * root.renderedFallbackPoseHeightFactor,
             root.width / root.outfitArtworkAspectRatio
         )
+        // Slight overlapping source bands keep small local nods/breaths from
+        // opening hard transparent seams through the hair or dress. Image
+        // offsets below keep the source aligned in the neutral pose.
+        readonly property real seamOverlap: Math.max(2, Math.min(8, height * 0.02))
         width: fittedHeight * root.outfitArtworkAspectRatio
         height: fittedHeight
         readonly property real fallbackX: (root.width - width) / 2 + root.poseShiftX
@@ -2194,127 +2235,20 @@ Item {
             angle: root.renderedLayeredBodyRotation
         }
 
-        // Each region uses the same high-resolution transparent source but a
-        // different clipping window. Breathing therefore never scales the
-        // complete character bitmap.
-        Item {
-            id: headRegion
-            objectName: "petHairHeadLayer"
-            clip: true
-            x: root.renderedVariantHeadOffsetX * figureFrame.width
-               + Math.sin(root.motionPhase + 0.15) * figureFrame.width * 0.0025
-            y: root.renderedVariantHeadOffsetY * figureFrame.height
-               + Math.sin(root.motionPhase + 0.15) * figureFrame.height * 0.0018
-            width: parent.width
-            height: parent.height * root.renderedVariantHeadClipEnd
-            rotation: root.headPoseRotation + root.renderedVariantHeadRotation
-                      + Math.sin(root.motionPhase + 0.55) * 0.16
-            transformOrigin: Item.Bottom
-            transform: Scale {
-                origin.x: headRegion.width / 2
-                origin.y: headRegion.height
-                xScale: root.renderedVariantHeadScaleX
-                yScale: root.renderedVariantHeadScaleY
-            }
-
-            Image {
-                id: headImage
-                objectName: "petHairHeadImage"
-                x: root.outfitHorizontalOffset * figureFrame.width
-                y: root.outfitVerticalOffset * figureFrame.height
-                width: figureFrame.width
-                height: figureFrame.height
-                source: root.outfitSource
-                mirror: root.habitatMirror
-                fillMode: Image.Stretch
-                smooth: true
-                mipmap: true
-                asynchronous: true
-            }
-        }
-
-        Item {
-            id: shoulderRegion
-            objectName: "petShoulderHandsLayer"
-            clip: true
-            x: root.renderedVariantTorsoOffsetX * parent.width
-               - (width * (torsoBreath.xScale - 1.0)) / 2
-            y: parent.height * (root.renderedVariantHeadClipEnd
-                                + root.renderedVariantTorsoOffsetY)
-               + Math.sin(root.motionPhase + 2.15) * parent.height * 0.0016
-            width: parent.width
-            height: parent.height * (root.renderedVariantTorsoClipEnd
-                                     - root.renderedVariantHeadClipEnd)
-            rotation: root.torsoPoseRotation + root.renderedVariantTorsoRotation
-                      + Math.sin(root.motionPhase + 2.15) * 0.10
-            transformOrigin: Item.Bottom
-            transform: [
-                Scale {
-                    id: torsoBreath
-                    origin.x: shoulderRegion.width / 2
-                    origin.y: shoulderRegion.height
-                    xScale: 1.0 + Math.sin(root.motionPhase + 2.15) * 0.004
-                    yScale: 1.0 + Math.sin(root.motionPhase + 2.15) * 0.0015
-                },
-                Scale {
-                    origin.x: shoulderRegion.width / 2
-                    origin.y: shoulderRegion.height / 2
-                    xScale: root.renderedVariantTorsoScaleX
-                    yScale: root.renderedVariantTorsoScaleY
-                }
-            ]
-
-            Image {
-                objectName: "petShoulderHandsImage"
-                x: root.outfitHorizontalOffset * figureFrame.width
-                y: -figureFrame.height * root.renderedVariantHeadClipEnd
-                   + root.outfitVerticalOffset * figureFrame.height
-                width: figureFrame.width
-                height: figureFrame.height
-                source: root.outfitSource
-                mirror: root.habitatMirror
-                fillMode: Image.Stretch
-                smooth: true
-                mipmap: true
-                asynchronous: true
-            }
-        }
-
-        Item {
-            id: skirtRegion
-            objectName: "petSkirtLayer"
-            clip: true
-            x: root.renderedVariantSkirtOffsetX * parent.width
-               + Math.sin(root.motionPhase + 4.20) * parent.width * 0.0024
-            y: parent.height * (root.renderedVariantTorsoClipEnd
-                                + root.renderedVariantSkirtOffsetY)
-               + Math.sin(root.motionPhase + 4.20) * parent.height * 0.0012
-            width: parent.width
-            height: parent.height * (1.0 - root.renderedVariantTorsoClipEnd)
-            rotation: root.renderedVariantSkirtRotation
-                      + Math.sin(root.motionPhase + 4.20) * 0.13
-            transformOrigin: Item.Top
-            transform: Scale {
-                origin.x: skirtRegion.width / 2
-                origin.y: 0
-                xScale: root.renderedVariantSkirtScaleX
-                yScale: root.renderedVariantSkirtScaleY
-            }
-
-            Image {
-                objectName: "petSkirtImage"
-                x: root.outfitHorizontalOffset * figureFrame.width
-                y: -figureFrame.height * root.renderedVariantTorsoClipEnd
-                   + root.outfitVerticalOffset * figureFrame.height
-                width: figureFrame.width
-                height: figureFrame.height
-                source: root.outfitSource
-                mirror: root.habitatMirror
-                fillMode: Image.Stretch
-                smooth: true
-                mipmap: true
-                asynchronous: true
-            }
+        // A single continuous mesh preserves the complete face and silhouette.
+        // Local breathing is smoothly weighted, not assembled from moving strips.
+        ContinuousPetImage {
+            id: continuousFigure
+            objectName: "petContinuousFigure"
+            x: root.outfitHorizontalOffset * figureFrame.width
+            y: root.outfitVerticalOffset * figureFrame.height
+            width: figureFrame.width
+            height: figureFrame.height
+            source: root.outfitSource
+            mirrored: root.habitatMirror
+            phase: root.motionPhase
+            motionGain: root.paused ? 0 : 1
+            direction: root.continuousMotionDirection
         }
 
         Canvas {
@@ -2350,31 +2284,15 @@ Item {
             function contains(point: point): bool {
                 var nx = point.x / Math.max(1, figureFrame.width)
                 var ny = point.y / Math.max(1, figureFrame.height)
-                var hx = (nx - (0.50 + root.renderedVariantHeadOffsetX))
-                         / (0.42 * root.renderedVariantHeadScaleX)
-                var hy = (ny - (root.renderedVariantHeadClipEnd * 0.56
-                                + root.renderedVariantHeadOffsetY))
-                         / (0.19 * root.renderedVariantHeadScaleY)
+                // Follow the intact outfit, never obsolete clipping offsets.
+                var hx = (nx - 0.50) / 0.45
+                var hy = (ny - 0.215) / 0.225
                 var inHead = hx * hx + hy * hy <= 1.0
-                var torsoMiddle = (root.renderedVariantHeadClipEnd
-                                   + root.renderedVariantTorsoClipEnd) / 2.0
-                var tx = (nx - (0.50 + root.renderedVariantTorsoOffsetX))
-                         / (0.235 * root.renderedVariantTorsoScaleX)
-                var ty = (ny - (torsoMiddle + root.renderedVariantTorsoOffsetY))
-                         / (0.24 * root.renderedVariantTorsoScaleY)
+                var tx = (nx - 0.50) / 0.265
+                var ty = (ny - 0.60) / 0.235
                 var inTorso = tx * tx + ty * ty <= 1.0
-                var skirtTop = root.renderedVariantTorsoClipEnd
-                               + root.renderedVariantSkirtOffsetY
-                var skirtProgress = Math.max(0.0, ny - skirtTop)
-                var skirtHalfWidth = (0.19 + skirtProgress * 0.42)
-                                     * root.renderedVariantSkirtScaleX
-                var inSkirt = ny >= skirtTop
-                              && ny <= Math.min(0.995,
-                                  skirtTop + (1.0 - root.renderedVariantTorsoClipEnd)
-                                  * root.renderedVariantSkirtScaleY)
-                              && Math.abs(nx - (0.50
-                                  + root.renderedVariantSkirtOffsetX)) <= skirtHalfWidth
-                return inHead || inTorso || inSkirt
+                var inLegs = ny >= 0.78 && ny <= 0.985 && nx >= 0.27 && nx <= 0.71
+                return inHead || inTorso || inLegs
             }
         }
 

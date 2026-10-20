@@ -104,6 +104,60 @@ def test_metadata_retention_refuses_assistance(tmp_path):
         runtime.issue_assistance("event-1")
 
 
+@pytest.mark.parametrize("provider", ["calendar", "slack"])
+@pytest.mark.parametrize("retention", ["searchable-summary", "extended-cache"])
+def test_item_availability_is_local_and_does_not_issue_or_send_material(tmp_path, monkeypatch, provider, retention):
+    runtime, transport = runtime_for(tmp_path, provider, retention=retention)
+    content = {"summary": "A review"} if provider == "calendar" else {"text": "A reply"}
+    runtime._store_item(remote_id="one", source_id="source", occurred_at="2026-09-01", content=content)
+    monkeypatch.setattr(runtime._assistance_materials, "issue", lambda *a, **kw: pytest.fail("projection issued a capability"))
+    assert runtime.items()[0]["assistanceState"] == "available"
+    assert "text" not in runtime.metadata_items()[0]
+    assert "summary" not in runtime.metadata_items()[0]
+    assert transport.requests == []
+
+
+def test_enabling_retention_does_not_promise_old_content_or_trust_metadata(tmp_path):
+    runtime, transport = runtime_for(tmp_path, retention="metadata")
+    runtime._store_item(remote_id="old", source_id="source", occurred_at="2026-09-01",
+                        content={"text": "not kept"},
+                        metadata={"assistanceState": "available", "id": "forged"})
+    assert runtime.items()[0]["assistanceState"] == "metadata-only"
+    runtime.set_policy({**runtime.status()["policyCanonical"], "retention": "searchable-summary"})
+    item = runtime.items()[0]
+    assert item["id"] == "old"
+    assert item["assistanceState"] == "content-unavailable"
+    with pytest.raises(AssistanceUnavailableError):
+        runtime.issue_assistance("old")
+    assert transport.requests == []
+
+
+def test_item_projection_rejects_cross_item_content_and_corrupt_vault(tmp_path, monkeypatch):
+    runtime, _ = runtime_for(tmp_path)
+    for key in ("one", "two"):
+        runtime._store_item(remote_id=key, source_id="source", occurred_at="2026-09-01", content={"text": key})
+    runtime.connection.execute("UPDATE connector_external_items SET content_id=? WHERE remote_id='one'",
+                               ("slack:personal:two",))
+    runtime.connection.commit()
+    first = next(item for item in runtime.items() if item["id"] == "one")
+    assert first["assistanceState"] == "content-unavailable" and "text" not in first
+    from cryptography.exceptions import InvalidTag
+    monkeypatch.setattr(runtime.vault, "get", lambda *a, **kw: (_ for _ in ()).throw(InvalidTag()))
+    assert all(item["assistanceState"] == "content-unavailable" for item in runtime.items())
+
+
+def test_availability_is_not_an_execution_capability_and_clearing_rechecks(tmp_path):
+    runtime, _ = runtime_for(tmp_path)
+    runtime._store_item(remote_id="one", source_id="source", occurred_at="2026-09-01", content={"text": "retained"})
+    assert runtime.items()[0]["assistanceState"] == "available"
+    runtime.clear_cached_content()
+    assert runtime.items()[0]["assistanceState"] == "content-unavailable"
+    with pytest.raises(AssistanceUnavailableError):
+        runtime.issue_assistance("one")
+    runtime.set_policy({**runtime.status()["policyCanonical"], "assistance": "reminder"})
+    assert runtime.items()[0]["assistanceState"] == "policy-disabled"
+
+
 def test_reminder_assistance_tier_refuses_retained_content(tmp_path):
     runtime, _transport = runtime_for(tmp_path, assistance="reminder")
     runtime._store_item(

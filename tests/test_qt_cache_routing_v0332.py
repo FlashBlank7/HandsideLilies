@@ -143,7 +143,7 @@ def test_qt_cache_routing_runs_before_qapplication_and_qml_engine() -> None:
         node
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name == "main"
+        and node.name == "_run_application"
     )
 
     calls: dict[str, list[int]] = {

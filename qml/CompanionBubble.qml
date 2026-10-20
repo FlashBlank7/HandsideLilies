@@ -324,12 +324,12 @@ Window {
                     elide: Text.ElideRight
                     Layout.maximumWidth: Math.max(90, bubbleWindow.width * 0.34)
                 }
-                Label {
+                ContextLabel {
                     id: sceneLabel
                     objectName: "companionSceneLabel"
                     Layout.fillWidth: true
-                    text: bubbleData.sceneLabel ? "· " + String(bubbleData.sceneLabel) : ""
-                    visible: text.length > 0
+                    evidence: bubbleData.awareness || ({})
+                    extraDetail: bubbleData.sceneLabel ? "场景标签：" + String(bubbleData.sceneLabel) : ""
                     color: mutedColor
                     font.family: bubbleWindow.uiFontFamily
                     font.pixelSize: 12

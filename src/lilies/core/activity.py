@@ -949,10 +949,11 @@ def capture_window_image_via_print_window(
         if not user32.PrintWindow(
             native_hwnd,
             memory_dc,
-            0x00000001,
-            # PW_CLIENTONLY.  The undocumented render-full-content flag can
-            # return an intermittent compositor placeholder for off-screen
-            # windows; client-only asks the target to paint deterministically.
+            0x00000001 | 0x00000002,
+            # PW_CLIENTONLY | PW_RENDERFULLCONTENT. The second flag requests
+            # DirectComposition/GPU content, not just a legacy GDI WM_PRINT.
+            # Chromium uses this combination for HWND snapshots on Windows.
+            # Still exactly this client area: no desktop/BitBlt fallback.
         ):
             raise RuntimeError("native PrintWindow capture was rejected")
         validate_target()

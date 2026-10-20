@@ -66,6 +66,16 @@ def test_slack_runtime_matches_qml_contract_and_minimizes_scopes(tmp_path):
         "im:history",
         "channels:history",
     ]
+    assert manifest["settings"]["event_subscriptions"]["user_events"] == [
+        "message.channels", "message.im",
+    ]
+    changes = runtime.connection.total_changes
+    assert runtime.preview_manifest({
+        "policy": {"scope": "necessary", "assistance": "assist"},
+        "redirectUri": "http://127.0.0.1:53682/oauth/callback",
+    }) == manifest
+    assert runtime.connection.total_changes == changes
+    assert transport.requests == []
 
 
 def test_status_projects_only_reusable_non_secret_connector_configuration(tmp_path):

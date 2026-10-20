@@ -31,18 +31,18 @@ def test_baked_pose_artwork_falls_back_to_visible_outfit_layers() -> None:
     report = json.loads(completed.stdout.strip().splitlines()[-1])
     assert report["platform"] == "offscreen"
     assert report["passed"] is True
-    # The summer dress is an exact visual alias of the approved first-encounter
-    # master, so both outfits must use all five real activity silhouettes.
-    # The four other outfits deliberately retain truthful layered fallbacks
-    # for focus-watch instead of rendering the baked white dress unchanged.
-    assert report["bakedCount"] == 10
-    assert report["layeredFallbackCount"] >= 13
+    # All six outfits are independent. Existing baked activity artwork depicts
+    # first-encounter clothes only; every other outfit keeps its own layers.
+    assert report["bakedCount"] == 5
+    assert report["layeredFallbackCount"] >= 18
     focus_cases = [case for case in report["cases"] if case["pose"] == "focus-watch"]
     assert {case["outfit"] for case in focus_cases if case["usesPoseArtwork"]} == {
         "first-encounter",
-        "summer-cotton-dress",
     }
     assert all(case["passed"] for case in report["cases"])
+    summer_cases = [case for case in report["cases"] if case["outfit"] == "summer-cotton-dress"]
+    assert {case["pose"] for case in summer_cases} == {"focus-watch", "reading", "presenting", "box-support", "resting"}
+    assert all(not case["usesPoseArtwork"] for case in summer_cases)
     assert all(
         case["usesPoseArtwork"] is False
         for case in report["cases"]

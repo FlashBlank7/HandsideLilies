@@ -16,7 +16,7 @@ events and can still use :meth:`WinEventHub.publish` in tests/adapters.
 import ctypes
 import os
 import threading
-from collections import deque
+from collections import OrderedDict
 from ctypes import wintypes
 from dataclasses import dataclass
 from enum import Enum
@@ -94,7 +94,14 @@ class WinEventHub:
     """Fan out selected WinEvents when the owning thread drains the queue."""
 
     def __init__(self, *, queue_limit: int = 2048) -> None:
-        self._queue: deque[WinEvent] = deque(maxlen=max(32, int(queue_limit)))
+        self._queue_limit = max(32, int(queue_limit))
+        self._queue: OrderedDict[int, WinEvent] = OrderedDict()
+        self._next_key = 0
+        # Geometry is replaceable only within a run with no lifecycle edge.
+        # A separate ordered index makes overflow eviction constant-time even
+        # when foreground/destroy events precede a large geometry burst.
+        self._location_keys: dict[tuple[int, int, int, int], int] = {}
+        self._queued_locations: OrderedDict[int, None] = OrderedDict()
         self._queue_lock = threading.Lock()
         self._listeners: list[EventListener] = []
         self._listeners_lock = threading.Lock()
@@ -161,20 +168,43 @@ class WinEventHub:
         if not isinstance(event, WinEvent) or not event.hwnd:
             return False
         with self._queue_lock:
-            # LOCATIONCHANGE can fire hundreds of times while a window moves.
-            # Replacing an adjacent duplicate preserves the final geometry and
-            # keeps more important foreground/destroy events in the bounded
-            # queue.
-            if (
-                event.kind is WinEventKind.LOCATION_CHANGE
-                and self._queue
-                and self._queue[-1].kind is WinEventKind.LOCATION_CHANGE
-                and self._queue[-1].hwnd == event.hwnd
-            ):
-                self._queue[-1] = event
+            location = event.kind is WinEventKind.LOCATION_CHANGE
+            if location:
+                identity = self._location_identity(event)
+                previous = self._location_keys.get(identity)
+                if previous is not None:
+                    self._drop_queued(previous)
             else:
-                self._queue.append(event)
+                # Never merge geometry across hide/destroy/foreground/move
+                # boundaries, including potential native HWND reuse.
+                self._location_keys.clear()
+            self._next_key += 1
+            key = self._next_key
+            self._queue[key] = event
+            if location:
+                self._location_keys[identity] = key
+                self._queued_locations[key] = None
+            if len(self._queue) > self._queue_limit:
+                # Discard old replaceable geometry before lifecycle/privacy
+                # edges. If the queue consists entirely of edges, keep the
+                # previous bounded oldest-first overflow behavior.
+                oldest = next(iter(self._queued_locations or self._queue))
+                self._drop_queued(oldest)
         return True
+
+    @staticmethod
+    def _location_identity(event: WinEvent) -> tuple[int, int, int, int]:
+        return event.hwnd, event.object_id, event.child_id, event.thread_id
+
+    def _drop_queued(self, key: int) -> WinEvent:
+        """Remove an entry and its indexes; caller holds the queue lock."""
+        event = self._queue.pop(key)
+        self._queued_locations.pop(key, None)
+        if event.kind is WinEventKind.LOCATION_CHANGE:
+            identity = self._location_identity(event)
+            if self._location_keys.get(identity) == key:
+                del self._location_keys[identity]
+        return event
 
     def publish_native(
         self,
@@ -213,7 +243,7 @@ class WinEventHub:
         values: list[WinEvent] = []
         with self._queue_lock:
             while self._queue and len(values) < count:
-                values.append(self._queue.popleft())
+                values.append(self._drop_queued(next(iter(self._queue))))
         return values
 
     def dispatch_pending(self, limit: int = 512) -> int:

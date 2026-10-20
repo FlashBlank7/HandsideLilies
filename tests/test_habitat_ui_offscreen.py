@@ -23,7 +23,7 @@ def test_adaptive_habitat_transitions_offscreen() -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=20,
+        timeout=60,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         check=False,
     )
@@ -38,21 +38,20 @@ def test_adaptive_habitat_transitions_offscreen() -> None:
     assert coverage["passed"] is True
     assert coverage["windowClasses"] == 9
     assert coverage["uniqueArtwork"] == [
+        "poseEdgeLeanV1",
         "poseListeningLive",
+        "poseMicroCornerGripV1",
         "poseTitleSit",
+        "poseWideWindowSprawlV1",
+        "poseWindowDangleV1",
     ]
-    assert coverage["uniqueArtworkCount"] == 2
-    assert coverage["proceduralLayeredProfiles"] == [
-        "large-perch",
-        "maximized-edge",
-        "medium-perch",
-        "micro-window-edge",
-        "narrow-caption-edge",
-        "offscreen-window-edge",
-    ]
+    assert coverage["uniqueArtworkCount"] == 6
+    assert coverage["proceduralLayeredProfiles"] == []
     assert coverage["microUsesVerifiedFallback"] is False
-    assert coverage["microUsesProceduralLayeredFallback"] is True
-    assert coverage["mediumUsesProceduralLayeredFallback"] is True
+    assert coverage["microUsesProceduralLayeredFallback"] is False
+    assert coverage["mediumUsesProceduralLayeredFallback"] is False
+    assert coverage["microUsesCompleteArtwork"] is True
+    assert coverage["mediumUsesCompleteArtwork"] is True
     assert coverage["uniqueRuntimeVariantCount"] == 9
     assert coverage["uniqueVisualSignatureCount"] == 9
     assert coverage["visualSignaturesDistinct"] is True

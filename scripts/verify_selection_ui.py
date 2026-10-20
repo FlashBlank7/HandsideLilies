@@ -6,12 +6,16 @@ import sys
 import tempfile
 from pathlib import Path
 
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from PySide6.QtCore import QPoint, QObject, QTimer, QUrl
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickWindow
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -29,7 +33,9 @@ def load_windows_ui_fonts() -> None:
 
 
 def main() -> int:
-    temporary = tempfile.TemporaryDirectory(prefix="lilies-selection-ui-")
+    temp_parent = PROJECT_ROOT / "artifacts" / "selection-ui"
+    temp_parent.mkdir(parents=True, exist_ok=True)
+    temporary = tempfile.TemporaryDirectory(prefix="test-data-", dir=temp_parent)
     os.environ["LILIES_DATA_DIR"] = temporary.name
     app = QApplication([])
     load_windows_ui_fonts()
@@ -45,7 +51,7 @@ def main() -> int:
     if not engine.rootObjects():
         raise RuntimeError("Main.qml failed to load")
     root = engine.rootObjects()[0]
-    bubble = root.findChild(QObject, "selectionBubble")
+    bubble = root.findChild(QQuickWindow, "selectionBubble")
     if bubble is None:
         raise RuntimeError("Selection bubble was not created")
     question = root.findChild(QObject, "selectionQuestion")
@@ -104,7 +110,7 @@ def main() -> int:
         }
         outcome["questionWindow"] = question is not None
         screenshot = PROJECT_ROOT / "artifacts" / "selection-bubble-expanded.png"
-        app.primaryScreen().grabWindow(int(bubble.winId())).save(str(screenshot))
+        bubble.grabWindow().save(str(screenshot))
         outcome["screenshot"] = str(screenshot)
         backend._habitat_status = {"state": "silent", "visible": False}
         backend.habitatChanged.emit()

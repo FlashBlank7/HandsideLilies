@@ -305,9 +305,26 @@ def _click_action(
     return result
 
 
+def _reveal_in_scroll_views(window: QQuickWindow, item: QQuickItem) -> bool:
+    ancestor = item.parentItem()
+    while ancestor is not None:
+        if ancestor.metaObject().indexOfProperty("contentY") >= 0:
+            point = item.mapToItem(ancestor, QPointF(item.width() / 2, item.height() / 2))
+            if point.y() < 0 or point.y() > ancestor.height():
+                maximum = max(0, float(ancestor.property("contentHeight")) - ancestor.height())
+                target = float(ancestor.property("contentY")) + point.y() - ancestor.height() / 2
+                ancestor.setProperty("contentY", max(0, min(maximum, target)))
+                QTest.qWait(70)
+        ancestor = ancestor.parentItem()
+    point = _item_center(item)
+    return 0 <= point.x() < window.width() and 0 <= point.y() < window.height()
+
+
 def _click_named_item(window: QQuickWindow, object_name: str) -> bool:
     item = _named_item(window, object_name)
     if item is None or not item.isVisible() or not item.isEnabled():
+        return False
+    if not _reveal_in_scroll_views(window, item):
         return False
     QTest.mouseClick(
         window,
@@ -323,6 +340,8 @@ def _replace_text(
 ) -> bool:
     item = _named_item(window, object_name)
     if item is None or not item.isVisible() or not item.isEnabled():
+        return False
+    if not _reveal_in_scroll_views(window, item):
         return False
     QTest.mouseClick(
         window,
@@ -408,6 +427,9 @@ def _exercise_daily_loop(
         "qmlProgress": float(work_panel.property("resonanceProgress") or 0.0),
     }
 
+    # The activity-first page intentionally starts with this secondary form
+    # collapsed. Enter it through the same explicit control as the user.
+    reminder_opened = _click_named_item(work_panel, "workPanelReminderToggle")
     reminder_title = "Daily loop reminder"
     reminder_typed = _replace_text(
         work_panel, "workPanelReminderTitleInput", reminder_title
@@ -430,6 +452,7 @@ def _exercise_daily_loop(
         else None
     )
     result["reminder"] = {
+        "openedByClick": reminder_opened,
         "createdByClick": bool(reminder_created and reminder_id),
         "dismissedByClick": reminder_dismissed,
         "pendingProjectionEmpty": not any(
@@ -997,7 +1020,9 @@ def main() -> int:
     backend: Backend | None = None
     app: QApplication | None = None
     try:
-        with tempfile.TemporaryDirectory(prefix="lilies-click-path-") as data_dir:
+        staging = PROJECT_ROOT / "artifacts" / "world-test-data"
+        staging.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="lilies-click-path-", dir=staging) as data_dir:
             os.environ["LILIES_DATA_DIR"] = data_dir
             try:
                 QQuickWindow.setDefaultAlphaBuffer(True)
@@ -1005,7 +1030,8 @@ def main() -> int:
                 backend = Backend(smoke=True, force_compact=True)
                 backend._v03_timer.stop()
                 passed, report = _run_verification(app, backend)
-                print(json.dumps(report, ensure_ascii=False, indent=2))
+                # This is a JSON test protocol, independent of the host console codepage.
+                print(json.dumps(report, ensure_ascii=True, indent=2))
             finally:
                 try:
                     if backend is not None:

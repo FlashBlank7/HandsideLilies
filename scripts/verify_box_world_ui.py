@@ -123,7 +123,9 @@ def main() -> int:
     try:
         # The Qt/backend lifecycle is fully closed inside run_verification()
         # before this context attempts to remove its SQLite directory.
-        with tempfile.TemporaryDirectory(prefix="lilies-box-world-ui-") as data_dir:
+        staging = PROJECT_ROOT / "artifacts" / "world-test-data"
+        staging.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="lilies-box-world-ui-", dir=staging) as data_dir:
             os.environ["LILIES_DATA_DIR"] = data_dir
             outcome = run_verification()
     finally:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import math
 import os
 import secrets
 import subprocess
@@ -9,6 +10,7 @@ import sys
 import threading
 import time
 from ctypes import wintypes
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
@@ -28,8 +30,20 @@ PROGMAN_SPAWN_WORKERW = 0x052C
 WINLOGON_KEY = r"Software\Microsoft\Windows NT\CurrentVersion\Winlogon"
 
 
+@lru_cache(maxsize=1)
 def _user32():
-    return ctypes.windll.user32 if os.name == "nt" else None
+    if os.name != "nt":
+        return None
+    api = ctypes.WinDLL("user32", use_last_error=True)
+    for name, arguments, result in (
+        ("FindWindowW", [wintypes.LPCWSTR, wintypes.LPCWSTR], wintypes.HWND),
+        ("FindWindowExW", [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR], wintypes.HWND),
+        ("IsWindowVisible", [wintypes.HWND], wintypes.BOOL),
+        ("ShowWindowAsync", [wintypes.HWND, ctypes.c_int], wintypes.BOOL),
+    ):
+        function = getattr(api, name)
+        function.argtypes, function.restype = arguments, result
+    return api
 
 
 def _find_defview() -> int:
@@ -42,14 +56,20 @@ def _find_defview() -> int:
         return int(view)
     result = 0
     worker = 0
-    while True:
+    seen: set[int] = set()
+    for _ in range(256):
         worker = user32.FindWindowExW(0, worker, "WorkerW", None)
         if not worker:
             break
+        if int(worker) in seen:
+            raise OSError("desktop enumeration did not advance")
+        seen.add(int(worker))
         view = user32.FindWindowExW(worker, 0, "SHELLDLL_DefView", None)
         if view:
             result = int(view)
             break
+    else:
+        raise OSError("desktop enumeration exceeded bound")
     return result
 
 
@@ -58,39 +78,55 @@ def _window_visible(hwnd: int) -> bool:
     return bool(hwnd and user32 and user32.IsWindowVisible(hwnd))
 
 
-def _show_taskbars(show: bool) -> None:
+def _taskbar_handles() -> tuple[int, list[int]]:
     user32 = _user32()
     if user32 is None:
-        return
-    command = SW_SHOW if show else SW_HIDE
-    primary = user32.FindWindowW("Shell_TrayWnd", None)
-    if primary:
-        user32.ShowWindow(primary, command)
+        return 0, []
+    primary = int(user32.FindWindowW("Shell_TrayWnd", None) or 0)
+    handles = [primary] if primary else []
     current = 0
-    while True:
+    for _ in range(256):
         current = user32.FindWindowExW(0, current, "Shell_SecondaryTrayWnd", None)
         if not current:
-            break
-        user32.ShowWindow(current, command)
+            return primary, handles
+        if int(current) in handles:
+            raise OSError("taskbar enumeration did not advance")
+        handles.append(int(current))
+    raise OSError("taskbar enumeration exceeded bound")
+
+
+def _show_taskbars(show: bool) -> None:
+    user32 = _user32()
+    if user32 is not None:
+        for hwnd in _taskbar_handles()[1]:
+            # Explorer may be unresponsive. Posting does not block Qt while
+            # waiting for its thread; success is verified separately below.
+            user32.ShowWindowAsync(hwnd, SW_SHOW if show else SW_HIDE)
 
 
 def _show_desktop_icons(show: bool) -> None:
     user32 = _user32()
     view = _find_defview()
     if user32 is not None and view:
-        user32.ShowWindow(view, SW_SHOW if show else SW_HIDE)
+        user32.ShowWindowAsync(view, SW_SHOW if show else SW_HIDE)
 
 
 def _read_login_shell() -> str:
-    if os.name != "nt":
-        return "explorer.exe"
-    import winreg
+    state = _read_login_shell_state()
+    return str(state["value"]) if state["present"] else "explorer.exe"
 
+
+def _read_login_shell_state() -> dict[str, object]:
+    if os.name != "nt":
+        return {"present": False}
+    import winreg
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, WINLOGON_KEY) as key:
-            return str(winreg.QueryValueEx(key, "Shell")[0])
-    except OSError:
-        return "explorer.exe"
+            value, kind = winreg.QueryValueEx(key, "Shell")
+    except FileNotFoundError:
+        return {"present": False}
+    # Access denied is not an absent value. Never back up a guessed default.
+    return _validate_login_shell_state({"present": True, "value": value, "type": kind})
 
 
 def _write_login_shell(value: str) -> None:
@@ -102,24 +138,161 @@ def _write_login_shell(value: str) -> None:
         winreg.SetValueEx(key, "Shell", 0, winreg.REG_SZ, value)
 
 
-def restore_from_backup(path: Path) -> None:
+def _validate_login_shell_state(value: object) -> dict[str, object]:
+    if not isinstance(value, dict) or type(value.get("present")) is not bool:
+        raise ValueError("invalid login shell state")
+    if not value["present"]:
+        if set(value) != {"present"}:
+            raise ValueError("absent shell has unexpected data")
+        return {"present": False}
+    if (set(value) != {"present", "type", "value"}
+            or type(value["type"]) is not int or value["type"] not in {1, 2}
+            or not isinstance(value["value"], str)
+            or not 0 < len(value["value"]) <= 32767 or "\0" in value["value"]):
+        raise ValueError("invalid login shell value")
+    return dict(value)
+
+
+def _restore_login_shell_state(state: dict[str, object]) -> None:
+    state = _validate_login_shell_state(state)
+    if state.get("present") and state["type"] == 1:
+        _write_login_shell(str(state["value"]))
+        return
+    if os.name != "nt":
+        return
+    import winreg
+    if state["present"]:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, WINLOGON_KEY) as key:
+            winreg.SetValueEx(key, "Shell", 0, int(state["type"]), str(state["value"]))
+    else:
+        # Delete only the value Lilies may have introduced, not the key or any
+        # other settings; an originally absent override must remain absent.
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, WINLOGON_KEY, 0, winreg.KEY_SET_VALUE) as key:
+                winreg.DeleteValue(key, "Shell")
+        except FileNotFoundError:
+            pass
+
+
+def _restore_target(path: Path | None) -> tuple[dict[str, object], str]:
+    fallback: dict[str, object] = {"taskbarVisible": True, "desktopIconsVisible": True,
+                                   "loginShellState": None}
+    if path is None:
+        return fallback, "unavailable"
     try:
-        backup = json.loads(path.read_text("utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
-        backup = {"taskbarVisible": True, "desktopIconsVisible": True, "loginShell": "explorer.exe"}
-    _show_taskbars(bool(backup.get("taskbarVisible", True)))
-    _show_desktop_icons(bool(backup.get("desktopIconsVisible", True)))
-    login_shell = str(backup.get("loginShell", "explorer.exe"))
-    if login_shell:
+        with path.open("r", encoding="utf-8") as stream:
+            encoded = stream.read(65537)
+        if len(encoded) > 65536:
+            raise ValueError("backup too large")
+        backup = json.loads(encoded)
+        if (not isinstance(backup, dict)
+                or type(backup.get("taskbarVisible")) is not bool
+                or type(backup.get("desktopIconsVisible")) is not bool):
+            raise ValueError("invalid visibility state")
+        version = backup.get("schemaVersion", 1)
+        if type(version) is not int or version not in {1, 2}:
+            raise ValueError("unknown backup schema")
+        state = _validate_login_shell_state(backup.get("loginShellState") if version == 2 else {
+            "present": True, "type": 1, "value": backup.get("loginShell"),
+        })
+        return {"taskbarVisible": backup["taskbarVisible"],
+                "desktopIconsVisible": backup["desktopIconsVisible"],
+                "loginShellState": state}, "validated" if version == 2 else "legacy"
+    except FileNotFoundError:
+        return fallback, "missing"
+    except OSError:
+        return fallback, "unreadable"
+    except (ValueError, UnicodeError, RecursionError):
+        return fallback, "invalid"
+
+
+def _start_explorer() -> None:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetWindowsDirectoryW.argtypes = [wintypes.LPWSTR, wintypes.UINT]
+    kernel32.GetWindowsDirectoryW.restype = wintypes.UINT
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = kernel32.GetWindowsDirectoryW(buffer, len(buffer))
+    if not 0 < length < len(buffer):
+        raise OSError("Windows directory unavailable")
+    subprocess.Popen([str(Path(buffer.value) / "explorer.exe")],
+                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+
+
+def restore_from_backup(path: Path | None, *, wait_seconds: float = 0.0) -> dict[str, object]:
+    """Request restoration and report observed state, never just API success.
+
+    The default is a single non-waiting pass for the GUI. Only the separate
+    recovery CLI/watchdog opts into bounded polling (at most eight seconds).
+    Visibility means WS_VISIBLE, not proof of unobscured pixels or Z order.
+    No paths, HWNDs or registry values enter the returned diagnostic.
+    """
+    if not isinstance(wait_seconds, (int, float)) or not math.isfinite(wait_seconds):
+        raise ValueError("invalid recovery wait")
+    duration = max(0.0, min(8.0, float(wait_seconds)))
+    target, backup_status = _restore_target(path)
+    report: dict[str, object] = {"schemaVersion": 1, "ok": False, "backupStatus": backup_status,
+        "taskbarVisibilityMatched": False, "desktopIconsVisibilityMatched": False,
+        "loginShellMatched": False, "explorerStartRequested": False, "errors": []}
+    if _user32() is None:
+        report["errors"] = ["unsupported-platform"]
+        return report
+    expected_shell = target["loginShellState"]
+    registry_error = ""
+    if expected_shell is not None:
         try:
-            _write_login_shell(login_shell)
-        except OSError:
-            pass
-    if os.name == "nt" and not ctypes.windll.user32.FindWindowW("Shell_TrayWnd", None):
+            if _read_login_shell_state() != expected_shell:
+                _restore_login_shell_state(expected_shell)
+        except (OSError, ValueError):
+            registry_error = "login-shell-write-or-read-failed"
+    deadline = time.monotonic() + duration
+    explorer_attempted = False
+    for _ in range(82):
+        errors = [] if backup_status in {"validated", "legacy"} else ["backup-" + backup_status]
+        if registry_error:
+            errors.append(registry_error)
+        # Re-enumerate after every request: Explorer can restart while restoring.
         try:
-            subprocess.Popen(["explorer.exe"], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+            primary, _handles = _taskbar_handles()
+            if not primary and not explorer_attempted:
+                explorer_attempted = True
+                _start_explorer()
+                report["explorerStartRequested"] = True
+            _show_taskbars(bool(target["taskbarVisible"]))
         except OSError:
-            pass
+            errors.append("taskbar-request-failed")
+        try:
+            _show_desktop_icons(bool(target["desktopIconsVisible"]))
+        except OSError:
+            errors.append("desktop-icons-request-failed")
+        report["taskbarVisibilityMatched"] = False
+        report["desktopIconsVisibilityMatched"] = False
+        report["loginShellMatched"] = False
+        try:
+            primary, handles = _taskbar_handles()
+            report["taskbarVisibilityMatched"] = bool(primary and all(
+                _window_visible(hwnd) == target["taskbarVisible"] for hwnd in handles))
+            view = _find_defview()
+            report["desktopIconsVisibilityMatched"] = bool(
+                view and _window_visible(view) == target["desktopIconsVisible"])
+        except OSError:
+            errors.append("visual-state-read-failed")
+        if expected_shell is not None:
+            try:
+                report["loginShellMatched"] = _read_login_shell_state() == expected_shell
+            except (OSError, ValueError):
+                errors.append("login-shell-read-failed")
+        for field, code in (("taskbarVisibilityMatched", "taskbar-state-unverified"),
+                            ("desktopIconsVisibilityMatched", "desktop-icons-state-unverified"),
+                            ("loginShellMatched", "login-shell-state-unverified")):
+            if not report[field]:
+                errors.append(code)
+        report["errors"] = list(dict.fromkeys(errors))
+        report["ok"] = not errors
+        remaining = deadline - time.monotonic()
+        if report["ok"] or remaining <= 0:
+            break
+        time.sleep(min(0.1, remaining))
+    return report
 
 
 class EmergencyHotkey:
@@ -172,24 +345,37 @@ class ShellController:
         self._watchdog_restart_failures = 0
         self._watchdog_next_restart_at = 0.0
         self._last_explorer_restart = 0.0
+        self._last_restore: dict[str, object] | None = None
         self.hotkey = EmergencyHotkey(self.emergency_restore)
         if not self.smoke:
             self.hotkey.start()
 
     def capture(self) -> dict[str, object]:
-        user32 = _user32()
-        taskbar = int(user32.FindWindowW("Shell_TrayWnd", None)) if user32 else 0
-        view = _find_defview()
+        user32 = None if self.smoke else _user32()
+        taskbar = int(user32.FindWindowW("Shell_TrayWnd", None) or 0) if user32 else 0
+        view = _find_defview() if user32 else 0
+        login_shell = {"present": False} if self.smoke else _read_login_shell_state()
         return {
+            "schemaVersion": 2,
             "capturedAt": utc_now(),
             "taskbarVisible": _window_visible(taskbar) if taskbar else True,
             "desktopIconsVisible": _window_visible(view) if view else True,
-            "loginShell": _read_login_shell(),
+            "loginShell": login_shell.get("value", "explorer.exe"),
+            "loginShellState": login_shell,
         }
 
     def _ensure_backup(self) -> None:
         if not self.backup_path.exists():
-            self.backup_path.write_text(json.dumps(self.capture(), ensure_ascii=False, indent=2), "utf-8")
+            captured = self.capture()
+            try:
+                with self.backup_path.open("x", encoding="utf-8") as stream:
+                    json.dump(captured, stream, ensure_ascii=False, indent=2)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except FileExistsError:
+                pass
+        if _restore_target(self.backup_path)[1] not in {"validated", "legacy"}:
+            raise RuntimeError("恢复备份不可验证；没有隐藏 Windows 桌面")
 
     def _start_watchdog(self, *, honor_backoff: bool = False) -> bool:
         """Start or re-arm the independent shell recovery process.
@@ -323,12 +509,13 @@ class ShellController:
         self.mode = "compact"
         self.database.set_setting("shell_mode", self.mode)
 
-    def restore_visual_state(self) -> None:
-        if self.backup_path.exists():
-            restore_from_backup(self.backup_path)
+    def restore_visual_state(self) -> dict[str, object]:
+        if self.smoke:
+            self._last_restore = {"ok": False, "backupStatus": "diagnostic-skipped",
+                                  "errors": ["diagnostic-no-system-changes"]}
         else:
-            _show_taskbars(True)
-            _show_desktop_icons(True)
+            self._last_restore = restore_from_backup(self.backup_path)
+        return self._last_restore
 
     def reveal_system_drawer(self, seconds: float = 8.0) -> None:
         _show_taskbars(True)
@@ -378,13 +565,14 @@ class ShellController:
         self.database.set_setting("login_shell_command", safe_command)
 
     def disable_login_shell(self) -> None:
-        original = "explorer.exe"
-        if self.backup_path.exists():
-            try:
-                original = json.loads(self.backup_path.read_text("utf-8")).get("loginShell", original)
-            except (OSError, ValueError):
-                pass
-        _write_login_shell(str(original))
+        target, _status = _restore_target(self.backup_path)
+        original = target["loginShellState"]
+        if original is None:
+            raise RuntimeError("原登录外壳状态不可验证；未写入猜测的配置")
+        if not self.smoke:
+            _restore_login_shell_state(original)
+            if _read_login_shell_state() != original:
+                raise RuntimeError("登录外壳配置尚未恢复")
         self.database.set_setting("login_shell_enabled", False)
 
     def emergency_restore(self) -> None:
@@ -418,8 +606,10 @@ class ShellController:
     def shutdown(self) -> None:
         self._watchdog_stopping = True
         self._watchdog_armed = False
-        self.restore_visual_state()
-        if self._watchdog_marker:
+        result = self.restore_visual_state()
+        # An async request or a failed recovery is not a clean exit. Let the
+        # independent watchdog perform bounded verification after we exit.
+        if self._watchdog_marker and isinstance(result, dict) and result.get("ok") is True:
             try:
                 self._watchdog_marker.write_text("clean", "utf-8")
             except OSError:
@@ -432,4 +622,5 @@ class ShellController:
             "backupPath": str(self.backup_path),
             "loginShellEnabled": bool(self.database.get_setting("login_shell_enabled", False)),
             "emergencyHotkey": "Ctrl+Alt+Shift+F12",
+            "lastRestore": dict(self._last_restore) if self._last_restore else None,
         }

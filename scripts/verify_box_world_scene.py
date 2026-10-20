@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_OFFSCREEN_SIZE", "1200x900")
 
 from PySide6.QtCore import Property, QMetaObject, QObject, QPoint, QPointF, Qt, QUrl, Signal
 from PySide6.QtGui import QFontDatabase, QWindow
-from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtQml import QQmlComponent, QQmlEngine, QQmlExpression
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -262,6 +262,30 @@ def _run(app: QApplication) -> dict[str, object]:
         }
         screenshot = _sample_image(scene)
 
+        # A real wardrobe notification must update the boxed character too,
+        # rather than falling through to the old first-encounter bitmap.
+        previous_wardrobe = dict(backend._world["wardrobe"])
+        backend._world["wardrobe"] = {**previous_wardrobe, "outfitId": "summer-cotton-dress", "outfitName": "清凉棉质连衣裙"}
+        backend.productivityChanged.emit()
+        summer_ready = False
+        summer_source = ""
+        for _ in range(80):
+            QTest.qWait(15)
+            status = QQmlExpression(QQmlEngine.contextForObject(character), character, "Number(status)").evaluate()
+            status = status[0] if isinstance(status, tuple) else status
+            if status == 1:
+                source_url = character.property("source")
+                # Image.source retains the relative QML URL; resolve it in
+                # its actual component context before comparing filesystem identity.
+                summer_source = QQmlEngine.contextForObject(character).resolvedUrl(source_url).toLocalFile()
+                expected = PROJECT_ROOT / "themes" / "first-encounter" / "assets" / "lilith-outfit-summer-cotton-transparent-v1.png"
+                summer_ready = Path(summer_source).resolve() == expected.resolve()
+                if summer_ready:
+                    break
+        backend._world["wardrobe"] = previous_wardrobe
+        backend.productivityChanged.emit()
+        QTest.qWait(100)
+
         # Re-entering the retained window must undo a minimized state and move
         # an old monitor coordinate back into the supplied presentation area.
         scene.setX(1450)
@@ -425,6 +449,8 @@ def _run(app: QApplication) -> dict[str, object]:
         return {
             "firstPresentation": first,
             "screenshot": screenshot,
+            "summerOutfitReady": summer_ready,
+            "summerOutfitSource": summer_source,
             "repeatAfterMinimize": restored,
             "narrowLayout": narrow,
             "narrowScreenshot": narrow_screenshot,
@@ -445,7 +471,7 @@ def main() -> int:
     app = QApplication.instance() or QApplication([])
     _load_font()
     outcome = _run(app)
-    print(json.dumps(outcome, ensure_ascii=False, indent=2))
+    print(json.dumps(outcome, ensure_ascii=True, indent=2))
     first = outcome["firstPresentation"]
     restored = outcome["repeatAfterMinimize"]
     narrow = outcome["narrowLayout"]
@@ -473,6 +499,7 @@ def main() -> int:
             len(first["stateRows"]) == 6,
             first["greetingFits"],
             screenshot["saved"],
+            outcome["summerOutfitReady"],
             screenshot["sampledColorCount"] >= 40,
             screenshot["darkSamples"] > 0,
             screenshot["lightSamples"] > 0,

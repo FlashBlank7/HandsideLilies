@@ -13,7 +13,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtGui import QColor
+from PySide6.QtQml import QQmlApplicationEngine, QQmlEngine, QQmlExpression
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -90,7 +91,10 @@ def _source_path(item: QObject) -> str:
 
 def _wait_for_sources(items: tuple[QObject, ...], expected: str) -> bool:
     for _index in range(50):
-        if all(_source_path(item) == expected for item in items):
+        def ready(item):
+            value = QQmlExpression(QQmlEngine.contextForObject(item), item, "Number(status)").evaluate()
+            return (value[0] if isinstance(value, tuple) else value) == 1  # Image.Ready
+        if all(_source_path(item) == expected and ready(item) for item in items):
             return True
         QTest.qWait(10)
     return False
@@ -117,14 +121,13 @@ def main() -> int:
     window = engine.rootObjects()[0]
     pet = window.findChild(QQuickItem, "outfitPet")
     frame = window.findChild(QQuickItem, "petFigureFrame")
-    head = window.findChild(QQuickItem, "petHairHeadImage")
-    shoulder = window.findChild(QQuickItem, "petShoulderHandsImage")
-    skirt = window.findChild(QQuickItem, "petSkirtImage")
-    if any(value is None for value in (pet, frame, head, shoulder, skirt)):
-        raise RuntimeError("outfit layers failed to load")
+    continuous = window.findChild(QQuickItem, "petContinuousFigure")
+    texture = window.findChild(QQuickItem, "petContinuousTexture")
+    if any(value is None for value in (pet, frame, continuous, texture)):
+        raise RuntimeError("continuous outfit failed to load")
     assert pet is not None and frame is not None
-    assert head is not None and shoulder is not None and skirt is not None
-    image_items = (head, shoulder, skirt)
+    assert continuous is not None and texture is not None
+    image_items = (texture,)
 
     results: dict[str, object] = {}
     reference_foot_y: float | None = None
@@ -156,22 +159,10 @@ def main() -> int:
 
         expected_image_x = horizontal_offset * frame_width
         expected_image_y = vertical_offset * frame_height
-        slice_offsets = {
-            "head": [float(head.x()), float(head.y())],
-            "shoulder": [
-                float(shoulder.x()),
-                float(shoulder.y()) + frame_height * 0.315,
-            ],
-            "skirt": [
-                float(skirt.x()),
-                float(skirt.y()) + frame_height * 0.600,
-            ],
-        }
-        slice_offsets_consistent = all(
-            abs(value[0] - expected_image_x) <= 0.05
-            and abs(value[1] - expected_image_y) <= 0.05
-            for value in slice_offsets.values()
-        )
+        continuous_offset = [float(continuous.x()), float(continuous.y())]
+        continuous_offset_consistent = (
+            abs(continuous_offset[0] - expected_image_x) <= 0.05
+            and abs(continuous_offset[1] - expected_image_y) <= 0.05)
         source_values = [_source_path(item) for item in image_items]
         observed_sources.setdefault(expected_source, []).append(outfit_id)
         anchor_version = int(pet.property("outfitAnchorVersion"))
@@ -182,7 +173,7 @@ def main() -> int:
             and sources_ready
             and abs(frame_ratio - expected_ratio) <= 1e-6
             and anchor_version == int(bundle["anchorVersion"]) == int(spec["anchorVersion"])
-            and slice_offsets_consistent
+            and continuous_offset_consistent
             and reference_foot_y is not None
             and abs(foot_world_y - reference_foot_y) <= 0.05
             and reference_center_x is not None
@@ -203,31 +194,63 @@ def main() -> int:
             "verticalOffset": round(vertical_offset, 9),
             "centerWorldX": round(center_world_x, 4),
             "footWorldY": round(foot_world_y, 4),
-            "sliceOffsets": slice_offsets,
-            "sliceOffsetsConsistent": slice_offsets_consistent,
+            "continuousOffset": continuous_offset,
+            "continuousOffsetConsistent": continuous_offset_consistent,
             "implementationStatus": str(bundle.get("implementationStatus", "")),
             "visualAliasOf": str(bundle.get("visualAliasOf", "")),
             "passed": passed,
         }
 
-    alias_sources_explicit = (
-        results["summer-cotton-dress"]["source"] == results["first-encounter"]["source"]
-        and results["summer-cotton-dress"]["implementationStatus"] == "visual-alias"
-        and results["summer-cotton-dress"]["visualAliasOf"] == "first-encounter"
+    summer_is_independent = (
+        results["summer-cotton-dress"]["source"] != results["first-encounter"]["source"]
+        and results["summer-cotton-dress"]["implementationStatus"] == "production"
+        and results["summer-cotton-dress"]["visualAliasOf"] == ""
     )
     unique_source_count = len(observed_sources)
+    # Review the untouched new RGBA through the same renderer at desktop scale,
+    # on both light and dark surfaces, then through the reading transition.
+    preview_root = PROJECT_ROOT / "artifacts" / "summer-outfit"
+    preview_root.mkdir(parents=True, exist_ok=True)
+    backend.set_outfit("summer-cotton-dress")
+    expected_summer = results["summer-cotton-dress"]["source"]
+    assert _wait_for_sources(image_items, expected_summer)
+    window.resize(400, 440)
+    pet.setProperty("characterHeight", 280)
+    QTest.qWait(100)
+    previews = []
+    for name, color in (("light", "#f4f4f6"), ("dark", "#242831")):
+        window.setColor(QColor(color))
+        QTest.qWait(60)
+        path = preview_root / (name + ".png")
+        assert window.grabWindow().save(str(path))
+        previews.append(str(path))
+    pet.setProperty("paused", False)
+    pet.setProperty("pose", "reading")
+    pet.setProperty("quietActivity", "reading")
+    QTest.qWait(650)
+    summer_reading_preserves_clothes = (
+        not pet.property("usesPoseArtwork")
+        and pet.property("outfitAssetKey") == "desktopPetSummer"
+        and _wait_for_sources(image_items, expected_summer)
+    )
+    path = preview_root / "reading.png"
+    assert window.grabWindow().save(str(path))
+    previews.append(str(path))
     passed = (
         bool(asset_gate["passed"])
         and all(bool(dict(value)["passed"]) for value in results.values())
-        and alias_sources_explicit
-        and unique_source_count == 5
+        and summer_is_independent
+        and unique_source_count == 6
+        and summer_reading_preserves_clothes
     )
     report = {
         "platform": os.environ.get("QT_QPA_PLATFORM"),
         "assetGate": asset_gate,
         "outfits": results,
         "uniqueSourceCount": unique_source_count,
-        "aliasSourcesExplicit": alias_sources_explicit,
+        "summerIsIndependent": summer_is_independent,
+        "summerReadingPreservesClothes": bool(summer_reading_preserves_clothes),
+        "previews": previews,
         "passed": passed,
     }
     report_path = PROJECT_ROOT / "artifacts" / "outfit-runtime-gate.json"

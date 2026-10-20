@@ -32,6 +32,7 @@ def test_backend_exposes_v03_connector_and_focus_contract(tmp_path, monkeypatch)
         }
         assert {
             "connectorConfigure",
+            "slackGenerateManifest",
             "connectorBeginOAuth",
             "connectorConfirmProposal",
             "connectorRejectProposal",
@@ -255,34 +256,36 @@ def test_backend_dock_launch_library_includes_pinned_and_unpinned_items(
         app.processEvents()
 
 
-def test_backend_system_pet_drag_is_default_and_explicit_direct_mode_persists(
+def test_backend_direct_pet_drag_is_default_and_explicit_system_mode_persists(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
     app = QApplication.instance() or QApplication([])
     backend = Backend(smoke=True, force_compact=True)
     try:
-        assert backend.petDragMode == "system"
-
-        backend.setPetDragMode("direct")
+        # v0.3.55 changed policy revision 2 to direct dragging. Test the actual
+        # released contract, not the superseded v0.3.54 native-move default.
         assert backend.petDragMode == "direct"
-        assert backend.database.get_setting("pet_drag_mode", "") == "direct"
+
+        backend.setPetDragMode("system")
+        assert backend.petDragMode == "system"
+        assert backend.database.get_setting("pet_drag_mode", "") == "system"
 
         backend.setPetDragMode("not-a-mode")
-        assert backend.petDragMode == "direct"
+        assert backend.petDragMode == "system"
     finally:
         backend.shutdown()
         app.processEvents()
 
     restored = Backend(smoke=True, force_compact=True)
     try:
-        assert restored.petDragMode == "direct"
+        assert restored.petDragMode == "system"
     finally:
         restored.shutdown()
         app.processEvents()
 
 
-def test_backend_invalid_persisted_drag_mode_repairs_to_system_default(
+def test_backend_invalid_persisted_drag_mode_falls_back_to_direct_default(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("LILIES_DATA_DIR", str(tmp_path / "private-data"))
@@ -296,7 +299,7 @@ def test_backend_invalid_persisted_drag_mode_repairs_to_system_default(
 
     restored = Backend(smoke=True, force_compact=True)
     try:
-        assert restored.petDragMode == "system"
+        assert restored.petDragMode == "direct"
     finally:
         restored.shutdown()
         app.processEvents()
@@ -1052,6 +1055,7 @@ def test_native_non_game_full_screen_keeps_companion_but_hides_dock_overlays(
         assert backend.companion.presentationSuppressed is False
         assert backend.companion.deliveryStatus["state"] != "suppressed"
         assert backend.selectionBubble["visible"] is False
+        assert backend.selection._privacy_suppressed is True
         assert backend.focusDiversion == {}
 
         backend.companion._bubble = {
@@ -1089,6 +1093,7 @@ def test_native_non_game_full_screen_keeps_companion_but_hides_dock_overlays(
         assert backend.dockSuppressed is False
         assert backend.companion.bubble["id"] == "late-companion"
         assert backend.selectionBubble["visible"] is False
+        assert backend.selection._privacy_suppressed is False
         assert backend.focusDiversion == {}
     finally:
         backend.shutdown()
@@ -1125,6 +1130,8 @@ def test_foreground_privacy_event_publishes_suppression_without_timer_delay(
         assert backend.habitatState["visible"] is False
         assert backend.dockSuppressed is True
         assert backend.input_pulse.snapshot()["suppressed"] is True
+        assert backend.selection._privacy_suppressed is True
+        assert not backend.selection._timer.isActive()
     finally:
         backend.shutdown()
         app.processEvents()
@@ -1165,6 +1172,14 @@ def test_unified_win_event_queue_reaches_companion_on_the_qt_pump_thread(
         assert context.process_name == "wps.exe"
         assert backend._presence_context_handle == 9003
         assert backend.presence.snapshot().state is PresenceState.NORMAL
+        assert backend.selection.capture_policy(9003) is True
+
+        backend.selection._press_identity = {"handle": 9003}
+        backend.selection._mouse_down = True
+        assert backend.win_event_hub.publish(WinEvent(WinEventKind.HIDE, 9003, 0))
+        assert backend.win_event_hub.dispatch_pending() == 1
+        assert backend.selection._press_identity is None
+        assert backend.selection._mouse_down is False
     finally:
         backend.shutdown()
         app.processEvents()

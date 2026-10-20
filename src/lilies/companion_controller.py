@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .core.awareness import bubble_evidence, capture_evidence
+
 import threading
 import time
 import hashlib
@@ -183,6 +185,10 @@ _CAPTURE_REASON_CODES = frozenset(
         "model-request-starting",
         "native-grab-failed",
         "native-print-failed",
+        "native-helper-timeout",
+        "native-helper-invalid-request",
+        "native-helper-frame-empty",
+        "native-helper-process-failed",
         "native-print-staged",
         "presentation-suppressed",
         "privacy-suppressed",
@@ -1222,6 +1228,9 @@ class CompanionController(QObject):
             "none": "尚未发送",
             "application-signal": "应用级信号（未截图）",
             "active-window-image": "单次活动窗口画面",
+            "retained-image-anchor": "沿用上次文字线索（未重新截图）",
+            "fallback-exhausted": "没有生成可用内容",
+            "duplicate-suppressed": "重复内容已跳过",
         }
         capture_reason_labels = {
             "timing-not-ready": "尚未到自然停顿",
@@ -1239,6 +1248,10 @@ class CompanionController(QObject):
             "browser-capture-paused": "浏览器像素观察暂不开放，本次只使用应用类别",
             "native-grab-failed": "系统未能取得活动窗口画面",
             "native-print-failed": "目标窗口没有返回可用画面，本次保持安静",
+            "native-helper-timeout": "窗口截图超时，稍后会重新尝试",
+            "native-helper-invalid-request": "截图窗口或暂存位置已失效",
+            "native-helper-frame-empty": "窗口只返回空白或受保护画面，没有发送给模型",
+            "native-helper-process-failed": "截图辅助进程未完成，请重试",
             "native-print-staged": "目标窗口画面已在隔离进程中准备",
             "protected-black": "受保护或黑屏画面已拒绝",
             "low-information": "画面信息不足，本次没有生成屏幕对话",
@@ -1502,6 +1515,24 @@ class CompanionController(QObject):
                 "cooldown": "陪伴 · 安静间隔",
             }.get(gate_reason, compact_status_label)
 
+        capture_retry_seconds = max(
+            0.0, self._generation_attempt_not_before - time.monotonic()
+        )
+        if (
+            not self._busy and self._smart_observation
+            and not bool(self._delivery_record.get("unread"))
+            and self._activity_enabled and not self.activity.paused
+            and state not in quiet_states and bool(gate.get("allowed", False))
+            and self._last_capture_status.get("outcome") == "failed"
+        ):
+            compact_status_label = "陪伴 · 上次截图未成功"
+            effective_state_label = "上次截图未成功"
+            effective_state_detail = capture_reason_labels.get(
+                str(self._last_capture_status.get("reason", "")), "请稍后重试"
+            )
+            if capture_retry_seconds > 0:
+                effective_state_detail += f" · 约 {max(1, round(capture_retry_seconds))} 秒后重试"
+
         cached_news = sum(
             1 for item in self._content_items if item.category is ContentCategory.NEWS
         )
@@ -1520,6 +1551,7 @@ class CompanionController(QObject):
                 "modality": modality,
                 "modalityProbeBusy": self._probe_busy,
                 "modalityRetrySeconds": round(modality_retry_seconds, 1),
+                "captureRetrySeconds": round(capture_retry_seconds, 1),
                 "modalityProbeState": (
                     "checking"
                     if self._probe_busy
@@ -1621,14 +1653,16 @@ class CompanionController(QObject):
                     else effective_state_label
                 ),
                 "stateDetail": effective_state_detail,
-                "lastContextLabel": context_labels.get(context_type, context_type or "尚未发送"),
+                "lastContextLabel": context_labels.get(context_type, "依据未记录"),
+                "bubbleEvidence": bubble_evidence(self._bubble),
+                "captureEvidence": capture_evidence(self._last_capture_status),
             }
         )
         return value
 
     @Property("QVariantMap", notify=bubbleChanged)
     def bubble(self) -> dict[str, Any]:
-        return dict(self._bubble)
+        return {**self._bubble, "awareness": bubble_evidence(self._bubble)} if self._bubble else {}
 
     @Property(bool, notify=changed)
     def busy(self) -> bool:
@@ -1693,6 +1727,7 @@ class CompanionController(QObject):
             # the user explicitly reopens it in a later safe context.
             self._clear_bubble(reason="unsafe-resume", preserve_unread=True)
             return
+        self._bubble["redisplayed"] = True
         self._bubble["visible"] = True
         self._bubble["expiresAt"] = ""
         self._bubble["deliveryState"] = "waiting-present-ack"
@@ -3054,8 +3089,11 @@ class CompanionController(QObject):
                             }
                         )
                         return
+                    except NativeCaptureHelperError as exc:
+                        staged = None
+                        capture_attempt_failed = True
+                        record_capture("failed", exc.reason)
                     except (
-                        NativeCaptureHelperError,
                         CaptureEncodeError,
                         OSError,
                         RuntimeError,
@@ -4452,7 +4490,9 @@ class CompanionController(QObject):
             "expiresAt": "",
             "busy": False,
             "model": "persisted-unread",
-            "contextType": "application-signal",
+            "contextType": str((saved.get("generation") or {}).get("contextType", "")),
+            "imageGrounded": (saved.get("generation") or {}).get("imageGrounded") is True,
+            "restoredUnread": True,
             "error": "",
             "hasCapture": False,
             "conversation": [],
@@ -4497,6 +4537,7 @@ class CompanionController(QObject):
             )
             self.changed.emit()
             return False
+        self._bubble["redisplayed"] = True
         self._bubble_ttl_remaining_seconds = _BUBBLE_PRESENTATION_SECONDS
         self._bubble_presented = False
         self._bubble_interacted = False
@@ -4680,7 +4721,7 @@ class CompanionController(QObject):
         started = self._start_manual_generation()
         if started:
             self._set_request_feedback("正在结合当前应用场景，整理一小句话……", "busy")
-            self.status_sink("莉莉丝正在看看手边发生的事")
+            self.status_sink("正在按应用类别想一句话，没有截图")
         self.changed.emit()
         return bool(started)
 
@@ -4849,6 +4890,7 @@ class CompanionController(QObject):
                         {
                             "bubbleId": bubble.id,
                             "answer": answer,
+                            "replyBasis": "image-anchor" if reply_evidence_anchor else "dialogue",
                             "replySerial": reply_serial,
                         }
                     )
@@ -4949,6 +4991,10 @@ class CompanionController(QObject):
                 "busy": False,
                 "error": "",
                 "conversation": [message.to_mapping() for message in session.messages],
+                "replyBasis": "image-anchor" if value.get("replyBasis") == "image-anchor" else "dialogue",
+                "basisAt": datetime.now(UTC).isoformat(),
+                "restoredUnread": False,
+                "redisplayed": False,
             }
         )
         self._busy = False

@@ -7,11 +7,16 @@ from pathlib import Path
 import re
 from types import SimpleNamespace
 
+import pytest
+
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QSG_RHI_BACKEND", "software")
 
-from lilies.app import packaged_compact_startup_contract
+from lilies.app import (
+    PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOWS,
+    packaged_compact_startup_contract,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -84,7 +89,7 @@ def _runtime_snapshot(**scene_overrides: object) -> dict[str, object]:
 
 def test_packaged_compact_startup_contract_is_strict_and_projected() -> None:
     windows = [_SelfTestWindow("")] + [
-        _SelfTestWindow(f"quickWindow{index}") for index in range(1, 16)
+        _SelfTestWindow(name) for name in PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOWS[1:]
     ]
     lifecycle = SimpleNamespace(windows=tuple(windows))
 
@@ -97,11 +102,13 @@ def test_packaged_compact_startup_contract_is_strict_and_projected() -> None:
     assert contract["passed"] is True
     assert contract["shellMode"] == "compact"
     quick_windows = contract["quickWindows"]
-    assert quick_windows["expectedWindowCount"] == 16
-    assert quick_windows["windowCount"] == 16
+    assert quick_windows["expectedWindowCount"] == 18
+    assert quick_windows["windowCount"] == 18
+    assert quick_windows["windowIdentitiesMatch"] is True
+    assert {"boxSearchWindow", "sharedWorldWindow"} <= set(quick_windows["expectedWindows"])
     assert quick_windows["persistentHintsDisabled"] is True
     assert quick_windows["passed"] is True
-    assert len(quick_windows["persistentHints"]) == 16
+    assert len(quick_windows["persistentHints"]) == 18
     assert quick_windows["persistentHints"][0]["objectName"] == "desktopRootWindow"
     assert all(
         hint["persistentGraphics"] is False
@@ -127,7 +134,7 @@ def test_packaged_compact_startup_contract_is_strict_and_projected() -> None:
 
 def test_packaged_compact_startup_contract_fails_closed() -> None:
     windows = [_SelfTestWindow("")] + [
-        _SelfTestWindow(f"quickWindow{index}") for index in range(1, 16)
+        _SelfTestWindow(name) for name in PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOWS[1:]
     ]
     lifecycle = SimpleNamespace(windows=tuple(windows))
 
@@ -156,6 +163,27 @@ def test_packaged_compact_startup_contract_fails_closed() -> None:
     )
     assert loader_failure["sceneLoaders"]["passed"] is False
     assert loader_failure["passed"] is False
+
+
+@pytest.mark.parametrize("change", ["missing", "duplicate", "extra", "unnamed", "wrong-root"])
+def test_packaged_compact_window_identity_gate_rejects_count_neutral_errors(change):
+    windows = [_SelfTestWindow(name) for name in PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOWS]
+    if change == "missing":
+        windows.pop(1)
+    elif change == "duplicate":
+        windows[1] = _SelfTestWindow("sharedWorldWindow")
+    elif change == "extra":
+        windows.append(_SelfTestWindow("unregisteredWindow"))
+    elif change == "unnamed":
+        windows[1] = _SelfTestWindow("")
+    else:
+        windows[0] = _SelfTestWindow("wrongRootWindow")
+    result = packaged_compact_startup_contract(
+        SimpleNamespace(windows=tuple(windows)), _SelfTestPet(), _runtime_snapshot(),
+    )
+    assert result["quickWindows"]["persistentHintsDisabled"] is True
+    assert result["quickWindows"]["windowIdentitiesMatch"] is False
+    assert result["passed"] is False
 
 
 def test_packaged_self_test_is_intrinsically_nonvisual() -> None:

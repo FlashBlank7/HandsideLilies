@@ -7,7 +7,26 @@ Item {
     required property var timelineModel
     property bool busy: false
     property bool followTail: true
+    signal saveLetterRequested(string messageId, string text)
+    // Only our paragraph markup is accepted. User/model text is always escaped;
+    // pasted HTML, image URLs and links cannot become live rich-text content.
+    function spacedPlainText(value) {
+        var escaped = String(value).replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                .replace(/\r\n?/g, "\n").replace(/\n/g, "<br/>")
+        return "<p style='line-height:145%; white-space:pre-wrap; margin:0'>" + escaped + "</p>"
+    }
     property color ink: "#30343a"
+    property int highlightedIndex: -1
+
+    function focusRow(index) {
+        highlightedIndex = index
+        followTail = index < 0
+        Qt.callLater(function() {
+            if (index >= 0) messages.positionViewAtIndex(index, ListView.Center)
+            else timeline.scrollToTail()
+        })
+    }
 
     function revealTail() {
         if (!followTail) return
@@ -54,7 +73,7 @@ Item {
         anchors.fill: parent
         clip: true
         model: timeline.timelineModel
-        spacing: 20
+        spacing: 24
         topMargin: 18
         bottomMargin: 24
         boundsBehavior: Flickable.StopAtBounds
@@ -75,40 +94,53 @@ Item {
             objectName: "chatRow_" + index
             required property string roleName
             required property string messageText
+            required property string messageId
             readonly property bool fromUser: roleName === "user"
             width: ListView.view.width
-            height: messageBody.implicitHeight + 55
+            height: messageBody.implicitHeight + 58
             Rectangle {
                 x: messageRow.fromUser ? 40 : 0
                 width: parent.width - (messageRow.fromUser ? 46 : 6)
                 height: parent.height
                 radius: 14
-                color: messageRow.fromUser ? "#eff0f2" : "transparent"
+                color: messageRow.index === timeline.highlightedIndex ? "#f3e9ec"
+                       : messageRow.fromUser ? "#eff0f2" : "transparent"
                 Column {
                     anchors.left: parent.left; anchors.right: parent.right
                     anchors.margins: 16
                     y: 12
                     spacing: 7
-                    Text {
-                        text: messageRow.fromUser ? "你" : "莉莉丝"
-                        color: messageRow.fromUser ? "#858a91" : "#985c63"
-                        font.pixelSize: 11
+                    RowLayout {
+                        width: parent.width; height: 24
+                        Text {
+                            text: messageRow.fromUser ? "你" : "莉莉丝"
+                            color: messageRow.fromUser ? "#858a91" : "#985c63"
+                            font.pixelSize: 12
+                        }
+                        Item { Layout.fillWidth: true }
+                        QuietAction {
+                            objectName: "chatSaveLetter_" + messageRow.index
+                            text: "留在盒中"; implicitHeight: 24; implicitWidth: 84; padding: 2
+                            visible: messageRow.messageId !== ""
+                            enabled: !timeline.busy
+                            onClicked: timeline.saveLetterRequested(messageRow.messageId, messageRow.messageText)
+                        }
                     }
                     TextEdit {
                         id: messageBody
                         objectName: "chatMessageBody"
                         width: parent.width
-                        text: messageRow.messageText || (timeline.busy ? "···" : "")
+                        text: timeline.spacedPlainText(messageRow.messageText || (timeline.busy ? "···" : ""))
                         readOnly: true
                         selectByMouse: true
                         wrapMode: TextEdit.Wrap
-                        textFormat: TextEdit.PlainText
+                        textFormat: TextEdit.RichText
                         font.family: "Microsoft YaHei UI"
                         font.pixelSize: 16
                         color: timeline.ink
                         selectionColor: "#e2d6d9"
                         selectedTextColor: "#25282d"
-                        // QTextDocument keeps natural paragraph spacing;
+                        // A fixed paragraph style keeps multiline replies airy;
                         // only this tail item changes during generation.
                     }
                 }

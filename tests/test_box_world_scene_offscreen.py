@@ -30,6 +30,7 @@ def test_box_world_is_a_real_large_scene_with_restorable_entry() -> None:
     )
     assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
     report = json.loads(completed.stdout)
+    assert report["summerOutfitReady"] is True
     first = report["firstPresentation"]
     assert first["title"] == "莉莉丝 · 盒中世界"
     assert first["placedDecorations"] == [

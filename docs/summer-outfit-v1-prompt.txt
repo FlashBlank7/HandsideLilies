@@ -1,0 +1,10 @@
+Built-in image_gen; identity-preserve edit, 2026-10-03.
+Reference: themes/first-encounter/assets/lilith-desktop-pet-chibi-v4.png
+Output: themes/first-encounter/assets/lilith-outfit-summer-cotton-transparent-v1.png
+No pixel rewriting, resizing, chroma-keying or alpha replacement after generation.
+
+Use case: identity-preserve.
+Asset type: production transparent character sprite for the Windows desktop pet Lilies in the box.
+Input image 1 is the edit target, the approved Lilith character. Change ONLY her dress into a visibly distinct, modest white summer cotton dress: sleeveless with broad shoulder straps and a high rounded neckline, a lightly gathered yoke below the clasped hands, a softly flared knee-length skirt, one restrained stitched hem, no patch pockets, no ruffled sleeves. Opaque cotton with subtle pale-gray fold shading, clearly different from the original pleated pocket dress. Do not redesign the person.
+Preserve exactly the front-facing white bob haircut, closed narrow eyes, expressionless pale face, small slender childlike chibi proportions, both hands clasped at chest, slightly bowed head, non-bloody faint porcelain cracks, the existing small red cord and white sandals, the overall body/hand/feet positions and full-body composition. Clean delicate cartoon linework matching the target. No added props, ribbons, flowers, background, floor, shadow, labels, text, or watermark.
+Output a single high-resolution portrait RGBA PNG, ideally 1152 by 2048 pixels or larger with the same portrait framing. TRUE transparent alpha background, fully transparent outside the silhouette and in all corners; no checkerboard, green screen, white matte or fringe. Keep full hair and both feet visible with a small clear margin. Skin, hair and cotton interiors must remain opaque. This is ordinary age-appropriate children's clothing, not translucent.

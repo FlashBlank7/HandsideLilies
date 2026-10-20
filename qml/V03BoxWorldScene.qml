@@ -11,6 +11,7 @@ Window {
     transientParent: null
 
     property var appBackend: null
+    property var sharedWorldState: null
     property var presentationArea: ({})
     property bool requestedVisible: false
     property bool stayOnTopWhenPresented: false
@@ -51,7 +52,9 @@ Window {
     readonly property real areaRight: finiteAreaValue("right", areaLeft + areaWidth)
     readonly property real areaBottom: finiteAreaValue("bottom", areaTop + areaHeight)
 
-    readonly property var boxWorldInfo: backendValue("boxWorldStatus", ({ objects: [] }))
+    readonly property var boxWorldInfo: sharedWorldState !== null
+                                        ? sharedWorldState
+                                        : backendValue("boxWorldStatus", ({ objects: [] }))
     readonly property var boxWorldObjects: boxWorldInfo.objects || []
     readonly property var growthInfo: boxWorldInfo.growth
                                        || backendValue("growthStatus", ({ points: 0, stage: "初遇" }))
@@ -119,6 +122,11 @@ Window {
         return String(item.unlockHint || item.unlock_hint || "继续积累共鸣")
     }
 
+    function openRecords(shelf) {
+        if (appBackend && appBackend.sharedWorld)
+            appBackend.sharedWorld.browse(shelf, false, 0)
+    }
+
     function stageFor(points) {
         if (points >= 1200)
             return "相伴"
@@ -168,6 +176,8 @@ Window {
 
     function outfitSource(outfitId) {
         var id = String(outfitId || "first-encounter")
+        if (id === "summer-cotton-dress")
+            return "../themes/first-encounter/assets/lilith-outfit-summer-cotton-transparent-v1.png"
         if (id === "home-cardigan")
             return "../themes/first-encounter/assets/lilith-outfit-home-cardigan-transparent-v2.png"
         if (id === "reading-smock")
@@ -305,6 +315,14 @@ Window {
         y: Math.max(worldStage.height * 0.23, Math.min(worldStage.height - height - 20,
             root.worldPosition(modelData, "y") * worldStage.height - height / 2))
         z: 6 + y / Math.max(1, worldStage.height) * 4
+
+        MouseArea {
+            objectName: "boxWorldRecordHit_" + decoration.decorationId
+            anchors.fill: parent; z: 20
+            enabled: ["paper-shelf", "letter-rack", "workbench"].indexOf(decoration.decorationId) >= 0
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: root.openRecords(decoration.decorationId === "paper-shelf" ? "papers" : decoration.decorationId === "letter-rack" ? "letters" : "projects")
+        }
 
         Rectangle {
             id: tokenShadow
@@ -511,6 +529,14 @@ Window {
             }
 
             PaperButton {
+                objectName: "boxWorldRecordsButton"
+                Layout.preferredWidth: root.microViewport ? 58 : 82
+                Layout.preferredHeight: root.microViewport ? 36 : 42
+                leftPadding: 9; rightPadding: 9
+                text: root.microViewport ? "记录" : "共同记录"
+                onClicked: root.openRecords("papers")
+            }
+            PaperButton {
                 id: fullScreenButton
                 objectName: "boxWorldSceneFullScreenButton"
                 Layout.preferredWidth: root.microViewport ? 58
@@ -543,6 +569,9 @@ Window {
 
     Item {
         id: body
+        // Both layouts derive from the container, never from each other.
+        // At a viewport breakpoint reciprocal width bindings can re-enter.
+        readonly property real sidebarWidth: Math.max(278, Math.min(334, width * 0.29))
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: titleBar.bottom
@@ -553,7 +582,7 @@ Window {
             objectName: "boxWorldSceneStage"
             x: root.narrowViewport ? 12 : 22
             y: 14
-            width: root.narrowViewport ? body.width - 24 : body.width - infoPanel.width - 58
+            width: root.narrowViewport ? body.width - 24 : body.width - body.sidebarWidth - 58
             height: body.height - 28
             radius: 24
             clip: true
@@ -773,7 +802,7 @@ Window {
             x: root.narrowViewport ? worldStage.x + 14 : worldStage.x + worldStage.width + 16
             y: root.narrowViewport ? worldStage.y + worldStage.height - height - 14 : worldStage.y + 10
             width: root.narrowViewport ? worldStage.width - 28
-                                       : Math.max(278, Math.min(334, body.width * 0.29))
+                                       : body.sidebarWidth
             height: root.microViewport
                     ? Math.max(88, Math.min(98, worldStage.height - 20))
                     : (root.narrowViewport

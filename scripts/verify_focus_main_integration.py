@@ -11,6 +11,7 @@ from pathlib import Path
 # desktop surface or use the hardware renderer on the developer's machine.
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QSG_RHI_BACKEND"] = "software"
+os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -26,7 +27,9 @@ from lilies.paths import qml_path
 
 
 def main() -> int:
-    temporary = tempfile.TemporaryDirectory(prefix="lilies-focus-main-")
+    output = PROJECT_ROOT / "artifacts" / "focus-main-integration"
+    output.mkdir(parents=True, exist_ok=True)
+    temporary = tempfile.TemporaryDirectory(prefix="test-data-", dir=output)
     os.environ["LILIES_DATA_DIR"] = temporary.name
     QQuickWindow.setDefaultAlphaBuffer(True)
     app = QApplication.instance() or QApplication([])
@@ -88,14 +91,22 @@ def main() -> int:
     # directly.  This catches a dead hit target or a broken WorkPanel.invoke
     # bridge while proving that a low-power compact pet still acknowledges the
     # explicit click immediately.
-    backend.openWorkPanelSection("work")
-    settle(140)
+    # The activity-first page keeps timer setup secondary. Follow the same
+    # anchor route as the radial Focus entry, then still click the real button.
+    backend.openWorkPanelSection("focus")
+    settle(220)
     focus_minutes_input.setProperty("value", 5)
     app.processEvents()
     start_center = focus_start_button.mapToScene(
         QPointF(focus_start_button.width() / 2, focus_start_button.height() / 2)
     )
     button_visible_before_click = bool(focus_start_button.isVisible())
+    work_panel.grabWindow().save(str(output / "before-start.png"))
+    click_geometry = {
+        "center": [start_center.x(), start_center.y()],
+        "panel": [work_panel.width(), work_panel.height()],
+        "anchor": str(work_panel.property("lastRevealedAnchor")),
+    }
     motion_ticks_before_click = int(aura.property("motionTickCount"))
     orbit_before_click = float(aura.property("orbitAngle"))
     QTest.mouseClick(
@@ -287,6 +298,7 @@ def main() -> int:
     ]
     outcome = {
         "explicitStart": explicit_start,
+        "clickGeometry": click_geometry,
         "lowPowerHandoff": low_power_handoff,
         "running": running,
         "progressed": progressed,
@@ -306,6 +318,7 @@ def main() -> int:
         "loadoutUnchanged": final_loadout == original_loadout,
         "qmlWarningCount": len(warnings),
         "focusQmlWarningCount": len(focus_qml_warnings),
+        "qmlWarningSamples": warnings[:8],
     }
     outcome["passed"] = bool(
         explicit_start["buttonVisible"]
@@ -373,7 +386,7 @@ def main() -> int:
         and restored_completion["visible"]
         and restored_completion["completionVisible"]
         and outcome["loadoutUnchanged"]
-        and outcome["focusQmlWarningCount"] == 0
+        and outcome["qmlWarningCount"] == 0
     )
 
     for window in root.findChildren(QQuickWindow):

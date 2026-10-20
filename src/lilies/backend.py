@@ -21,6 +21,7 @@ from PySide6.QtCore import (
     Qt,
     QThread,
     QTimer,
+    QTimeZone,
     QUrl,
     Signal,
     Slot,
@@ -28,6 +29,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication
 
 from .companion_controller import CompanionController
+from .chat_delivery import ChatDelivery
 from .connectors import (
     CalendarReminderBridge,
     CalendarRuntime,
@@ -63,6 +65,8 @@ from .core.orchestration import (
 )
 from .core.permissions import PermissionBroker, PermissionMode
 from .core.pet_habitat import PetHabitatController
+from .core.pet_snap import logical_host
+from .core.quiet_reactions import QuietReactionGate, completed_task_identity
 from .core.productivity import (
     BoxWorldService,
     EventOutbox,
@@ -75,6 +79,10 @@ from .core.productivity import (
     WardrobeService,
 )
 from .core.selection import SelectionService
+from .core.papers import PaperService
+from .work_resumption_controller import WorkResumptionController
+from .box_search_controller import BoxSearchController
+from .shared_world_controller import SharedWorldController
 from .core.shell import ShellController
 from .core.socket_server import (
     LocalSocketServer,
@@ -267,6 +275,8 @@ class Backend(QObject):
     windowGroupsChanged = Signal()
     habitatChanged = Signal()
     inputPulseChanged = Signal()
+    petReactionChanged = Signal()
+    _taskReactionRequested = Signal(str, float)
     productivityChanged = Signal()
     connectorStatusChanged = Signal()
     connectorAssistChanged = Signal()
@@ -293,11 +303,19 @@ class Backend(QObject):
     petFloatModeChanged = Signal()
     petAvoidanceChanged = Signal()
     petDragModeChanged = Signal()
+    petPointerInteractionChanged = Signal(bool)
     quickActionsChanged = Signal()
     desktopPeekChanged = Signal()
     desktopPeekHotkeyTriggered = Signal()
+    boxSearchHotkeyTriggered = Signal()
+    boxSearchHotkeyChanged = Signal()
     memoryMapChanged = Signal()
     openConversationRequested = Signal()
+    openReadingDeskRequested = Signal()
+    paperRecordOpened = Signal(str)
+    paperReviewRequested = Signal()
+    papersChanged = Signal()
+    chatPositionRequested = Signal(int)
     externalActivationRequested = Signal(str)
     _activationApplyRequested = Signal(object)
     _windowCatalogRefreshFinished = Signal(object)
@@ -350,6 +368,9 @@ class Backend(QObject):
         self.focus_diversion = FocusDiversionMonitor()
         self.presence = PresenceStateMachine()
         self.intent_arbiter = IntentArbiter()
+        self._quiet_reaction_gate = QuietReactionGate()
+        self._pet_reaction: dict[str, Any] = {}
+        self._taskReactionRequested.connect(self._receive_task_reaction, Qt.QueuedConnection)
         self.model_task_broker = ModelTaskBroker()
         self._window_items: list[dict[str, Any]] = []
         self._window_groups: list[dict[str, Any]] = []
@@ -438,11 +459,33 @@ class Backend(QObject):
         self._companion_interaction_suspended = False
         self.growth = GrowthEngine(self.database)
         self.tasks = TaskService(self.database, growth=self.growth)
+        self._work_resumption = WorkResumptionController(self.database, self.tasks.get,
+            window_lookup=self.window_catalog.lookup, smoke=smoke, parent=self)
         self.focus = FocusService(self.database, growth=self.growth)
         self.reading_sessions = ReadingSessionService(self.database, growth=self.growth)
+        self.papers = PaperService(self.database, self.reading_sessions)
+        self.selection.paper_context_provider = self.papers.capture_context
+        self.selection.capture_policy = lambda hwnd: self.companion.activity.guard.evaluate(
+            self.companion.reader(hwnd)
+        ).can_bubble
+        self._paper_state: dict[str, Any] = {}
+        self._paper_card_view = {"all": False, "marked": False, "query": "", "offset": 0}
+        self._paper_library_view = {"query": "", "offset": 0}
+        self._refresh_papers()
         self.reminders = ReminderScheduler(self.database)
+        self._box_search = BoxSearchController(self.database, self.desktop, self.reminders,
+            allowed=lambda: not self._companion_suppressed_status and not self._shutdown_in_progress
+                and not self._shutdown_complete and not self._pet_interaction_locked, parent=self)
+        self._box_search.routeRequested.connect(self._route_box_search)
+        self._box_search.recordsChanged.connect(self.refreshProductivity)
+        self._box_search.completedNotice.connect(self._set_status)
         self.wardrobe = WardrobeService(self.database, self.theme)
         self.box_world = BoxWorldService(self.database)
+        self._shared_world = SharedWorldController(self.database,
+            allowed=lambda: not self._companion_suppressed_status and not self._shutdown_in_progress
+                and not self._shutdown_complete, parent=self)
+        self._shared_world.notice.connect(self._set_status)
+        self._shared_world.sourceRequested.connect(self._open_shared_source)
         self.narrative = NarrativeDirector(self.database)
         self.event_outbox = EventOutbox(self.database)
         self.calendar_reminder_bridge = CalendarReminderBridge(
@@ -619,12 +662,17 @@ class Backend(QObject):
         )
         self.socket.start()
         self._desktop_items: list[dict[str, Any]] = []
-        self._chat_text = ""
         from .chat_timeline import ChatTimeline
         self._chat_timeline = ChatTimeline(self)
         self._chat_timeline.updated.connect(self.chatChanged)
+        self._chat_delivery = ChatDelivery(self._on_chat_chunk, self)
         self._chat_open = False
         self._chat_busy = False
+        self._chat_retrying = False
+        self._chat_retry_error = ""
+        self._conversation_page = self.database.conversation_page(self.chat.conversation_id)
+        self._reply_revisions: list[dict[str, Any]] = []
+        self._display_chat_page(self._conversation_page)
         self._model_status = self.chat.status()
         self._memory_items = self.database.memory_cards()
         self._memory_partitions = self.chat.memory.partitions()
@@ -691,7 +739,18 @@ class Backend(QObject):
         self.desktopPeekHotkeyTriggered.connect(self.toggleDesktopPeek)
         if not smoke:
             self._desktop_peek_hotkey.start(self._desktop_peek_hotkey_text)
-        self.chat.chunk.connect(self._on_chat_chunk)
+        self._box_search_hotkey_text = str(self.database.get_setting("box_search_hotkey", "Ctrl+Alt+K"))
+        try:
+            self._box_search_hotkey_text = parse_hotkey(self._box_search_hotkey_text).display
+        except ValueError:
+            self._box_search_hotkey_text = "Ctrl+Alt+K"
+        self._box_search_hotkey = GlobalHotkey(lambda: self.boxSearchHotkeyTriggered.emit(), hotkey_id=0x4C4B)
+        self.boxSearchHotkeyTriggered.connect(self.openBoxSearch)
+        if not smoke:
+            self._box_search_hotkey.start(self._box_search_hotkey_text)
+        # Buffer on the producer thread and queue one GUI wake per batch, not
+        # one Python/Qt callback per token. Only enqueue is thread-safe/direct.
+        self.chat.chunk.connect(self._chat_delivery.enqueue, Qt.ConnectionType.DirectConnection)
         self.chat.responseStarted.connect(self._on_chat_started)
         self.chat.responseFinished.connect(self._on_chat_finished)
         self.chat.error.connect(self._on_chat_error)
@@ -874,11 +933,21 @@ class Backend(QObject):
 
     @Property(str, notify=chatChanged)
     def chatText(self) -> str:
-        return self._chat_text
+        # Legacy full-text readers share the actual timeline. Do not duplicate
+        # the entire history on the GUI thread for every streamed delta.
+        return self._chat_timeline.plain_text()
 
     @Property(QObject, constant=True)
     def chatTimeline(self):
         return self._chat_timeline
+
+    @Property("QVariantMap", notify=chatChanged)
+    def chatPage(self):
+        return {key: value for key, value in self._conversation_page.items() if key != "messages"}
+
+    @Property("QVariantList", notify=chatChanged)
+    def replyRevisions(self):
+        return self._reply_revisions
 
     @Property(bool, notify=chatOpenChanged)
     def chatOpen(self) -> bool:
@@ -940,6 +1009,28 @@ class Backend(QObject):
     def inputPulse(self) -> dict[str, Any]:
         return dict(self._input_pulse_status)
 
+    @Property("QVariantMap", notify=petReactionChanged)
+    def petReaction(self) -> dict[str, Any]:
+        return dict(self._pet_reaction)
+
+    def _offer_task_reaction(self, result) -> None:
+        identity = completed_task_identity(result)
+        if not identity: return
+        submitted_at = time.monotonic()
+        if QThread.currentThread() == self.thread():
+            self._receive_task_reaction(identity, submitted_at)
+        else:
+            self._taskReactionRequested.emit(identity, submitted_at)
+
+    @Slot(str, float)
+    def _receive_task_reaction(self, identity, submitted_at):
+        allowed = not (self._shutdown_in_progress or self._shutdown_complete
+            or self._pet_interaction_locked or self.companionSuppressed or self.dockSuppressed)
+        event = self._quiet_reaction_gate.accept(identity, submitted_at, allowed=allowed)
+        if event:
+            self._pet_reaction = event
+            self.petReactionChanged.emit()
+
     @Property(bool, notify=habitatChanged)
     def dockSuppressed(self) -> bool:
         return str(self._habitat_status.get("state", "")) in {"blocked", "silent"}
@@ -954,11 +1045,20 @@ class Backend(QObject):
     def taskItems(self) -> list[dict[str, Any]]:
         return [self._task_public(value) for value in self.tasks.list(limit=200)]
 
+    @Property(QObject, constant=True)
+    def workResumption(self) -> QObject:
+        return self._work_resumption
+
+    @Property("QVariantList", notify=productivityChanged)
+    def archivedTaskItems(self) -> list[dict[str, Any]]:
+        return [self._task_public(value) for value in self.tasks.list(status="archived", include_archived=True, limit=200)]
+
     @Property("QVariantMap", notify=productivityChanged)
     def focusStatus(self) -> dict[str, Any]:
         value = self.focus.status()
         if not value:
             return {"active": False, "paused": False, "elapsedSeconds": 0, "durationMinutes": 25}
+        task = self.tasks.get(str(value.get("task_id") or "")) if value.get("task_id") else None
         return {
             **dict(value),
             "id": value.get("session_id", ""),
@@ -967,6 +1067,9 @@ class Backend(QObject):
             "paused": value.get("state") == "paused",
             "elapsedSeconds": int(value.get("live_active_seconds", value.get("active_seconds", 0))),
             "durationMinutes": max(5, int(value.get("planned_seconds", 1500)) // 60),
+            "taskId": value.get("task_id") or "",
+            "taskTitle": task["title"] if task else "",
+            "remainingSeconds": max(0, int(value.get("planned_seconds", 1500)) - int(value.get("live_active_seconds", value.get("active_seconds", 0)))),
         }
 
     @Property("QVariantMap", notify=productivityChanged)
@@ -991,7 +1094,125 @@ class Backend(QObject):
             "active": value.get("state") in {"running", "paused"},
             "paused": value.get("state") == "paused",
             "elapsedSeconds": int(value.get("live_active_seconds", value.get("active_seconds", 0))),
+            "paperId": str(value.get("source", ""))[6:] if str(value.get("source", "")).startswith("paper:") else "",
         }
+
+    @Property("QVariantMap", notify=papersChanged)
+    def paperState(self) -> dict[str, Any]:
+        return self._paper_state
+
+    def _refresh_papers(self) -> None:
+        session = self.reading_sessions.status() or {}
+        self._paper_session_signature = (session.get("session_id"), session.get("source"), session.get("state"))
+        current = self.papers.selected()
+        paper_id = str((current or {}).get("paper_id", ""))
+        view = self._paper_card_view
+        card_page = self.papers.card_page(None if view["all"] else paper_id,
+            marked_only=view["marked"], query=view["query"], offset=view["offset"])
+        library = self.papers.library_page(**self._paper_library_view)
+        self._paper_state = {
+            "papers": library["items"], "library": library, "current": current or {},
+            "cards": card_page["items"], "cardPage": card_page,
+            "review": self.papers.summary(paper_id) if paper_id else {"groups": [], "markedCount": 0},
+            "active": bool(self.papers.capture_context()),
+        }
+        self.papersChanged.emit()
+
+    @Slot(bool, bool, str, int)
+    def paperBrowseCards(self, all_cards: bool, marked: bool, query: str, offset: int) -> None:
+        self._paper_card_view = {"all": all_cards, "marked": marked and not all_cards, "query": query[:1000], "offset": max(0, offset)}
+        self._refresh_papers()
+
+    @Slot(str, int)
+    def paperBrowseLibrary(self, query: str, offset: int) -> None:
+        self._paper_library_view = {"query": query[:1000], "offset": max(0, offset)}
+        self._refresh_papers()
+
+    @Slot()
+    def openReadingDesk(self) -> None:
+        self._refresh_papers()
+        self.setChatOpen(True)
+        self.openReadingDeskRequested.emit()
+
+    def _open_paper_record(self, paper_id: str) -> dict[str, Any]:
+        """Navigate to a validated source, not just to the notebook's old view."""
+        result = self.paperSelect(paper_id)
+        if result["ok"]:
+            # Refreshes and tab reopening must not reset filters or edit drafts.
+            # Only a successful, explicit source route changes the notebook view.
+            self.paperRecordOpened.emit(paper_id)
+            self.openReadingDesk()
+        return result
+
+    @Slot(str, str, result="QVariantMap")
+    def paperAdd(self, title: str, source: str) -> dict[str, Any]:
+        try:
+            self.papers.add(title, source)
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self._paper_card_view["offset"] = 0
+        self._paper_library_view = {"query": "", "offset": 0}
+        self._refresh_papers()
+        return {"ok": True}
+
+    @Slot(str, result="QVariantMap")
+    def paperSelect(self, paper_id: str) -> dict[str, Any]:
+        try:
+            self.papers.select(paper_id)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        self._paper_card_view["offset"] = 0
+        self._refresh_papers()
+        return {"ok": True}
+
+    @Slot(str, int, str, str, result="QVariantMap")
+    def paperSavePosition(self, paper_id: str, page: int, locator: str, next_step: str) -> dict[str, Any]:
+        try:
+            self.papers.update_position(paper_id, page, locator, next_step)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        self._refresh_papers()
+        return {"ok": True}
+
+    @Slot(str, result="QVariantMap")
+    def paperStart(self, paper_id: str) -> dict[str, Any]:
+        try:
+            self.papers.start(paper_id)
+        except (RuntimeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self._refresh_papers()
+        self.refreshProductivity()
+        self._set_status("本篇模式已开启；保存的划词会记在这篇论文中")
+        return {"ok": True}
+
+    @Slot(str, str, str, result="QVariantMap")
+    def paperMarkCard(self, paper_id: str, card_id: str, mark: str) -> dict[str, Any]:
+        try:
+            self.papers.mark(paper_id, card_id, mark)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        self._refresh_papers()
+        return {"ok": True}
+
+    @Slot(str, str, result="QVariantMap")
+    def paperLeaveQuestion(self, paper_id: str, question: str) -> dict[str, Any]:
+        try:
+            self.papers.question(paper_id, question)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        self.refreshReadingCards()
+        return {"ok": True}
+
+    @Slot(str, str, result="QVariantMap")
+    def paperOpenSource(self, paper_id: str, card_id: str = "") -> dict[str, Any]:
+        try:
+            target = self.papers.open_target(paper_id, card_id)
+            if not QDesktopServices.openUrl(QUrl(target["url"])):
+                raise ValueError("没有打开原文，请检查文件和默认阅读器")
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self._set_status(target["note"])
+        return {"ok": True, **target}
 
     @Property("QVariantList", notify=productivityChanged)
     def reminderItems(self) -> list[dict[str, Any]]:
@@ -1119,6 +1340,16 @@ class Backend(QObject):
             )
         except (KeyError, OSError, RuntimeError, ValueError):
             return ""
+
+    @Slot("QVariantMap", result="QVariantMap")
+    def slackGenerateManifest(self, value: object) -> dict[str, Any]:
+        # UI-only, pure bootstrap. It must work before a connector/account or
+        # Credential Manager is available and must never read a saved token.
+        try:
+            manifest = SlackRuntime.preview_manifest(value)
+        except (TypeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "manifest": json.dumps(manifest, ensure_ascii=False, indent=2)}
 
     @Property(bool, notify=workPanelOpenChanged)
     def workPanelOpen(self) -> bool:
@@ -1420,6 +1651,12 @@ class Backend(QObject):
         self.database.set_setting("pet_drag_mode", value)
         self.petDragModeChanged.emit()
 
+    @property
+    def pet_pointer_interaction_active(self) -> bool:
+        """GUI-thread gesture ownership, without menu-only/avoidance locks."""
+
+        return self._pet_pointer_critical_locked
+
     def _publish_pet_interaction_lock(self) -> None:
         value = bool(self._pet_interaction_lock_reasons)
         pointer_critical = any(
@@ -1438,6 +1675,10 @@ class Backend(QObject):
         if pointer_critical == self._pet_pointer_critical_locked:
             return
         self._pet_pointer_critical_locked = pointer_critical
+        # Surface cleanup shares exactly the same owners as stream/layout
+        # suspension. Emit only the aggregate press/release edge, never each
+        # pointer sample or a release while another component still owns it.
+        self.petPointerInteractionChanged.emit(pointer_critical)
         if pointer_critical:
             self._pause_pointer_critical_runtime()
             self.companion.set_interaction_suspended(True)
@@ -1465,6 +1706,10 @@ class Backend(QObject):
     def _pause_pointer_critical_runtime(self) -> None:
         """Remove recurring Python/Qt wakeups from a held native gesture."""
 
+        # The tail model's 33 ms timer reparses/reflows the visible reply, even
+        # though token collection itself is cheap. Defer those periodic layouts
+        # while dragging/resizing; final commits and model execution continue.
+        self._chat_timeline.set_stream_paused(True)
         if self._pet_pointer_paused_timers:
             return
         # Keep the liveness heartbeat and recovery monitor running: a long,
@@ -1515,6 +1760,7 @@ class Backend(QObject):
         if self._shutdown_in_progress or self._shutdown_complete:
             self._pet_pointer_input_pulse_suspended = False
             return
+        self._chat_timeline.set_stream_paused(False)
         if self._pet_pointer_input_pulse_suspended:
             try:
                 self.input_pulse.set_interaction_suspended(False)
@@ -1855,7 +2101,7 @@ class Backend(QObject):
             # pet's manual-detach scope.  Keep the last external HabitatHost
             # intact while the person types in chat/settings instead of
             # reattaching fifteen seconds after that panel closes.
-            self.pet_habitat.update_foreground(active)
+            self.pet_habitat.update_foreground(self._logical_habitat_host(active))
         self._reconcile_presence_from_catalog(active)
         if groups_changed:
             self.windowGroupsChanged.emit()
@@ -2014,6 +2260,7 @@ class Backend(QObject):
         next_state = str(next_habitat.get("state", ""))
         was_suppressed = previous_state in {"blocked", "silent"}
         is_suppressed = next_state in {"blocked", "silent"}
+        self.selection.set_privacy_suppressed(is_suppressed)
         if is_suppressed:
             # The active-map checks make this cheap and idempotent on every
             # 75 ms tick while still catching an asynchronous result that
@@ -2031,6 +2278,7 @@ class Backend(QObject):
         return next_habitat
 
     def _on_unified_win_event(self, event: WinEvent) -> None:
+        self.selection.handle_window_event(event)
         if event.kind is not WinEventKind.FOREGROUND:
             return
         try:
@@ -2199,6 +2447,8 @@ class Backend(QObject):
         )
         if (str(component_id), str(action_id)) in _PRODUCTIVITY_COMPONENT_MUTATIONS:
             self._mark_productivity_dirty()
+        if str(component_id) == "tasks" and str(action_id) == "complete":
+            self._offer_task_reaction(result.get("result") if isinstance(result, dict) else None)
         return result
 
     def _mark_productivity_dirty(self) -> None:
@@ -2325,6 +2575,10 @@ class Backend(QObject):
             self._mark_productivity_dirty()
             active_focus = None
         active_reading = self.reading_sessions.status()
+        paper_session = active_reading or {}
+        paper_signature = (paper_session.get("session_id"), paper_session.get("source"), paper_session.get("state"))
+        if paper_signature != self._paper_session_signature:
+            self._refresh_papers()
         # Direct mutations call this slot explicitly and must always publish
         # their new list/state.  Only the recurring one-second tick may skip a
         # redundant UI invalidation while the productivity system is idle.
@@ -2467,6 +2721,16 @@ class Backend(QObject):
     def _task_public(value: dict[str, Any]) -> dict[str, Any]:
         priorities = {0: "low", 1: "normal", 2: "high", 3: "critical"}
         task_id = str(value.get("task_id", ""))
+        occurrences = list(value.get("occurrences", []))
+        pending = next((item for item in occurrences if item["status"] == "pending"), {})
+        completed = sorted((item for item in occurrences if item["status"] == "completed"), key=lambda item: item.get("completed_at") or "", reverse=True)
+        due_local = ""
+        display_due = pending.get("scheduled_for") if pending and value.get("due_at") else value.get("due_at")
+        if display_due:
+            try:
+                due_local = datetime.fromisoformat(str(display_due)).astimezone(ZoneInfo(str(value.get("timezone") or "UTC"))).strftime("%Y-%m-%d %H:%M")
+            except (ValueError, ZoneInfoNotFoundError):
+                pass
         return {
             **dict(value),
             "id": task_id,
@@ -2474,6 +2738,10 @@ class Backend(QObject):
             "priority": priorities.get(int(value.get("priority", 1)), "normal"),
             "completed": value.get("status") == "completed",
             "dueAt": value.get("due_at") or "",
+            "dueLocal": due_local,
+            "dueLabel": due_local,
+            "occurrenceId": pending.get("occurrence_id", ""),
+            "latestCompletedOccurrenceId": completed[0]["occurrence_id"] if completed else "",
         }
 
     @staticmethod
@@ -2578,36 +2846,73 @@ class Backend(QObject):
         else:
             self.openWorkPanelSection(self._work_panel_section)
 
-    @Slot("QVariantMap")
-    def tasksCreate(self, value: object) -> None:
+    @Slot("QVariantMap", result="QVariantMap")
+    def tasksCreate(self, value: object) -> dict[str, Any]:
+        from .core.task_editing import task_changes
         payload = dict(value) if isinstance(value, dict) else {}
-        priority_value = payload.get("priority", 1)
-        priorities = {"low": 0, "normal": 1, "high": 2, "critical": 3}
-        priority = priorities.get(str(priority_value), priority_value)
         try:
-            self.tasks.create(
-                str(payload.get("title", "")),
-                note=str(payload.get("note", "")),
-                category=str(payload.get("category", "daily")),
-                priority=int(priority),
-                due_at=payload.get("dueAt"),
-                timezone_name=str(payload.get("timezone", "UTC")),
-                recurrence=payload.get("recurrence"),
-            )
+            payload.setdefault("category", "daily")
+            payload.setdefault("timezone", bytes(QTimeZone.systemTimeZoneId()).decode("utf-8") or "UTC")
+            changes = task_changes(payload)
+            saved = self.tasks.create(**changes)
             self._set_status("任务已放入收件箱")
         except (KeyError, TypeError, ValueError) as exc:
             self._set_status(f"任务没有创建：{exc}")
+            return {"ok": False, "error": str(exc)}
         self.refreshProductivity()
+        return {"ok": True, "task": self._task_public(saved)}
 
-    @Slot(str)
-    def tasksComplete(self, task_id: str) -> None:
+    @Slot(str, "QVariantMap", result="QVariantMap")
+    def tasksUpdate(self, task_id: str, value: object) -> dict[str, Any]:
+        from .core.task_editing import task_changes
         try:
-            result = self.tasks.complete(task_id)
+            task = self.tasks.get(task_id)
+            if task is None or not isinstance(value, dict):
+                raise ValueError("没有找到可编辑的任务")
+            saved = self.tasks.update(task_id, **task_changes(value, default_timezone=task["timezone"]))
+        except sqlite3.IntegrityError:
+            return {"ok": False, "error": "这个时间已有另一次任务，请选择其他截止时间"}
+        except (KeyError, TypeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self._set_status("任务已保存")
+        self.refreshProductivity()
+        return {"ok": True, "task": self._task_public(saved)}
+
+    @Slot(str, str, result="QVariantMap")
+    def tasksReopen(self, task_id: str, occurrence_id: str) -> dict[str, Any]:
+        try:
+            if not occurrence_id:
+                raise ValueError("请先选择要撤销的那一次完成记录")
+            self.tasks.reopen(task_id, occurrence_id)
+        except (KeyError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self._set_status("已撤销这一次完成；没有扣除其他事项的共鸣")
+        self.refreshProductivity()
+        return {"ok": True}
+
+    @Slot(str, bool, result="QVariantMap")
+    def tasksSetArchived(self, task_id: str, archived: bool) -> dict[str, Any]:
+        try:
+            (self.tasks.archive if archived else self.tasks.restore)(task_id)
+        except (KeyError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self._set_status("任务已归档，可以从已归档中恢复" if archived else "任务已恢复")
+        self.refreshProductivity()
+        return {"ok": True}
+
+    @Slot(str, result="QVariantMap")
+    @Slot(str, str, result="QVariantMap")
+    def tasksComplete(self, task_id: str, occurrence_id: str = "") -> dict[str, Any]:
+        try:
+            result = self.tasks.complete(task_id, occurrence_id or None)
+            self._offer_task_reaction(result)
             points = int((result.get("growth") or {}).get("points", 0))
             self._set_status(f"任务完成 · 共鸣 +{points}" if points else "任务已经完成")
         except (KeyError, ValueError) as exc:
             self._set_status(f"任务没有完成：{exc}")
+            return {"ok": False, "error": str(exc)}
         self.refreshProductivity()
+        return {"ok": True}
 
     @Slot(int)
     def focusStart(self, minutes: int = 25) -> None:
@@ -2618,6 +2923,20 @@ class Backend(QObject):
         except (RuntimeError, ValueError) as exc:
             self._set_status(str(exc))
         self.refreshProductivity()
+
+    @Slot(str, int, result="QVariantMap")
+    def focusStartTask(self, task_id: str, minutes: int = 25) -> dict[str, Any]:
+        try:
+            task = self.tasks.get(task_id)
+            if task is None or task["archived"] or task["status"] != "open":
+                raise ValueError("请选择一件尚未完成的任务")
+            value = self.focus.start(task_id=task_id, minutes=int(minutes))
+            self._publish_focus_transition("started", value)
+        except (KeyError, RuntimeError, TypeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self._set_status("开始专注：" + task["title"])
+        self.refreshProductivity()
+        return {"ok": True}
 
     @Slot()
     def focusPause(self) -> None:
@@ -2745,6 +3064,7 @@ class Backend(QObject):
         except RuntimeError as exc:
             self._set_status(str(exc))
         self.refreshProductivity()
+        self._refresh_papers()
 
     @Slot()
     def readingFinish(self) -> None:
@@ -2752,7 +3072,10 @@ class Backend(QObject):
         if value:
             self.reading_sessions.finish(str(value["session_id"]))
             self._set_status("论文阅读会话已完成")
+        self._refresh_papers()
         self.refreshProductivity()
+        if value and str(value.get("source", "")).startswith("paper:"):
+            self.paperReviewRequested.emit()
 
     @Slot("QVariantMap")
     def remindersCreate(self, value: object) -> None:
@@ -2808,6 +3131,29 @@ class Backend(QObject):
     def enterBoxWorld(self) -> None:
         self.box_world.enter()
         self._presentBoxWorld()
+
+    @Property(QObject, constant=True)
+    def sharedWorld(self):
+        return self._shared_world
+
+    @Slot(object)
+    def _open_shared_source(self, route):
+        if self._shutdown_in_progress or self._shutdown_complete or self.companionSuppressed:
+            self._shared_world.close()
+            return
+        if route["kind"] == "paper":
+            result = self._open_paper_record(route["id"])
+        elif route["kind"] == "chat":
+            result = {"ok": self.openHistoryMessage(route["conversationId"], route["id"])}
+            if result["ok"]:
+                self.setChatOpen(True)
+                self.openConversationRequested.emit()
+        else: result = {"ok": False}
+        if result["ok"]:
+            self._shared_world.close()
+            self.setBoxWorldSceneOpen(False)
+        else:
+            self._shared_world.reportError(result.get("error", "请先结束当前操作，再打开原记录"))
 
     @Slot(str)
     def boxWorldPlace(self, object_id: str) -> None:
@@ -3472,10 +3818,10 @@ class Backend(QObject):
         self._set_status("Slack 信笺匣已展开")
         return True
 
-    @Slot(str)
-    def calendarOpenEvent(self, event_id: str) -> None:
+    @Slot(str, result=bool)
+    def calendarOpenEvent(self, event_id: str) -> bool:
         if self.calendar_connector is None:
-            return
+            return False
         try:
             target = self.calendar_connector.open_event(event_id)
             url = str(target.get("url", ""))
@@ -3483,11 +3829,13 @@ class Backend(QObject):
                 raise OSError("系统浏览器没有打开日程")
         except (KeyError, OSError, RuntimeError, ValueError) as exc:
             self._set_status(f"日程没有打开：{exc}")
+            return False
+        return True
 
-    @Slot(str)
-    def slackOpenMessage(self, event_id: str) -> None:
+    @Slot(str, result=bool)
+    def slackOpenMessage(self, event_id: str) -> bool:
         if self.slack_connector is None:
-            return
+            return False
         try:
             item = self.slack_connector.open_message(event_id)
             url = str(item.get("link", ""))
@@ -3495,6 +3843,8 @@ class Backend(QObject):
                 raise OSError("Slack 没有接受消息链接")
         except (KeyError, OSError, RuntimeError, ValueError) as exc:
             self._set_status(f"Slack 消息没有打开：{exc}")
+            return False
+        return True
 
     @Slot(float, float)
     def detachPetHabitat(self, x: float, y: float) -> None:
@@ -3502,6 +3852,42 @@ class Backend(QObject):
         self.pet_habitat.detach()
         self._habitat_status = self.pet_habitat.status()
         self.habitatChanged.emit()
+
+    @staticmethod
+    def _logical_habitat_host(value: dict | None) -> dict | None:
+        if value is None:
+            return None
+        screens = []
+        for screen in QGuiApplication.screens():
+            geometry = screen.geometry()
+            screens.append(dict(left=geometry.x(),top=geometry.y(),
+                                width=geometry.width(),height=geometry.height(),
+                                dpr=screen.devicePixelRatio()))
+        return logical_host(value, screens)
+
+    @Slot('QVariantMap', result=bool)
+    def finishPetPlacement(self, placement: dict) -> bool:
+        """Called once after the native drag loop, using cached host geometry."""
+        from .core.window_catalog import WindowRect
+        keys = ('x','y','width','height','figureLeft','figureTop','figureWidth','figureHeight')
+        try:
+            values = {key: float(placement[key]) for key in keys}
+            if not all(math.isfinite(v) and abs(v)<1e7 for v in values.values()):
+                return False
+            if min(values[key] for key in ('width','height','figureWidth','figureHeight')) <= 0:
+                return False
+        except (KeyError,TypeError,ValueError):
+            return False
+        left=values['x']+values['figureLeft']
+        top=values['y']+values['figureTop']
+        figure=WindowRect(round(left),round(top),round(left+values['figureWidth']),round(top+values['figureHeight']))
+        area=self.screenWorkAreaAt((figure.left+figure.right)/2,(figure.top+figure.bottom)/2)
+        work=WindowRect.from_value(area)
+        if work is None: return False
+        self.pet_habitat.set_pet_size(values['width'],values['height'])
+        snapped=self.pet_habitat.release_near_edge(values['x'],values['y'],figure,work)
+        self._sync_habitat_state()
+        return snapped
 
     @Slot()
     def refreshSystemStatus(self) -> None:
@@ -4003,6 +4389,9 @@ class Backend(QObject):
     def setDesktopPeekHotkey(self, value: str) -> None:
         try:
             parsed = parse_hotkey(value)
+            other = parse_hotkey(self._box_search_hotkey_text)
+            if (parsed.modifiers, parsed.virtual_key) == (other.modifiers, other.virtual_key):
+                raise ValueError("这个快捷键已用于盒子快搜")
         except ValueError as exc:
             self._set_status(str(exc))
             return
@@ -4013,6 +4402,115 @@ class Backend(QObject):
         self.database.set_setting("desktop_peek_hotkey", parsed.display)
         self.desktopPeekChanged.emit()
         self._set_status(f"看桌面快捷键已改为 {parsed.display}")
+
+    @Property(QObject, constant=True)
+    def boxSearch(self):
+        return self._box_search
+
+    @Property(str, notify=boxSearchHotkeyChanged)
+    def boxSearchHotkey(self):
+        return self._box_search_hotkey_text
+
+    @Property(str, notify=boxSearchHotkeyChanged)
+    def boxSearchHotkeyError(self):
+        return self._box_search_hotkey.error
+
+    @Slot(str)
+    def setBoxSearchHotkey(self, value: str):
+        try:
+            parsed = parse_hotkey(value)
+            other = parse_hotkey(self._desktop_peek_hotkey_text)
+            if (parsed.modifiers, parsed.virtual_key) == (other.modifiers, other.virtual_key):
+                raise ValueError("这个快捷键已用于看桌面")
+        except ValueError as exc:
+            self._set_status(str(exc))
+            return
+        if parsed.display == self._box_search_hotkey_text and self._box_search_hotkey.registered:
+            return
+        replacement = GlobalHotkey(lambda: self.boxSearchHotkeyTriggered.emit(), hotkey_id=0x4C4B)
+        if not self._preview_mode and not replacement.start(parsed.display):
+            self._set_status(replacement.error or "快捷键没有保存")
+            replacement.stop()
+            return
+        previous = self._box_search_hotkey
+        self._box_search_hotkey = replacement
+        self._box_search_hotkey_text = parsed.display
+        previous.stop()
+        self.database.set_setting("box_search_hotkey", parsed.display)
+        self.boxSearchHotkeyChanged.emit()
+        self._set_status("盒子快搜快捷键已保存")
+
+    @Slot()
+    def openBoxSearch(self):
+        if self._shutdown_in_progress or self._shutdown_complete or self.companionSuppressed or self._pet_interaction_locked:
+            return
+        if self._box_search.state["open"]:
+            self._box_search.close()
+        else:
+            self._box_search.open()
+
+    @Slot(str, object)
+    def _route_box_search(self, kind, data):
+        if self._shutdown_in_progress or self._shutdown_complete or self.companionSuppressed:
+            self._box_search.close()
+            return
+        record = data.get("record", {})
+        result = {"ok": True}
+        if kind == "task":
+            result = self.focusStartTask(record["task_id"], 25)
+        elif kind == "chat":
+            result = {"ok": self.openHistoryMessage(record["conversation_id"], record["message_id"])}
+            if result["ok"]:
+                self.setChatOpen(True)
+                self.openConversationRequested.emit()
+        elif kind == "paper":
+            result = self._open_paper_record(record["paper_id"])
+        elif kind == "card":
+            result = self._open_searched_card_source(data)
+        elif kind == "reminder":
+            self.openWorkPanelSection("work")
+            self.workPanelAnchorRequested.emit("reminder")
+        else:
+            result = {"ok": False, "error": "不支持这个操作"}
+        if result["ok"]:
+            self._box_search.close()
+        else:
+            self._box_search.reportError(result.get("error", "当前操作未完成，请先结束正在进行的操作"))
+
+    def _open_searched_card_source(self, data: dict) -> dict[str, Any]:
+        """Explicit preview confirmation; never select/start another paper session."""
+        try:
+            # The worker-to-GUI queue is another stale-data boundary. Revalidate
+            # the exact preview, including saved provenance, before any launch.
+            checked = self._box_search.service.resolve("card", {
+                "id": data["record"]["card_id"], "version": data["version"]})
+            card = checked["record"]
+            source = card["paper"]
+            if not source:
+                raise ValueError("这张卡片没有关联论文，不能猜测原文")
+            target = self.papers.open_target(source["paper_id"], card["card_id"], expected_source=source)
+            audit_id = self.database.audit("user:box-search", "box-search", "open-card-source", "launch",
+                "confirmed", {"cardId": card["card_id"], "paperId": source["paper_id"]})
+        except (ValueError, KeyError, OSError, sqlite3.Error) as exc:
+            message = "本地记录正忙，请稍后重试" if isinstance(exc, sqlite3.Error) else str(exc)
+            return {"ok": False, "error": message[:300]}
+        error = ""
+        try:
+            if not QDesktopServices.openUrl(QUrl(target["url"])):
+                error = "没有打开原文，请检查文件和默认阅读器"
+        except (OSError, RuntimeError):
+            error = "没有打开原文，请检查文件和默认阅读器"
+        note = target["note"]
+        try:
+            self.database.complete_audit(audit_id, result={"accepted": not error},
+                error={"type": "SourceOpenFailed"} if error else None)
+        except sqlite3.Error:
+            if not error:
+                note = "原文已交给阅读器，但操作记录暂未保存；请勿重复打开"
+        if error:
+            return {"ok": False, "error": error}
+        self._set_status(note)
+        return {"ok": True}
 
     @Slot()
     def revealSystemDrawer(self) -> None:
@@ -4063,18 +4561,27 @@ class Backend(QObject):
         self._chat_open = bool(open_value)
         self.chatOpenChanged.emit()
 
-    @Slot(str)
-    def sendMessage(self, text: str) -> None:
+    @Slot(str, result=bool)
+    def sendMessage(self, text: str) -> bool:
         if not text.strip() or self._chat_busy:
-            return
+            return False
+        latest_page = self.database.conversation_page(self.chat.conversation_id) if (
+            self._conversation_page.get("hasNewer") or self._chat_timeline.rowCount() >= 198
+        ) else None
         # A worker may wait behind another model task before responseStarted.
         # Reserve the UI turn now so fast Enter/clicks cannot add phantom rows.
         self._chat_busy = True
         self.chatBusyChanged.emit()
-        self._chat_text += ("\n\n" if self._chat_text else "") + "你：" + text.strip() + "\n\n莉莉丝："
+        if not self.chat.send(text):
+            self._chat_busy = False
+            self.chatBusyChanged.emit()
+            return False
+        if latest_page is not None:
+            # Reading an old page never changes the actual continuation point.
+            self._display_chat_page(latest_page)
         self._chat_timeline.begin_turn(text.strip())
         self.chatChanged.emit()
-        self.chat.send(text)
+        return True
 
     @Slot()
     def cancelMessage(self) -> None:
@@ -4084,19 +4591,68 @@ class Backend(QObject):
     def retryLastMessage(self) -> None:
         if self._chat_busy:
             return
-        messages = self.database.recent_messages(self.chat.conversation_id, 80)
-        match = next((value for value in reversed(messages) if value["role"] == "user"), None)
-        if match:
-            self.sendMessage(str(match["content"]))
+        page = self.database.conversation_page(self.chat.conversation_id)
+        try:
+            started = self.chat.retry_last()
+        except ValueError as exc:
+            self._set_status(str(exc))
+            return
+        if not started:
+            return
+        self._chat_busy = True
+        self._chat_retrying = True
+        self._chat_retry_error = ""
+        self._display_chat_page(page)
+        self._chat_timeline.begin_retry()
+        self.chatBusyChanged.emit()
+        self._set_status("正在重新回答；不会再次执行之前的操作")
+
+    def _display_chat_page(self, page: dict[str, Any]) -> None:
+        self._conversation_page = page
+        messages = page["messages"]
+        self._chat_timeline.reset_messages(messages)
+        last = messages[-1] if messages else {}
+        self._reply_revisions = self.database.reply_revisions(last["message_id"]) if last.get("role") == "assistant" else []
+        self.chatChanged.emit()
+        self.chatPositionRequested.emit(int(page.get("anchorIndex", -1)))
+
+    @Slot(str, str, result=bool)
+    def openHistoryMessage(self, conversation_id: str, message_id: str) -> bool:
+        if self._chat_busy:
+            self._set_status("先停止当前回答，再打开旧对话")
+            return False
+        try:
+            self._display_chat_page(self.chat.open_conversation(conversation_id, message_id))
+        except (KeyError, RuntimeError, ValueError) as exc:
+            self._set_status(str(exc))
+            return False
+        self._set_status("已回到这段对话，可以接着聊")
+        return True
+
+    @Slot(str)
+    def browseChatPage(self, direction: str) -> None:
+        if self._chat_busy or direction not in {"older", "newer", "latest"}:
+            return
+        options = {}
+        if direction == "older":
+            if not self._conversation_page.get("hasOlder"):
+                return
+            options["before"] = self._conversation_page["before"]
+        elif direction == "newer":
+            if not self._conversation_page.get("hasNewer"):
+                return
+            options["after"] = self._conversation_page["after"]
+        page = self.database.conversation_page(self.chat.conversation_id, **options)
+        if direction == "newer":
+            page["anchorIndex"] = 0
+        self._display_chat_page(page)
 
     @Slot()
     def newConversation(self) -> None:
         if self._chat_busy:
             return
         self.chat.new_conversation()
-        self._chat_text = ""
-        self._chat_timeline.reset_messages()
-        self.chatChanged.emit()
+        self._display_chat_page(self.database.conversation_page(self.chat.conversation_id))
 
     @Slot(str)
     def searchHistory(self, query: str) -> None:
@@ -4174,6 +4730,16 @@ class Backend(QObject):
     def dismissSelectionBubble(self) -> None:
         self.selection.dismiss()
 
+    @Slot(str, int, int, result="QVariantMap")
+    def explainProvidedText(self, text: str, x: int, y: int) -> dict[str, Any]:
+        if self._shutdown_in_progress or self._shutdown_complete or self.companionSuppressed:
+            return {"ok": False, "error": "当前场景保持安静，文字草稿会保留"}
+        try:
+            self.selection.explain_provided_text(text, x, y)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
     @Slot(str, str)
     def requestSelectionAction(self, action: str, question: str = "") -> None:
         try:
@@ -4183,13 +4749,43 @@ class Backend(QObject):
 
     @Slot(result=str)
     def saveSelectionCard(self) -> str:
-        card_id = self.selection.save_current_card()
+        try:
+            card_id = self.selection.save_current_card()
+        except (OSError, ValueError) as exc:
+            self._set_status(str(exc))
+            return ""
         if card_id:
             self.refreshReadingCards()
             self._set_status("已放进论文卡片盒")
         else:
             self._set_status("当前没有可保存的划词结果")
         return card_id
+
+    @Slot(result="QVariantMap")
+    def prepareSelectionSave(self) -> dict[str, Any]:
+        if self._shutdown_in_progress or self._shutdown_complete or self.companionSuppressed:
+            return {"ok": False, "error": "当前场景保持安静，请稍后保存"}
+        try:
+            return {"ok": True, **self.selection.prepare_card_save()}
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @Slot(str, str, result="QVariantMap")
+    def confirmSelectionSave(self, offer_id: str, destination: str) -> dict[str, Any]:
+        if self._shutdown_in_progress or self._shutdown_complete or self.companionSuppressed:
+            self.selection.cancel_card_save(offer_id)
+            return {"ok": False, "error": "当前场景保持安静，请稍后保存"}
+        try:
+            card_id = self.selection.confirm_card_save(offer_id, destination)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            return {"ok": False, "error": str(exc)}
+        self.refreshReadingCards()
+        self._set_status("按你确认的出处存入本篇" if destination == "paper" else "已收进独立卡片")
+        return {"ok": bool(card_id), "cardId": card_id}
+
+    @Slot(str)
+    def cancelSelectionSave(self, offer_id: str) -> None:
+        self.selection.cancel_card_save(offer_id)
 
     @Slot(str, str)
     def searchReadingCards(self, query: str = "", kind: str = "") -> None:
@@ -4204,6 +4800,7 @@ class Backend(QObject):
     @Slot()
     def refreshReadingCards(self) -> None:
         self._reading_items = self.database.reading_cards()
+        self._refresh_papers()
         self.readingItemsChanged.emit()
 
     @Slot()
@@ -4316,19 +4913,35 @@ class Backend(QObject):
         self.chatBusyChanged.emit()
 
     def _on_chat_chunk(self, value: str) -> None:
-        self._chat_text += value
         self._chat_timeline.append_chunk(value)
 
     def _on_chat_finished(self, _value: str) -> None:
-        self._chat_timeline.finish(_value)
+        self._chat_delivery.flush()
+        if self._chat_retrying:
+            # Failed/cancelled retries restore the authoritative old reply.
+            self._chat_retrying = False
+            self._display_chat_page(self.database.conversation_page(self.chat.conversation_id))
+            self._set_status("新回答已保存，旧版仍可查看" if _value else (self._chat_retry_error or "已停止，保留原来的回答"))
+        else:
+            self._chat_timeline.finish(_value)
+            self._conversation_page = self.database.conversation_page(
+                self.chat.conversation_id, limit=max(10, self._chat_timeline.rowCount())
+            )
+            messages = self._conversation_page["messages"]
+            self._chat_timeline.bind_message_ids(messages)
+            last = messages[-1] if messages else {}
+            self._reply_revisions = self.database.reply_revisions(last["message_id"]) if last.get("role") == "assistant" else []
+            self.chatChanged.emit()
         self._chat_busy = False
         self.chatBusyChanged.emit()
         self._set_model_status(self.chat.status())
 
     def _on_chat_error(self, value: str) -> None:
+        self._chat_delivery.flush()
+        if self._chat_retrying:
+            self._chat_retry_error = value
         self._chat_timeline.append_chunk("\n" + value)
         self._chat_timeline.flush()
-        self._chat_text += f"\n\n[本地模型] {value}"
         self.chatChanged.emit()
         self._set_status(value)
 
@@ -4433,10 +5046,7 @@ class Backend(QObject):
                 {"origin": "companion", "bubbleId": bubble.get("id", "")},
             )
             transcript.append(("你：" if role == "user" else "莉莉丝：") + text)
-        self._chat_text = "\n\n".join(transcript)
-        self._chat_timeline.reset_messages(
-            self.database.recent_messages(self.chat.conversation_id, 200)
-        )
+        self._display_chat_page(self.database.conversation_page(self.chat.conversation_id))
         self._chat_open = True
         self.chatChanged.emit()
         self.chatOpenChanged.emit()
@@ -4494,6 +5104,11 @@ class Backend(QObject):
         self._shutdown_complete = True
 
     def _shutdown_services(self) -> None:
+        self._chat_delivery.close()
+        self._shared_world.shutdown()
+        self._box_search.shutdown()
+        self._box_search_hotkey.stop()
+        self._work_resumption.shutdown()
         self._window_catalog_shutting_down = True
         self._window_catalog_pending_payload = None
         self._window_catalog_refresh_queued = False

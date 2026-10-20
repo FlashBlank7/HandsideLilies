@@ -96,6 +96,7 @@ def test_qml_pet_click_routes_reach_all_surfaces_offscreen() -> None:
         "qmlProgress": 0.0,
     }
     assert daily_loop["reminder"] == {
+        "openedByClick": True,
         "createdByClick": True,
         "dismissedByClick": True,
         "pendingProjectionEmpty": True,

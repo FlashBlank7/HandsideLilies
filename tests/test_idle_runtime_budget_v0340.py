@@ -928,6 +928,7 @@ def test_scheduled_active_reading_keeps_one_second_ui_clock(
     app = QApplication.instance() or QApplication([])
     backend = Backend(smoke=True, force_compact=True)
     emissions: list[bool] = []
+    paper_emissions: list[bool] = []
     reading_reads: list[bool] = []
     active = {
         "session_id": "reading-live",
@@ -955,11 +956,23 @@ def test_scheduled_active_reading_keeps_one_second_ui_clock(
             backend, "_refresh_focus_diversion", lambda focus, habitat: False
         )
         backend.productivityChanged.connect(lambda: emissions.append(True))
+        backend.papersChanged.connect(lambda: paper_emissions.append(True))
+
+        # This first tick discovers a newly started session. Paper notebooks
+        # now refresh their projection on that edge (including capture-context
+        # validation), so it is not the steady one-second clock path below.
+        backend._refreshProductivityTick()
+        assert emissions == [True]
+        assert paper_emissions == [True]
+        assert backend._paper_session_signature == ("reading-live", None, "running")
+        reading_reads.clear()
+        emissions.clear()
 
         backend._refreshProductivityTick()
 
         assert reading_reads == [True]
         assert emissions == [True]
+        assert paper_emissions == [True]  # Stable clock does not rescan papers.
     finally:
         backend.shutdown()
         app.processEvents()

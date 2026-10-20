@@ -293,12 +293,16 @@ def validate_outfit_assets(theme_path: Path, qml_path: Path) -> dict[str, Any]:
         errors.append("QML canonical solid center does not match manifest alignment")
     if qml_canonical_feet is None or abs(qml_canonical_feet - canonical_feet) > 1e-9:
         errors.append("QML canonical feet anchor does not match manifest alignment")
-    if qml_source.count("source: root.outfitSource") != 3:
-        errors.append("all three breathing slices must use root.outfitSource")
-    if qml_source.count("root.outfitVerticalOffset * figureFrame.height") != 3:
-        errors.append("all three breathing slices must share outfitVerticalOffset")
-    if qml_source.count("root.outfitHorizontalOffset * figureFrame.width") != 3:
-        errors.append("all three breathing slices must share outfitHorizontalOffset")
+    if 'objectName: "petContinuousFigure"' not in qml_source:
+        errors.append("outfit must use an intact continuous figure")
+    if qml_source.count("source: root.outfitSource") != 1:
+        errors.append("continuous figure must use one root.outfitSource")
+    if qml_source.count("root.outfitVerticalOffset * figureFrame.height") != 1:
+        errors.append("continuous figure must preserve outfitVerticalOffset")
+    if qml_source.count("root.outfitHorizontalOffset * figureFrame.width") != 1:
+        errors.append("continuous figure must preserve outfitHorizontalOffset")
+    if any("id: " + region in qml_source for region in ("headRegion", "shoulderRegion", "skirtRegion")):
+        errors.append("independently clipped breathing regions must not return")
 
     outfit_reports: dict[str, Any] = {}
     hash_groups: dict[str, list[str]] = {}

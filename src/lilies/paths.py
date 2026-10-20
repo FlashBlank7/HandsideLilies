@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 
@@ -54,15 +57,79 @@ def _same_windows_location(left: Path, right: Path) -> bool:
     )
 
 
+def _fixed_data_location() -> Path:
+    """Resolve the production location without creating/reading its contents."""
+    if os.name != "nt":
+        return (project_root() / "private-data").resolve()
+    fixed = WINDOWS_PRIVATE_DATA_ROOT.resolve()
+    if fixed.drive.casefold() != WINDOWS_PRIVATE_DATA_ROOT.drive.casefold():
+        raise DataRootUnavailableError(
+            WINDOWS_PRIVATE_DATA_ROOT,
+            "the fixed data root resolves outside its dedicated volume",
+        )
+    return fixed
+
+
+def _validate_diagnostic_location(requested: Path) -> None:
+    fixed = _fixed_data_location()
+    if os.name == "nt" and requested.drive.casefold() != fixed.drive.casefold():
+        raise DataRootUnavailableError(
+            requested, "diagnostic data must stay on the dedicated volume",
+        )
+    if requested == fixed or requested in fixed.parents:
+        raise DataRootUnavailableError(
+            requested, "diagnostics cannot use the real data root or its ancestors",
+        )
+
+
+@contextmanager
+def diagnostic_data_environment() -> Iterator[None]:
+    """Own only an automatically allocated diagnostic directory and its override.
+
+    An explicit probe directory belongs to its caller and is never removed.
+    With no override, choose an isolated child under the fixed data root;
+    neither TEMP nor the executable's installation directory is a fallback.
+    Restore the inherited override on every return/exception, before cleanup.
+    """
+    previous = os.environ.get("LILIES_DATA_DIR")
+    if previous and previous.strip():
+        # data_root(DIAGNOSTIC) performs validation before the first write.
+        yield
+        return
+    parent = WINDOWS_PRIVATE_DATA_ROOT
+    try:
+        fixed = _fixed_data_location()
+        parent = fixed / "diagnostics"
+        if parent.resolve() != parent:
+            raise DataRootUnavailableError(parent, "diagnostic parent is redirected")
+        _validate_diagnostic_location(parent)
+        parent.mkdir(parents=True, exist_ok=True)
+        owned = tempfile.TemporaryDirectory(prefix="lilies-diagnostic-", dir=parent)
+    except DataRootUnavailableError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise DataRootUnavailableError(parent, str(exc)) from exc
+    try:
+        os.environ["LILIES_DATA_DIR"] = owned.name
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("LILIES_DATA_DIR", None)
+        else:
+            os.environ["LILIES_DATA_DIR"] = previous
+        owned.cleanup()
+
+
 def data_root(*, purpose: DataRootPurpose = DataRootPurpose.PRODUCTION) -> Path:
     """Return the only data directory authorized for this process role.
 
     A normal Windows process is pinned to ``WINDOWS_PRIVATE_DATA_ROOT``.  It
     may inherit ``LILIES_DATA_DIR`` only when that value resolves to the same
-    fixed directory.  Tests, non-interactive release diagnostics and the
-    bounded native-capture helper must opt in explicitly at their call sites;
-    merely setting another environment variable can therefore never weaken a
-    production launch.
+    fixed directory. Tests, diagnostics and the bounded native-capture helper
+    must opt in explicitly at their call sites; an environment variable cannot
+    weaken a production launch. Diagnostics additionally require an isolated
+    override on the same volume, not the production directory or its parents.
+    The application entrypoint owns any automatically allocated override.
 
     Android remains able to supply its platform-owned directory through
     ``LILIES_DATA_DIR`` because the fixed F: boundary is Windows-specific.
@@ -74,22 +141,21 @@ def data_root(*, purpose: DataRootPurpose = DataRootPurpose.PRODUCTION) -> Path:
     override = os.environ.get("LILIES_DATA_DIR", "").strip()
     try:
         requested = Path(override).expanduser().resolve() if override else None
+        if purpose is DataRootPurpose.DIAGNOSTIC:
+            if requested is None:
+                raise DataRootUnavailableError(
+                    WINDOWS_PRIVATE_DATA_ROOT,
+                    "diagnostics require an isolated data directory",
+                )
+            _validate_diagnostic_location(requested)
         if os.name == "nt":
             if requested is not None and purpose is not DataRootPurpose.PRODUCTION:
                 path = requested
             else:
-                fixed_root = WINDOWS_PRIVATE_DATA_ROOT.resolve()
+                fixed_root = _fixed_data_location()
                 # A directory junction must not silently turn the fixed F:
                 # location into a system-drive data store either.  Resolve it
                 # before mkdir so recovery cannot first create a C: directory.
-                if (
-                    fixed_root.drive.casefold()
-                    != WINDOWS_PRIVATE_DATA_ROOT.drive.casefold()
-                ):
-                    raise DataRootUnavailableError(
-                        WINDOWS_PRIVATE_DATA_ROOT,
-                        "the fixed data root resolves outside its dedicated volume",
-                    )
                 if requested is not None and not _same_windows_location(
                     requested, fixed_root
                 ):

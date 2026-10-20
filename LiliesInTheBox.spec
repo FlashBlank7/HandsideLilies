@@ -12,6 +12,15 @@ shiboken_root = Path(shiboken6.__file__).resolve().parent
 version_resource = Path(SPECPATH) / 'packaging' / 'windows_version_info.txt'
 if not version_resource.is_file():
     raise FileNotFoundError(f'Windows version resource is missing: {version_resource}')
+build_manifest = Path(os.environ.get('LILIES_BUILD_MANIFEST', ''))
+if not build_manifest.is_file() or build_manifest.name != 'source-manifest.json':
+    raise ValueError('Build through scripts/build_windows.ps1 with a fresh source manifest')
+application_modules = []
+for path in (Path(SPECPATH) / 'src' / 'lilies').rglob('*.py'):
+    if '__pycache__' in path.parts:
+        continue
+    name = '.'.join(path.relative_to(Path(SPECPATH) / 'src').with_suffix('').parts)
+    application_modules.append(name.removesuffix('.__init__'))
 # PyInstaller otherwise follows the ambient PATH and can accidentally pair
 # Python's ``_ssl.pyd`` with an unrelated MySQL/Git OpenSSL build.
 os.environ['PATH'] = str(python_dll_root) + os.pathsep + os.environ.get('PATH', '')
@@ -25,13 +34,13 @@ a = Analysis(
         (str(python_dll_root / 'libssl-3-x64.dll'), '.'),
         (str(python_dll_root / 'libcrypto-3-x64.dll'), '.'),
     ],
-    datas=[('qml', 'qml'), ('themes', 'themes'), ('assets', 'assets'), ('src/lilies/local_model_worker.py', 'runtime')],
+    datas=[('qml', 'qml'), ('themes', 'themes'), ('assets', 'assets'), ('src/lilies/local_model_worker.py', 'runtime'), (str(build_manifest), '.')],
     hiddenimports=[
         'PySide6.QtMultimedia',
         'PySide6.QtQuickControls2',
         'cryptography.hazmat.primitives.ciphers.aead',
         'tzdata',
-    ],
+    ] + sorted(set(application_modules)),
     hookspath=[str(Path(SPECPATH) / 'packaging' / 'hooks')],
     hooksconfig={},
     runtime_hooks=[],
@@ -75,6 +84,7 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     version=str(version_resource),
+    icon=str(Path(SPECPATH) / 'assets' / 'icons' / 'lilies-app.ico'),
     codesign_identity=None,
     entitlements_file=None,
 )

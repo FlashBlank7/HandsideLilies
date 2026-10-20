@@ -25,6 +25,14 @@ QtObject {
     readonly property bool focusActive: Boolean(focusStatus.active)
                                         && !Boolean(focusStatus.paused)
                                         && String(focusStatus.state || "") === "running"
+    readonly property bool sessionPaused: (Boolean(readingStatus.active) && Boolean(readingStatus.paused))
+                                          || (Boolean(focusStatus.active) && Boolean(focusStatus.paused))
+    // Keep the host-contact pose, but carry the user's activity separately.
+    // A perched reader can have a notebook without jumping off the window.
+    readonly property string quietActivity: chatOpen ? "listening"
+        : selectionVisible ? "reading" : companionVisible ? "presenting"
+        : readingActive ? "reading"
+        : focusActive ? "focus" : sessionPaused ? "rest" : "idle"
 
     readonly property string contextKind: {
         if (habitatAttached)
@@ -39,6 +47,8 @@ QtObject {
             return "reading"
         if (focusActive)
             return "focus"
+        if (sessionPaused)
+            return "pause"
         return "equipped"
     }
 
@@ -67,6 +77,8 @@ QtObject {
             return "reading"
         if (focusActive)
             return "focus-watch"
+        if (sessionPaused)
+            return "resting"
         return String(equippedPose || "idle-prayer")
     }
 

@@ -138,7 +138,7 @@ class FakeNativeMoveController(QObject):
 
 
 class TrackingOffscreenBackend(OffscreenBackend):
-    """Offscreen backend that exposes release-time habitat detachment."""
+    """Count release finalizations (free placement or an explicit edge snap)."""
 
     def __init__(self, *args, **kwargs) -> None:
         self.detach_calls: list[list[float]] = []
@@ -148,6 +148,11 @@ class TrackingOffscreenBackend(OffscreenBackend):
     def detachPetHabitat(self, x: float, y: float) -> None:
         self.detach_calls.append([float(x), float(y)])
         super().detachPetHabitat(x, y)
+
+    @Slot('QVariantMap', result=bool)
+    def finishPetPlacement(self, placement: dict) -> bool:
+        self.detach_calls.append([float(placement['x']), float(placement['y'])])
+        return super().finishPetPlacement(placement)
 
 
 class _SyntheticCursor:
@@ -274,7 +279,9 @@ def _qml_point(value: object) -> tuple[float, float]:
 
 
 def main() -> int:
-    temporary = tempfile.TemporaryDirectory(prefix="lilies-drag-v0325-")
+    temp_parent = PROJECT_ROOT / "artifacts" / "drag-runtime"
+    temp_parent.mkdir(parents=True, exist_ok=True)
+    temporary = tempfile.TemporaryDirectory(prefix="test-data-", dir=temp_parent)
     os.environ["LILIES_DATA_DIR"] = temporary.name
     QQuickWindow.setDefaultAlphaBuffer(True)
     app = QApplication.instance() or QApplication([])
@@ -702,10 +709,11 @@ def main() -> int:
                 and visible_height >= min(72.0, final_figure["height"]) - 1.0
                 and window_outside
                 and len(fake_native.start_calls) == 0
-                and not bool(backend.habitatState.get("attached"))
+                and bool(backend.habitatState.get("attached"))
+                and backend.habitatState.get("reason") == "edge-drop"
                 and not bool(pet_body.property("interactionSnap"))
-                and abs(backend.pet_habitat.desktop_x - float(pet_window.x())) <= 1.0
-                and abs(backend.pet_habitat.desktop_y - float(pet_window.y())) <= 1.0
+                and abs(float(backend.habitatState['x']) - float(pet_window.x())) <= 1.0
+                and abs(float(backend.habitatState['y']) - float(pet_window.y())) <= 1.0
             ),
         }
         outcome["characterGrabContinuity"] = {

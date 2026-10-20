@@ -1,0 +1,1660 @@
+{
+  "objectiveSource": "C:/Users/FlashBlack7/.codex/attachments/3efb9dba-c5d6-4514-997c-f5c040f1df9f/goal-objective.md",
+  "goalStatus": "blocked",
+  "nativeAcceptanceCoordination": {
+    "classification": "no-progress",
+    "consecutiveImpasseTurns": 3,
+    "previousGoalTurn": "No progress: the second consecutive checkpoint revalidated the same native-acceptance impasse and left the goal active. It did not change runtime behavior, produce native evidence or have a live job to wait on. The prior search/regression work remains completed, not new progress in this checkpoint.",
+    "currentEvidence": [
+      "The full objective was reread on checkpoint three. The tracker still contains all fourteen requirements; the installed primary/watchdog remain 37968/46300 and a16 still reports releaseReady false. The candidate executable and both terminal regression reports remain present. No new user direction or native-acceptance evidence arrived. Regression sessions 73455 and 99923 already terminated successfully; there is no confirmed live acceptance job to wait on.",
+      "Read-only process enumeration still finds installed primary 37968 and watchdog 46300 at the installed executable path. The user's launch request activated that existing instance; it did not authorize a candidate replacement or automated interaction with user windows.",
+      "Current DragTimingProbe explicitly measures only application delivery/submission durations. It cannot supply cursor-to-presented-character latency, real model/app-switch overlap, long-run behavior or native visual smoothness. Repeating offscreen/hidden probes would not fill these gaps.",
+      "Current install/uninstall entrypoints still refuse normal promotion/removal before process/file mutations pending native acceptance. Permanent cleanup is explicitly unimplemented and refused; this checkpoint does not delete data, bypass gates or mislabel that feature complete.",
+      "The current activity/task/paper/resumption/search/quiet/world entrypoints and prior cross-scope evidence were reviewed for concrete unfinished paths. No new evidenced defect was identified that justifies another speculative patch. This is not a claim that the software is defect-free or that native requirements are met."
+    ],
+    "blockingCondition": "Coordinated native desktop use and candidate test/deployment direction remain outstanding. The user previously asked not to interfere with their working desktop. Existing coordination was not answered; do not repeat the same question, capture content, inject input, restart/install, or call live accounts solely because the goal auto-continues.",
+    "action": "The same genuine impasse persisted for three consecutive goal turns, with no useful safe action available toward the remaining native/deployment requirements. update_goal returned blocked. Preserve the candidate and evidence; completion remains unproven. Resume when the user supplies native-test direction or external conditions meaningfully change, and begin a fresh blocked audit if resumed. These status records are not implementation progress."
+  },
+  "deployment": "Installed/formal v0.3.56 remains unchanged. Independent a16 completes card search by paper title/saved location and adds explicitly confirmed source opening using immutable card provenance. It retains a15 notebook navigation and earlier gesture/cleanup changes. Package integrity, offscreen gates and hidden qwindows startup passed; a15 is historical and correctly rejected as stale. No actual desktop input, user-window capture, private content/account/model access, installed-process restart, installation or push occurred. Native smoothness remains highest and unproven; releaseReady is false and install/uninstall gates remain closed.",
+  "lastVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "The preceding implementation audit inspected current requirements and created a synthetic library measurement, then left regression session 73455 running. The intervening user-requested launch only activated the existing installed instance. This continuation fully read the objective, polled the same live handle to terminal success, and strengthened the new measurement rather than restarting its regression or changing the objective.",
+    "changes": [
+      "All fourteen original requirement scopes were checked against current implementations and existing evidence. ActivityHero prioritizes a current action; history/retry/task boundaries have deterministic service and offscreen coverage; awareness receipts describe actual application-owned evidence rather than model claims; quiet actions use fixed bounded enums; world records preserve real source references and deletion boundaries. These observations do not prove native usability, model response quality, live accounts or deployment.",
+      "Added an F-only owned synthetic search diagnostic over 20000 mixed-language messages, 2000 reading cards, 200 papers, 300 indexed applications, 500 tasks and 500 reminders. Eleven scenarios repeated five times now verify exact expected result IDs/order, all-provider interleaving, four-per-provider/24-total bounds, saved page provenance, missing results and 24-result single-category limits.",
+      "The real service query cancels through SQLite's progress handler. The real controller keeps queries on one worker, drops superseded intermediate requests and delivers only the latest result. A bounded worker gate demonstrates Qt main-loop ticks while it is held, not native responsiveness. No launcher/reminder/audit side effects occur. The wrapper checks current diagnostic/runtime source hashes and does not turn a hardware-dependent timing budget into a correctness test.",
+      "The initial report counted timer ticks after the owned worker gate was released. The diagnostic now stops/counts the timer before release and asserts the gate is still held. Exact ID assertions were strengthened beyond the initial count-only checks. The original report remains historical; its timer count is not accepted as a held-interval measurement.",
+      "No runtime, schema, permission or asset change was needed. A16 current-source/package identity was checked read-only and still passes, with releaseReady false. Installed/formal hashes remain unchanged. No new build, install, running-process restart, user-window manipulation, real data/account/model access or push occurred."
+    ],
+    "verificationState": "Session 73455 is terminal: 88 passing tests in continuity-a16-audit.xml. Session 99923 is terminal: 34 passing tests in search-library-verified.xml, including the large-library diagnostic as one pytest test. Both suites have zero failures/errors/skips and contain 122 distinct tests in total; the 55 query samples and four diagnostic checks are not additional pytest tests. No live tool handle remains.",
+    "tests": [
+      {"artifact": "artifacts/continuity-a16-audit.xml", "tests": 88, "failures": 0, "errors": 0, "skipped": 0, "seconds": 114.932, "scope": "History/retry, task editing, awareness, quiet presence, source-linked records, distinct-outfit asset gates, connector boundary and owned candidate migration; fixtures/offscreen only."},
+      {"artifact": "artifacts/search-library-verified.xml", "tests": 34, "failures": 0, "errors": 0, "skipped": 0, "seconds": 34.538, "scope": "Synthetic library service/worker diagnostic, bounded search and saved-card source/audit boundaries. No actual desktop input or external open."},
+      {"artifact": "artifacts/search-library-038c6f39.json", "checks": 4, "passed": true, "samples": 55, "p50Ms": 17.673, "p95Ms": 65.770, "maxMs": 73.089, "cancelMs": 3.127, "mainLoopTicksWhileHeld": 8, "scope": "Owned 28MB database, current local search service/controller only. Direct fixtures omit memory n-gram indexing and background archival. Timings exclude QML debounce/rendering, native focus/IME, disk cold-start, real models and concurrent user workload."}
+    ],
+    "historicalMeasurement": {"artifact": "artifacts/search-library-a16.json", "samples": 45, "scope": "Initial synthetic service timings are historical; result counts were checked more broadly than exact IDs, and mainLoopTicksWhileHeld included post-release ticks. Superseded for these claims by the 55-sample report; do not present it as native input/FPS evidence."},
+    "candidate": {"buildId": "v0357-card-source-20261005-a16", "currentSourceCheckPassed": true, "releaseReady": false, "sourceDigest": "b9473a80b312a747a9658307ec307aac47a1da7eb6e37f6a63f3b3949ec068db", "scope": "Read-only identity check of unchanged runtime, not a new build or native acceptance."},
+    "hashes": {
+      "scripts/measure_box_search_library.py": "C3E20DDC54375689ED70623D100350939066E027B3E9331083E01DC8BE35B489",
+      "tests/test_box_search_library.py": "04D79A5AD90E4AFAC6F95BD7928B0907E577A490D5E1330A2C61085649DE6E06",
+      "src/lilies/core/box_search.py": "EDABDC7BFB7BEBAA7BFB58B61497836BE95C3504C7408BB9AA042D7571292A0C",
+      "src/lilies/box_search_controller.py": "15ED6F890DBA196AE6A082F3C0B55B44CE9A14C9EFB155218377CF3512F358D7"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Native mouse-to-pet lag, concurrent real generation/app switching, long-run behavior and habitat/manual interaction remain the highest unproven requirement. Synthetic search/GUI timer measurements cannot substitute for it.",
+      "Native hotkey/focus/IME, deployed end-to-end task/history/paper/world workflows, reader page handling, actual account behavior, real-data migration/recovery and release remain unproven. Permanent cleanup remains unfinished and gated.",
+      "The larger search fixture supplies previously missing service-level evidence, not realistic concurrent real-library/native UI acceptance. All fourteen requirement scopes remain intact and none is declared fully complete."
+    ],
+    "nextAction": "Use the current audit to distinguish concrete implementation defects from acceptance requiring coordinated native use. Do not keep rebuilding unchanged a16 or inventing additional fixture-only work as a substitute for the highest native drag requirement. Existing visible-test coordination remains unanswered; do not repeat the same question or manipulate the user's windows. On the next continuation revalidate whether a specific safe in-scope gap remains; if none does, count the genuine repeated impasse and follow the three-turn blocked audit. User-requested activation is not authorization to install a candidate, change windows, capture content or exercise live accounts."
+  },
+  "cardSourceVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: a15 repaired hidden paper navigation and verified two Backend/QML lifetimes against the same isolated database. This continuation fully read the objective and preserved all fourteen scopes. Inspection and failing tests identified a separate end-of-flow gap: card search excluded paper titles/saved locators, and an associated card preview had no original-source action.",
+    "changes": [
+      "BoxSearchService now reads a single bounded joined card/provenance snapshot for search and revalidation. Paper titles and saved locators are searchable; results show paper/page. The existing literal escaping, 1.5-second query cancellation, per-provider limits and coalescing worker are retained. Current paper position and card marks are excluded from identity so they cannot rewrite or invalidate a saved excerpt unnecessarily.",
+      "Associated card previews disclose the saved link/page and provide 回到原文. Only explicit confirmation routes to the existing GUI launch boundary; search/preview never opens a file. Standalone cards remain read-only, and opening a source neither selects another paper nor starts/ends a reading session. Actual page jumping remains dependent on the reader.",
+      "The joined snapshot is checked at confirmation and again on queued GUI delivery; the final target lookup also checks expected provenance. Deleted/reassociated/changed sources fail closed. Launches have an explicit launch-risk audit, consumed confirmations do not repeat, reader refusal is reported, and an audit-completion failure after an accepted open does not falsely invite replay. No public model/component capability or database schema was added.",
+      "A separate failing canonical-path fixture reproduced a PDF-named link resolving to an executable. paper_source now validates the resolved local target's PDF suffix/existence and rejects network paths before the final file check. This is a simulated resolution-boundary proof, not a native junction/default-reader acceptance test.",
+      "The real Main.qml source flow passes 11 checks, including paper-title search, saved page 3 versus current page 18, double confirmation, changed/deleted/moved sources, independent cards, Unicode local paths and unsafe URI rejection. All model/reader effects are stubbed. Own-window 360px and 520px renders were inspected; source text and the action fit without clipping. The prior restart/continuity, shared-world and source-confirmation workflows pass unchanged.",
+      "Independent a16 passed packaged self-test/resources/masks and intrinsically hidden qwindows startup. Final package/current-source identity was rechecked, a15 was rejected as stale, and installed/formal hashes remained unchanged. These checks do not establish actual drag latency, model quality, reader page jumps, deployment or recovery."
+    ],
+    "verificationState": "All observed processes are terminal: baseline 92458, first regression 31811, intermediate regression 96942, canonical-path red check, final regression 2778, shared regression 34013, build 28668 and final identity 82319. Final suites contain 163 distinct passing pytest tests with no failures/errors/skips. The 11-check source UI and 14-check restart UI are each counted as one pytest test, not extra test totals. No live handle remains.",
+    "tests": [
+      {"artifact": "artifacts/card-source-verified.xml", "tests": 65, "failures": 0, "errors": 0, "skipped": 0, "seconds": 67.966, "scope": "Card/provenance matching and stale-target boundaries, GUI launch/audit failure handling, canonical PDF validation, production QML source workflow and original search/paper services; isolated F fixtures only."},
+      {"artifact": "artifacts/card-source-shared.xml", "tests": 98, "failures": 0, "errors": 0, "skipped": 0, "seconds": 235.442, "scope": "Original search UI, restarted notebook continuity, shared-world UI, explicit source confirmation, Backend component contracts and work-resumption service boundaries; no native user input/account/model."},
+      {"artifact": "artifacts/card-source-ui-a0286415.json", "checks": 11, "warnings": 0, "passed": true, "scope": "Actual production QML clicks and Enter, intercepted URL opener, synthetic local PDF rename/deletion and source mutations. Expected local URL is compared as QUrl, not its encoded/pretty string representation."},
+      {"artifact": "artifacts/paper-resume-6369a44a.json", "checks": 14, "warnings": 0, "passed": true, "scope": "A15's full two-Backend restart and source-navigation workflow rerun against a16 source; included in the shared pytest suite."}
+    ],
+    "preservedFailures": [
+      {"artifact": "artifacts/card-source-red.xml", "tests": 14, "failures": 11, "errors": 0, "skipped": 0, "seconds": 15.529, "scope": "Before implementation: paper-title/locator card searches return no result, associated preview action is missing, provenance mutations do not invalidate tokens, and no original-source GUI route exists. Three controls pass."},
+      {"artifact": "artifacts/card-source-reparse-red.xml", "tests": 1, "failures": 1, "seconds": 1.081, "scope": "Before canonical validation: a synthetic Path.resolve result with executable suffix is accepted under a PDF alias; no executable is run."},
+      {"artifact": "artifacts/card-source-regression.xml", "tests": 64, "failures": 1, "scope": "Intermediate UI fixture compared the encoded Path.as_uri string with QUrl's decoded display string for a Chinese filename. Actual target and session were correct. Final QUrl identity comparison preserves the exact path/page assertion; observations record both representations."}
+    ],
+    "package": {
+      "buildId": "v0357-card-source-20261005-a16", "status": "built-hidden-native-and-current-source-rechecked",
+      "sourceDigest": "b9473a80b312a747a9658307ec307aac47a1da7eb6e37f6a63f3b3949ec068db",
+      "executableSha256": "EFEA3BE1251FCA76E004CD20F3D1CB6A8024B4EB536A2CF8249A221AA588EB6D",
+      "files": 2472, "bytes": 289420106, "resourceCount": 60, "qmlWarnings": 0, "releaseReady": false,
+      "nativeStartup": "passed-hidden-probe", "nativeSystemMoveRuntimeVerified": false,
+      "receipt": "artifacts/v0357-card-source-20261005-a16/candidate-build.json",
+      "finalIntegrity": "artifacts/v0357-card-source-20261005-a16/bundle-integrity-final.json",
+      "hiddenStartup": "artifacts/v0357-card-source-20261005-a16/packaged-windows-startup-v0357.json",
+      "hiddenStartupEvidence": {"nativeDispatchCount": 11, "nativeHitTestCount": 4, "eventLoopTicks": 33, "quickWindows": 18, "visibleWindows": 0, "trayPublished": false},
+      "scope": "Compiled package/resources and owned hidden startup only, not actual input/presented-frame latency, PDF reader behavior, live models/accounts, migration, recovery or deployment."
+    },
+    "hashes": {
+      "src/lilies/backend.py": "FC2A5F5F4B532113ABE9F450C83BFC7DA036414E06CF12F88D9636010DBB5C52",
+      "src/lilies/core/box_search.py": "EDABDC7BFB7BEBAA7BFB58B61497836BE95C3504C7408BB9AA042D7571292A0C",
+      "src/lilies/core/papers.py": "AF5F2918E0FB4A9DA76664D4CDA4CCCEFCE0F87BB104A67D015635F1ABF3F066",
+      "scripts/verify_card_source_ui.py": "622121052930CA311AE762F219C0F008362584EF87A2385C8AA3427014676732",
+      "tests/test_card_search_source.py": "BBA7469CDD0628188850EDCF48BD6B7418FCCC07EA56C14F34FE00249900E8F4",
+      "tests/test_card_source_ui.py": "04899CCE06DC748A52409D8F118C2CA693F5C32D5D44DC93FDA77FF3AEBF9442"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Actual drag/model/app-switch/long-run/habitat behavior remains highest and unproven; card search/source correctness is not native smoothness acceptance.",
+      "Real reader page handling/OS launch latency, native focus/hotkeys/IME and large-library responsiveness remain unverified. Canonical path checks are not an atomic filesystem identity lock; no original file-content restoration is promised.",
+      "Deployment/recovery/private-data migration, optional live accounts and permanent cleanup remain unverified or unfinished. All fourteen original requirement scopes remain intact."
+    ],
+    "nextAction": "A16 closes the evidenced card-search/original-source gap. Next audit remaining requirements against the current implementation and evidence, distinguishing functional gaps from native/deployment acceptance rather than inventing more features or rerunning unchanged package checks. Keep native acceptance highest and the unanswered visible-test coordination outstanding; do not repeat that question, operate user windows or infer native FPS from owned offscreen/hidden probes. If no further safe in-scope progress exists, follow the genuine repeated-blocker audit, not an endless sequence of speculative edits. No model downloads/API key, expanded observation, live account access, installation/restart or push without scope."
+  },
+  "paperResumeVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "The preceding implementation continuation made progress with a14's delegate teardown fix and independent package verification. The intervening user-requested launch only activated the existing installed application and is not implementation/native acceptance. This continuation fully read the objective, preserved all fourteen scopes, and reproduced a concrete paper-navigation gap before editing.",
+    "changes": [
+      "The production Main.qml workflow creates a paper, saves page/locator/next step, starts explicit reading, leaves a question and ends reading. Both Backend and QML are destroyed and recreated against the same disposable F database. Paper progress, the question and the separate explicit work bookmark already survived; the defect was navigation, not lost persistence.",
+      "A clean baseline reproduced three failures: searching the already selected paper, opening its shared-world source, and switching to another paper all retained the old all-card filter and concealed the notebook header. Nine other checks passed with zero QML warnings. Prior coverage only asserted the selected paper ID and tab index, which did not prove visible notebook content.",
+      "Both source routes now share _open_paper_record. It validates paper selection first, announces an explicit paperRecordOpened edge only on success, and opens the notebook. PaperDesk clears obsolete all-card/review/library filters, shows the source record and closes the old card/delete confirmation without deleting anything. Ordinary refresh/reopening is not treated as navigation; same-paper unsaved position drafts survive. Missing records and another active reading session leave the current view/session untouched.",
+      "The final real-QML workflow passes 14 checks including restart, both routes, failed/successful cross-paper navigation, draft preservation, old-dialog closure and explicit source opening using persisted page 7. No model or external opener is called automatically. Own-window 520px and 680px renders were inspected; the saved page, next action and unresolved question are visible without clipping. This does not verify native WPS/PDF navigation or actual desktop focus.",
+      "The independent a15 package passed self-test, compact resources, pose masks and intrinsically hidden qwindows startup with zero QML warnings. Its final source/code/resource identity was rechecked; a14 was refused as stale. Installed/formal hashes remain unchanged. No migration/schema or public component capability changed."
+    ],
+    "verificationState": "All observed processes are terminal: preflight 22180, first baseline 36307, clean baseline 69531, first fix 88415, initial suite 40999, intermediate suite 67354, final suite 54212, shared suite 92198, original notebook workflow 87252, build 3407 and final identity 19697. Final suites have 230 distinct passing pytest tests, no failures/errors/skips. The 14-check integration workflow is included as one pytest test, not 14 extra tests. The original notebook's separate 10-check workflow also passed. No live handle remains.",
+    "tests": [
+      {"artifact": "artifacts/paper-resume-verified.xml", "tests": 116, "failures": 0, "errors": 0, "skipped": 0, "seconds": 57.733, "scope": "Actual offscreen Main.qml across Backend reconstruction, explicit paper provenance, source navigation, search/shared-world/work-resumption service boundaries and failure handling."},
+      {"artifact": "artifacts/paper-resume-shared.xml", "tests": 114, "failures": 0, "errors": 0, "skipped": 0, "seconds": 216.819, "scope": "Original real-QML search/world/resumption/source-confirmation workflows, Backend component contracts and selection capture boundaries; synthetic F fixtures only."},
+      {"artifact": "artifacts/paper-resume-88fa3a1e.json", "checks": 14, "warnings": 0, "passed": true, "scope": "Production Main.qml, two Backend lifetimes, same isolated F database. Includes no automatic model or source open, preserved page/question/next step, stale-filter reset and confirmation cancellation."},
+      {"artifact": "artifacts/paper-notebook/result.json", "checks": 10, "warnings": 0, "passed": true, "scope": "Original notebook workflow rerun: explicit add, stateless selection stub, per-card association confirmation, marks, questions, marked-only review, pagination and confirmed deletion; reader opening intercepted."}
+    ],
+    "preservedFailures": [
+      {"artifact": "artifacts/paper-resume-red-02.json", "checks": 12, "failures": 3, "warnings": 0, "scope": "Clean baseline: all-card filtering hides the selected paper after same/cross-paper search or shared-world source navigation. Other persistence/failure controls pass."},
+      {"artifact": "artifacts/paper-resume-final.xml", "tests": 116, "failures": 1, "scope": "Intermediate fixture tried to find an already closed popup through the visible item tree. The final test retains the actual controls before closing, then checks they are hidden and the card is not deleted; no production workaround."}
+    ],
+    "fixturePreflight": "paper-resume-before.json used the wrong capture field and attempted temporary-directory cleanup before Backend closure. The verifier now uses draft.id and closes Backend before cleanup. paper-resume-red.json and paper-resume-first.json hit shared-world controls before Qt Quick's layout pass; the clean baseline/final fixture settles layout before measuring click coordinates and cancels its explicit bookmark preview before proceeding. These incomplete runs are retained but are not the defect proof. The final suite passed with real clicks and zero QML warnings.",
+    "package": {
+      "buildId": "v0357-paper-resume-20261005-a15", "status": "built-hidden-native-and-current-source-rechecked",
+      "sourceDigest": "50d5f01864e3ebf69d021555391e2325ce12e9504ecd1bfde080f5bbba7157c7",
+      "executableSha256": "859BDA87690DB27FD06B1F245095CEDA73FFED012D7DF62D9FBAB0BA715061E2",
+      "files": 2472, "bytes": 289418011, "resourceCount": 60, "qmlWarnings": 0, "releaseReady": false,
+      "nativeStartup": "passed-hidden-probe", "nativeSystemMoveRuntimeVerified": false,
+      "receipt": "artifacts/v0357-paper-resume-20261005-a15/candidate-build.json",
+      "finalIntegrity": "artifacts/v0357-paper-resume-20261005-a15/bundle-integrity-final.json",
+      "hiddenStartup": "artifacts/v0357-paper-resume-20261005-a15/packaged-windows-startup-v0357.json",
+      "hiddenStartupEvidence": {"nativeDispatchCount": 11, "nativeHitTestCount": 4, "eventLoopTicks": 33, "quickWindows": 18, "visibleWindows": 0, "trayPublished": false},
+      "scope": "Compiled package/resources and owned hidden startup, not actual input, presented-frame latency, native PDF readers, live models/accounts, user-data migration or deployment."
+    },
+    "hashes": {
+      "src/lilies/backend.py": "D536EFE0E2B947B8E74655483A5A03D0736CCD770BD7E0D7B9CC399DC1866C54",
+      "qml/PaperDesk.qml": "F0032D2BD999C205E5EBBC39AE9351F9D35BD3156CCB055E99D683CEFA660487",
+      "scripts/verify_paper_resume_ui.py": "34C22681C433A04690644BAE39DBAC802938F5F50533BC429B85DE142C31CA60",
+      "tests/test_paper_resume_ui.py": "530573E71F3B8B75C184D9A8AA063DFDD779928AA9105E39A3DAC078C3202D72",
+      "tests/test_paper_notebook.py": "F2C8B8AAE759262EA8BD188A079E135ECF76DA146C9D4430C87ACAC2F9D86E5D"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Real drag/model/app-switch/long-run/habitat interaction remains highest and unproven; this functional continuity fix is not evidence of native smoothness.",
+      "Native PDF picker/reader compatibility, actual account behavior, deployment/recovery/real-data migration and optional permanent cleanup remain unverified or unfinished. All fourteen original requirement scopes remain in force."
+    ],
+    "nextAction": "Keep native acceptance coordination outstanding without repeating the unanswered question or operating the user's windows. A15 closes the reproduced paper-route visibility defect and supplies restart proof. Further safe work should follow a concrete remaining requirement gap rather than repeat unchanged package counters or speculative drag changes: inspect whether card search and source navigation return to the exact saved excerpt with immutable page/provenance, including deleted/moved sources, and whether the existing UI evidence proves it. Do not broaden model/screenshot permissions, download models, access real accounts, install/restart or push without the required scope."
+  },
+  "gestureTeardownVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: a13 reproduced and fixed explicit resource cleanup during held component gestures, with package and hidden startup evidence. This continuation fully read the objective and retained all fourteen scopes. Actual offscreen Qt input then reproduced an orphaned gesture after a pinned button was removed; a14 corrects it and verifies cancellation boundaries. This is functional scheduling progress, not real desktop smoothness acceptance.",
+    "changes": [
+      "With the real Main.qml and smoke Backend, right-dragging a focus button and unpinning it destroys the delegate without activeChanged(false). The pointer lock, chat stream pause and resource-cleanup pause survived the eventual release. Local gesture depth also survived when no native controller accepted the gesture. The production-Basic-style baseline has three failures and six passing normal-release/same-content-refresh controls, all without QML warnings.",
+      "componentMoveDrag now latches its original reason and uses one idempotent ownership finalizer for normal release/destruction. It clears its own latch before crossing object boundaries, always balances local depth, only completes a claimed native gesture, and releases just its reason in finally. No clear-all workaround, new timer, per-move call or input hook was introduced.",
+      "Normal release flushes the last staged translation and saves the original action's layout once. Removed/reordered delegates cancel without saving a half-finished layout. Observed Qt ordering established that unchanged-list refresh preserves the delegate, while reordering destroys it; the matrix assertion was corrected to require cancellation, not to force runtime persistence on cancellation.",
+      "The final 21-case production-QML matrix covers absent/declining/accepting native stubs against release, unchanged refresh, removal, reorder, overlapping ownership, hide and remove/re-add/re-drag. In overlap cases both Backend ownership and local depth go 2 -> 1 -> 0; the unrelated resize owner survives button removal, and native completion occurs once per accepted gesture. All cases pass with zero QML warnings.",
+      "A14's packaged self-test, resource/mask checks and hidden qwindows startup passed. All 18 Quick windows stayed hidden and no tray was published. Exact input/code/resource identity was checked again, a13 was correctly refused as stale, and installed/formal hashes were unchanged. No visible/input/GPU/model/long-run acceptance was attempted."
+    ],
+    "verificationState": "Fixture preflight, baseline 93145, clean red 66675, first fix 82899, intermediate regression 62719, final regression 12407, shared regression 65874, build 67986 and final identity 7150 all terminated. The intermediate test expected reordered delegates to persist as a normal release, contrary to observed Qt destruction; its failure is preserved and final stricter cancellation assertions passed. Final suites contain 132 distinct passing tests with no failures/errors/skips, including one 21-case offscreen integration matrix. No live tool handle remains.",
+    "tests": [
+      {"artifact": "artifacts/local-gesture-final.xml", "tests": 58, "failures": 0, "errors": 0, "skipped": 0, "seconds": 171.050, "scope": "Production offscreen delegate teardown matrix, finalizer/translation/persistence contracts, native-move fallback fixtures, bounded timing instrumentation, chat/resource gesture interaction. Native bridge is stubbed; no OS input or actual model."},
+      {"artifact": "artifacts/local-gesture-shared-regression.xml", "tests": 74, "failures": 0, "errors": 0, "skipped": 0, "seconds": 308.826, "scope": "Compact scene/resource lifecycle, quiet presence, idle scheduling, Backend contracts and aggregated pointer cleanup. Owned offscreen/synthetic F fixtures only."},
+      {"artifact": "artifacts/local-gesture-matrix-d0a7da30.json", "cases": 21, "warnings": 0, "passed": true, "scope": "Three native-stub modes x seven real offscreen QML event sequences; cancellation, own-reason release, 2 -> 1 -> 0 local depth and one-time persistence/completion. Included in the 58-test suite, not additional pytest cases."}
+    ],
+    "preservedFailures": [
+      {"artifact": "artifacts/local-gesture-teardown-red.json", "cases": 9, "failures": 3, "warnings": 0, "scope": "Clean production-style baseline: all three removal modes leave pointer/chat/cleanup ownership; absence/decline also leave depth. Six controls pass."},
+      {"artifact": "artifacts/local-gesture-matrix-6526b4c4.json", "cases": 21, "failures": 3, "warnings": 0, "scope": "Runtime ownership was cleared correctly, but the intermediate test incorrectly required normal persistence after reorder destroyed the delegate. Final test instead requires cancellation with no save and strengthens overlapping-depth checks."},
+      {"artifact": "artifacts/local-gesture-regression.xml", "tests": 58, "failures": 1, "scope": "Wrapper failure for the above intermediate matrix. Preserved, not counted as a passing suite."}
+    ],
+    "fixturePreflight": "local-gesture-teardown-before.json contains no cases because QObject child lookup could not find Repeater visual delegates. The next baseline used the platform-default style and is warning-contaminated. Both are retained for traceability but are not the bug proof; visual traversal plus production Basic style produced the clean red baseline above.",
+    "package": {
+      "buildId": "v0357-gesture-teardown-20261005-a14", "status": "built-hidden-native-and-current-source-rechecked",
+      "sourceDigest": "dc1fa1a67ea8dbc7510529429c3466b8bde7872b303f862fe70067cd4439231b",
+      "executableSha256": "441B9C094C05A2633CC405ABB31518D8A57B436ED5310F651138AB4655F12896",
+      "files": 2472, "bytes": 289417082, "resourceCount": 60, "qmlWarnings": 0, "releaseReady": false,
+      "nativeStartup": "passed-hidden-probe", "nativeSystemMoveRuntimeVerified": false,
+      "receipt": "artifacts/v0357-gesture-teardown-20261005-a14/candidate-build.json",
+      "finalIntegrity": "artifacts/v0357-gesture-teardown-20261005-a14/bundle-integrity-final.json",
+      "hiddenStartup": "artifacts/v0357-gesture-teardown-20261005-a14/packaged-windows-startup-v0357.json",
+      "hiddenStartupEvidence": {"nativeDispatchCount": 11, "nativeHitTestCount": 4, "eventLoopTicks": 33, "quickWindows": 18, "visibleWindows": 0, "trayPublished": false},
+      "scope": "Exact compiled package/resources and owned hidden startup. Not deployment, real input/presented frames, actual model/account interaction, private-data migration or Windows recovery acceptance."
+    },
+    "hashes": {
+      "qml/Main.qml": "435C0A054A833F5A0841CBE457F3F939A18EAE87A8A8BBD578B233A7427B7F90",
+      "scripts/verify_local_gesture_teardown.py": "A928B086CCCB0C38B172AD8D92429A36D1B0695967FFF2B337AC94D5C89430FC",
+      "tests/test_local_gesture_teardown.py": "9ECE8D57A7B28B63B0AEEB0A303187CE5AF3E570946321D746DD6542C034EA39",
+      "tests/test_drag_follow_contract_v0328.py": "59619BD66801914C411FFCC1A1A79CF1E7A1F4B7C2AE9382771A38821EE8D86F"
+    },
+    "preFixMainQmlSha256": "3BC92949DA47BC1F1C5B91A5CB7C60A13CB5C69ECC79BF55312EC444431E2CAC",
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Real mouse-to-pet lag, model generation/app-switch overlap, long-run behavior and automatic/manual habitat interaction remain unproven. Cancellation-state correctness is not native smoothness, and performance status stays pending.",
+      "Actual installation/recovery/migration, optional live connector accounts and permanent cleanup remain unverified/unfinished. All original requirements remain in scope; no release gate was opened."
+    ],
+    "nextAction": "Keep native smoothness highest and visible-test coordination outstanding; do not repeat the unanswered question, sample unchanged installed counters, operate user windows, restart/install or infer actual FPS from offscreen results. A14 closes the concrete delegate-teardown defect. Next safe useful work should verify the actual paper/work continuity end-to-end rather than accumulate speculative drag micro-fixes: inspect existing PaperDesk, resumption, search and shared-world integration evidence, then exercise an explicit synthetic paper/card/question -> end reading -> recreate Backend with the same F fixture -> continue from saved source/page/next step flow, with all openers/model calls stubbed. Identify a real gap before editing; retain all fourteen scopes and F-only boundaries. No download, API key, account call or push."
+  },
+  "pointerResourceVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: a12 reproduced and corrected event-queue backpressure and verified its package. The intervening launch-only turn fulfilled the user's separate request and was not development acceptance. This continuation fully read the objective and kept all fourteen scopes. It reproduced another concrete pointer-critical scheduling gap, corrected it and verified an independent a13; real native smoothness remains highest and unproven.",
+    "changes": [
+      "Four pre-fix offscreen cases using a real smoke Backend reproduced hidden-window releaseResources calls while accessory-tap/accessory-drag/component-chat/component-settings owned a gesture. Character-only QML flags did not cover these owners. This proves a source scheduling gap, not the cause or measured cost of the user's desktop lag.",
+      "Backend now publishes only aggregate pointer-owner edges; menu/unread/desktop-tab locks are excluded as before. Production startup passes that source to QuickWindowResourceLifecycle. All explicit cleanup timers stop while held, including a lifecycle constructed during an existing gesture. No per-sample signal, input hook, extra thread or held-pointer polling was added.",
+      "Last-owner release starts a complete 420 ms interval for still-hidden pending surfaces. Deadlines fence old posted/early timers; showing cancels the obligation. Completed cleanup is not re-queued on every later click. Nested owners, re-grab, destruction and duplicate ownership were checked. QML-only compatibility guards remain for isolated callers without Backend.",
+      "Production Main.qml's offscreen character press/cancel path was connected to the actual lifecycle. Across three gestures, its TextEdit remains paused without losing Unicode and the hidden-panel explicit cleanup runs only once after release. Qt/driver internal reclamation and native presented-frame latency are not measured or guaranteed by these tests.",
+      "Candidate a13 passed packaged self-test/resources/pose masks and an intrinsically hidden qwindows startup: 18 Quick windows remained hidden and no tray was published. Exact source/package identity was rechecked; a12 was correctly rejected as stale. Installed executable and formal Main.qml hashes remain unchanged."
+    ],
+    "verificationState": "Red baseline 5661, first suite 4580, intermediate suite 95525, fresh final suite 47417, startup regression 80910, build 36428 and final identity 61800 are all terminal. The intermediate suite retained the old five-check assertion in memory while the verifier was expanded to seven; that failure is preserved, not counted as a pass. A fresh full rerun passed. Final suites contain 165 distinct passing tests, zero failures/errors/skips. No live handle remains.",
+    "tests": [
+      {"artifact": "artifacts/resource-pointer-final.xml", "tests": 65, "failures": 0, "errors": 0, "skipped": 0, "seconds": 184.264, "scope": "Real smoke Backend ownership edges, offscreen QQuickWindow cleanup scheduling/deadlines, menu/overlap/re-grab/deletion boundaries, idle budget, chat stream and production QML resource/gesture/native-presentation regression. No actual desktop input or model calls."},
+      {"artifact": "artifacts/resource-pointer-startup-regression.xml", "tests": 100, "failures": 0, "errors": 0, "skipped": 0, "seconds": 160.508, "scope": "Backend contract, hidden-startup/self-test contracts, diagnostic failure isolation, threaded chat delivery and event-queue privacy/backpressure. Synthetic F data and owned fixtures only."},
+      {"artifact": "artifacts/chat-drag-stream-ui/result.json", "checks": 7, "warnings": 0, "passed": true, "scope": "Production QML and Backend lifecycle connection, three held gestures and delayed cleanup, streaming and terminal source IDs. Offscreen, no native input or driver timing."}
+    ],
+    "preservedFailures": [
+      {"artifact": "artifacts/resource-pointer-before.xml", "tests": 4, "failures": 4, "scope": "Explicit hidden-surface cleanup during box/button gesture ownership before lifecycle wiring."},
+      {"artifact": "artifacts/resource-pointer-verified.xml", "tests": 65, "failures": 1, "scope": "Intermediate run loaded the old five-check assertion before the verifier expanded to seven. All seven verifier results were true; fresh resource-pointer-final.xml independently passed all 65 after reloading. This failed run is not counted as success."}
+    ],
+    "package": {
+      "buildId": "v0357-pointer-resources-20261005-a13", "status": "built-hidden-native-and-current-source-rechecked",
+      "sourceDigest": "32b06cbf9cf6b2f3cf77b53ab52e57f5252d70b1d7b3c63369dbcdcab9d9efd2",
+      "executableSha256": "34A70D1D7642F067494D802C1922A7238A76088AEEAF9CBE8C28F67C86FA1C55",
+      "files": 2472, "bytes": 289415828, "resourceCount": 60, "qmlWarnings": 0, "releaseReady": false,
+      "nativeStartup": "passed-hidden-probe", "nativeSystemMoveRuntimeVerified": false,
+      "receipt": "artifacts/v0357-pointer-resources-20261005-a13/candidate-build.json",
+      "finalIntegrity": "artifacts/v0357-pointer-resources-20261005-a13/bundle-integrity-final.json",
+      "hiddenStartup": "artifacts/v0357-pointer-resources-20261005-a13/packaged-windows-startup-v0357.json",
+      "hiddenStartupEvidence": {"nativeDispatchCount": 11, "nativeHitTestCount": 4, "eventLoopTicks": 33, "quickWindows": 18, "visibleWindows": 0, "trayPublished": false},
+      "scope": "Exact package identity plus offscreen and owned hidden native startup. Not installation, real user drag, displayed GPU frames, live models/accounts, actual recovery or private-data migration."
+    },
+    "hashes": {
+      "src/lilies/app.py": "EE081CB2210BE5CFDC6845CCB6D06931BEB3C7AE02DE4735AC958E5189F7C7F6",
+      "src/lilies/backend.py": "DA07C1C338F3F91AE200B4CBD8923F10911B5FC1F33647A0C2F9FE76BBD1954D",
+      "tests/test_resource_pointer_quiet.py": "F46306ADE59DE4CBA42B09AA4B36B27C5A660686CE3A52B2240F3B924CF0EEFF",
+      "scripts/verify_chat_drag_stream_ui.py": "6490C4BFD2549D6989D8C76D116DD26EEE3967C765DA681FCDB10760AAE5FD89",
+      "tests/test_chat_drag_stream_ui.py": "2D1A9ECD898BDACCDA7D56CAA38E3715268CC864DEF6E8E93B5F483741501738"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Actual mouse-to-pet latency, generation/app-switch overlap, long-running behavior and automatic habitat/manual interaction are not proven by explicit-call ordering or hidden startup. No original smoothness requirement is marked complete.",
+      "Real upgrade/recovery/data migration and optional live connectors remain unverified; permanent cleanup remains unfinished. Release gates stay closed and the full objective is intact."
+    ],
+    "nextAction": "Keep real smoothness highest and visible-test coordination outstanding; do not repeat the unanswered question or operate the user's windows. Safe concrete follow-up: inspect/reproduce interrupted radial-button gesture teardown in an owned offscreen Main.qml fixture. Component DragHandler destruction currently calls endLocalGesture only when nativeGestureClaimed; its reason lock is normally released by onActiveChanged, and localGestureDepth is incremented even when no native controller claims it. Determine actual Qt cancellation/destruction ordering before editing; source alone is not proof of a leak. Preserve a13 evidence, F-only storage, all fourteen scopes and current install. No download, API key, model/account call, install or push."
+  },
+  "winEventBackpressureVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: a11 corrected and verified diagnostic F-only storage/lifetime. This turn fully read the objective again and retained all fourteen requirements. It separated passive measurement overhead from installed-window replies, then reproduced and corrected a concrete shared event-queue defect with privacy/performance consequences. Actual drag/presentation/model/long-run acceptance remains highest and unproven.",
+    "changes": [
+      "Eight separately timed metadata samples did not reproduce the earlier multi-second cadence gaps. A second same-path process was read-only classified as the primary's watchdog; it was not terminated or mistaken for a duplicate desktop. No workload or private content was observed.",
+      "New standalone measurement holds and verifies the expected process image and creation FILETIME, then chooses at most one window per thread and sends only WM_NULL with zero parameters, 75 ms timeout and exit/hang flags. No broadcast, input, titles, pixels, sockets, tokens, focus changes or target termination. Per-call enumeration, validation and message costs are separate; synchronous metadata calls do not acquire a hard deadline merely from the message timeout.",
+      "The identified installed GUI thread acknowledged 20/20 queries over 19.154 seconds; message calls were 0.1251-1.4608 ms, enumeration 3.7753-15.4387 ms. This short, uncontrolled-workload sent-message sample cannot establish queued-input, dragging, presented frames, model concurrency, lack of leaks or long-run performance.",
+      "Synthetic interleaved location notifications reproduced a bounded 2048-entry queue backlog and eviction of a pending foreground edge; unique-window geometry also evicted foreground/destroy edges. These are code/fixture findings, not proof that the observed user drag followed this workload.",
+      "WinEventHub now uses ordered bounded indexes to merge each window identity's latest geometry within a lifecycle-free segment, retaining latest ordering. Non-location events are barriers; different native thread identities never coalesce. Overflow evicts geometry before lifecycle/privacy edges. Critical-only overflow still drops oldest, explicitly not lossless under unbounded pressure.",
+      "Same 10000-event two-window fixture now dispatches three events. Tests cover barriers, HWND/thread reuse, partial drains, concurrent producers, reentrant subscribers, all-critical saturation and 10000 mixed operations against an independent list reference. A real smoke Backend with a fake protected window still receives the foreground event and blocks selection after a geometry flood. No new timer/worker/native permission was added."
+    ],
+    "verificationState": "Metadata sample, successful installed WM_NULL session 45503, preserved red event suite, first event suite, measurement suites, boundary suite 7918, broader regression 74640, candidate build 88885 and final identity 5095 are terminal. First isolated CLI attempt failed before process access because sibling import was unavailable under -I; the import was corrected and an isolated CLI regression added. Final package/source identity passed; no live handle remains. Final suites contain 324 distinct passing tests; the two expected pre-fix event failures remain preserved.",
+    "tests": [
+      {"artifact": "artifacts/win-event-backpressure-verified.xml", "tests": 259, "failures": 0, "errors": 0, "skipped": 0, "seconds": 247.683, "scope": "Window events/catalogue/habitat/input suppression, real smoke Backend privacy with synthetic context, selection boundaries, idle scheduling, orchestration and offscreen chat-drag/quiet presence."},
+      {"artifact": "artifacts/win-event-response-boundaries.xml", "tests": 86, "failures": 0, "errors": 0, "skipped": 0, "seconds": 12.320, "scope": "Event queue plus independent mixed-operation reference; response probe parameter/identity/bounds/no-broadcast/status handling, isolated CLI and existing read-only process-health regression. Twenty-one cases overlap the larger suite."}
+    ],
+    "preservedFailures": [{"artifact": "artifacts/win-event-backpressure-before.xml", "tests": 2, "failures": 2, "scope": "Interleaved two-window motion accumulated 2048 entries rather than three, and unique-window geometry evicted pending foreground/destroy edges."}],
+    "observations": {
+      "metadata": "artifacts/installed-metadata-costs-20261005.json",
+      "windowResponse": "artifacts/window-response-installed-20261005-a.json",
+      "pid": 37968, "version": "0.3.56", "watchdogPid": 46300,
+      "replyCount": 20, "timeouts": 0, "messageMinMs": 0.1251, "messageMaxMs": 1.4608,
+      "messageMeanMs": 0.31144, "enumerationMeanMs": 7.04281, "durationMs": 19154.0325,
+      "scope": "Actual installed-window sent-message acknowledgements, not candidate or input/frame acceptance. No private content or actual input was observed. Metadata counter changes with unknown workload are not proof of a leak."
+    },
+    "package": {
+      "buildId": "v0357-event-queue-20261005-a12", "status": "built-hidden-native-and-current-source-rechecked",
+      "sourceDigest": "2ad92aebfe11a0253d99d9b784754110492f3437525aeae6ccd517079ddfc19a",
+      "executableSha256": "A02FC7AEE05C0D8AAC99FE8FBBC7C7BB2AE30382E3742E4F365E45BF806C3577",
+      "files": 2472, "bytes": 289414667, "resourceCount": 60, "qmlWarnings": 0,
+      "releaseReady": false, "nativeStartup": "passed-hidden-probe", "nativeSystemMoveRuntimeVerified": false,
+      "receipt": "artifacts/v0357-event-queue-20261005-a12/candidate-build.json",
+      "finalIntegrity": "artifacts/v0357-event-queue-20261005-a12/bundle-integrity-final.json",
+      "hiddenStartup": "artifacts/v0357-event-queue-20261005-a12/packaged-windows-startup-v0357.json",
+      "hiddenStartupEvidence": {"nativeDispatchCount": 11, "nativeHitTestCount": 4, "eventLoopTicks": 33, "quickWindows": 18, "visibleWindows": 0, "trayPublished": false},
+      "scope": "Exact compiled-code/resources/full-file identity, offscreen and hidden native startup; no installation, user-data migration or real drag/model/display acceptance."
+    },
+    "hashes": {
+      "src/lilies/core/win_event.py": "5E9B0BE2BDD9B92AF71E244DD4E4AF2D55DBDBA1BEB8C130D385E244E616ED60",
+      "scripts/measure_window_response.py": "A435EFFDEE1E020B2C21A0D58C70150169CD73406C028BFBB53A0CE162FFE5DD",
+      "tests/test_win_event_backpressure.py": "843531B138273858F08B337CB732D1EEE2BF6C7B7810B6373BC3B5F50C2E32D4",
+      "tests/test_window_response_measurement.py": "4016EC20CBF784317A3B9AC15E974DD292CABD9DA78A4CBD720BCD06B8FD5A49"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Real mouse-to-pet lag, drag during model generation/app switching, automatic habitat/manual interference, native DPI/focus/GPU and long-running behavior remain unverified. WM_NULL and queue counts cannot substitute for these.",
+      "Upgrade/recovery/real migration, optional live accounts and permanent cleanup remain unfinished/unverified. Full objective and both release gates remain intact."
+    ],
+    "nextAction": "Keep true drag/presentation acceptance highest and the visible-test coordination outstanding; do not repeat the unanswered question, open development windows, inject input, classify private workload, restart/install or push. Current short read-only samples did not reproduce sustained GUI nonresponse; do not attribute the original lag to Python or claim this queue defect is its proven sole cause. Safe source follow-up: review how queued foreground-context reads and native surface/resource lifecycle behave at application switches using owned synthetic/hidden fixtures, preserving immediate privacy suppression. Do not keep sampling unchanged installed counters as a substitute for implementation or actual acceptance. All fourteen scopes and F-only storage remain required."
+  },
+  "diagnosticDataVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "The preceding implementation turn made verified progress on queued chat delivery and hidden native startup (a10); the intervening user launch request only activated installed 0.3.56 and was not development acceptance. This continuation fully re-read the objective, preserved all fourteen requirements, reproduced the identified diagnostic storage defect, fixed it and verified a11. Actual native smoothness remains highest and unproven.",
+    "changes": [
+      "No-override diagnostic startup previously asked TemporaryDirectory for the system default, and whitespace overrides could fall through to the real root. New scoped allocation uses only the fixed F root's diagnostics/random child. It refuses redirected parents and unavailable/full/read-only storage before Qt or shell recovery.",
+      "DataRootPurpose.DIAGNOSTIC now requires an isolated override, on the dedicated Windows volume, not the real data root or its ancestors (including resolved links). Production, explicit TEST and native-capture-helper call-site authority are not broadened. Automatic scopes restore the previous override and remove only their own directory on return/error; explicit caller directories are retained.",
+      "The Qt application body moved to _run_application so the diagnostic scope owns every exit. Cache-order AST checks now inspect that body; runtime tests separately prove main dispatch and cache-failure exits. No runtime GUI behavior, model permission, chat persistence or normal recovery semantics were intentionally changed.",
+      "Real source self-test and hidden qwindows startup ran without LILIES_DATA_DIR, with only the fixed-root constant pointing to an owned F fixture. Both completed, restored the override and removed the allocated data/cache even after process teardown. System-temp sentinel remained empty; local-app-data sentinel had no files. This does not manipulate the real private-data root.",
+      "Read-only counters sampled the already running installed 0.3.56 process for about 38 seconds. All Responding samples were true and thread count was 93, but cadence varied and tests/build overlapped. This is not drag/input/compositor timing or long-run stability evidence; no user input, screen, model or private content was accessed."
+    ],
+    "verificationState": "Red baseline, first suite, runtime 80537, boundary 80934, app regression 94405, strengthened boundary 1287, passive sample 40601, candidate build 82498 and final source/package identity 49050 all terminated. Final identity passed; no live handle remains. Final two regression suites contain 316 distinct passing cases with no failures/errors/skips. The red baseline is preserved and is not counted as a pass.",
+    "tests": [
+      {"artifact": "artifacts/diagnostic-data-verified.xml", "tests": 225, "failures": 0, "errors": 0, "skipped": 0, "seconds": 41.109, "scope": "F-root validation and lifecycle, startup/exception isolation, cache ordering, real no-override source self-test/hidden qwindows subprocesses with synthetic roots, recovery/probe/bundle regression. No real restoration or user-data migration."},
+      {"artifact": "artifacts/diagnostic-data-app-regression.xml", "tests": 91, "failures": 0, "errors": 0, "skipped": 0, "seconds": 175.229, "scope": "Chat delivery, held-gesture offscreen QML, retry/history, backend contracts, synthetic migration and compact lifecycle. Model stubs and isolated F data only."}
+    ],
+    "preservedFailures": [{"artifact": "artifacts/diagnostic-data-before.xml", "tests": 13, "failures": 13, "scope": "Unspecified/whitespace override and direct diagnostic root reuse/cross-volume acceptance; allocation spy redirected the old system-temp request into an owned F fixture. No C file or real database was created/read."}],
+    "passiveObservation": {"artifact": "artifacts/installed-process-passive-20261005.json", "pid": 37968, "version": "0.3.56", "samples": 16, "firstToLastMs": 38210.86, "uptimeSecondsAtEnd": 5431.82, "scope": "Process metadata only, concurrent with diagnostic work. Calls not individually timed; sampling jitter cannot be attributed to Lilies. Does not describe a11 performance or prove long-run stability."},
+    "package": {
+      "buildId": "v0357-diagnostic-data-20261005-a11", "status": "built-hidden-native-and-current-source-rechecked",
+      "sourceDigest": "27e3fd1b02ff68fc0a870e176a968bcaa1ebd16e239ad061b4be702ee65b6be8",
+      "executableSha256": "F9FCFD3C82537081BA72E64C16B73FB4E78D9CB1491E18B51FDCE265903461D6",
+      "files": 2472, "bytes": 289413888, "resourceCount": 60, "releaseReady": false,
+      "nativeStartup": "passed-hidden-probe", "nativeSystemMoveRuntimeVerified": false,
+      "receipt": "artifacts/v0357-diagnostic-data-20261005-a11/candidate-build.json",
+      "finalIntegrity": "artifacts/v0357-diagnostic-data-20261005-a11/bundle-integrity-final.json",
+      "hiddenStartup": "artifacts/v0357-diagnostic-data-20261005-a11/packaged-windows-startup-v0357.json",
+      "hiddenStartupEvidence": {"nativeDispatchCount": 11, "nativeHitTestCount": 4, "eventLoopTicks": 33, "quickWindows": 18, "visibleWindows": 0, "trayPublished": false},
+      "scope": "Exact package identity and explicit F fixture offscreen/native-hidden checks. Default no-override lifetime was tested in real source processes with a synthetic fixed root, not against real private data. No installation or visible/input/model acceptance."
+    },
+    "hashes": {
+      "src/lilies/app.py": "3A6C286D64E96867968B1FF63BCC6055B3668037DF7A17F6F3E2E1E274F6839F",
+      "src/lilies/paths.py": "776A3A5973DE56A275EB72B17EBF81D388C77AFD84EB46993EF78BCBF9AA07D5",
+      "tests/test_diagnostic_data_lifecycle.py": "99656B93E1F35E06295737C54E0DEA9BEF3813F1DB1906C5B67C899DB400F4EB",
+      "tests/test_qt_cache_routing_v0331.py": "813F4D9F7F83ED526E705716840D2DC6BF34013402EA7502DA47F36D31D24495",
+      "tests/test_qt_cache_routing_v0332.py": "813F4D9F7F83ED526E705716840D2DC6BF34013402EA7502DA47F36D31D24495"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Real drag/mouse lag, model concurrency, app switching, visible native focus/Z-order/DPI/GPU and long-running behavior still need appropriate live acceptance. Short process counters and hidden startup are insufficient.",
+      "Actual upgrade/recovery/migration, optional live connector accounts and permanent cleanup remain unfinished/unverified. No gate has been opened and no completed subset substitutes for the full objective."
+    ],
+    "nextAction": "Keep native smoothness highest; do not repeat the unanswered visible-test question or operate the user's windows. The passive counter sample exposed variable sampling cadence, not its cause. A safe follow-up is a bounded read-only responsiveness measurement that times metadata/status-query costs separately on the exact existing process, without actual input, screenshots, model requests or restart; distinguish probe cost from UI/presentation delay. Broader packaging/data/cleanup acceptance remains required. Preserve all fourteen scopes, F-only data, and current install; no download, API key or push."
+  },
+  "chatDeliveryVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: deferred periodic chat layout under held gestures and verified a9. This continuation fully re-read the goal, preserved all fourteen requirements and measured worker-to-GUI delivery before changing it. It reduced a reproduced burst queue, fixed diagnostic failure escape paths, and verified an independent a10 including a hidden native cold-start probe. Real drag/model-concurrency/long-running acceptance is still highest and unproven.",
+    "changes": [
+      "A synthetic producer queued 192/1000/8000 deltas before the GUI pumped. Existing delivery entered the GUI callback once per delta. 192 drained below 1 ms; 8000 took 20.8735/30.6032 ms depending on presentation pause. This stress schedule does not establish normal model cadence or prove the cause of the user's drag lag.",
+      "ChatDelivery now accepts direct worker signals into a locked pending text batch and posts one queued GUI wake per pending batch. No timer, extra worker, size-threshold delay, file I/O or truncation. Same stress schedule delivers once, preserving all Unicode. Producer work increased, so the one-shot timing is not a total-throughput or real-screen speedup claim.",
+      "Terminal/error slots flush pending text first. Ticketed wakes cannot consume a later batch after explicit flush. Delivery is owner-thread-only, callbacks run outside the lock, concurrent enqueue does not deadlock, and close rejects late producer events. ChatService generation, persistence, permissions and memory remain unchanged.",
+      "Before attempting hidden native startup, tests reproduced diagnostic cache/database/socket failures reaching real backup restoration or modal UI. These diagnostic branches now return 3/4 without real recovery or dialogs. Normal startup behavior is separately preserved by stubbed tests; no real restoration was attempted.",
+      "A10's own hidden qwindows process passed actual HWND hit dispatch, no-activate styles and synthetic move-watcher event checks. Eighteen QML windows stayed hidden, no tray was published, and diagnostic data/caches remained in an explicitly selected F fixture. This is stronger startup evidence but not visible focus, real drag, DWM/GPU frames, actual model or long-run acceptance."
+    ],
+    "verificationState": "Stream first suite 15507, final 25501, diagnostic first final 83518, strengthened 16163, actual QML continuity 54585, build 92266 and final package identity 49849 are all terminal exit 0. Baseline failing suites also terminated and are preserved. Final suites contain 238 distinct passing cases with zero failures/errors/skips. No live handle remains.",
+    "tests": [
+      {"artifact": "artifacts/chat-delivery-final.xml", "tests": 120, "failures": 0, "errors": 0, "skipped": 0, "seconds": 159.262, "scope": "Owned worker/GUI batch delivery, order, concurrent producer/drain, terminal/error/cancel, shutdown and stale wakes; production backend wiring, offscreen held gestures, chat history/retry, model identity/broker and backend regression. Synthetic data and model stubs only."},
+      {"artifact": "artifacts/diagnostic-isolation-verified.xml", "tests": 118, "failures": 0, "errors": 0, "skipped": 0, "seconds": 14.610, "scope": "Diagnostic failures cannot recover real desktop/open modal UI; normal-startup branches use stubs. Recovery, probe contract, bundle identity and cleanup regression, including only an owned hidden liveness fixture process."},
+      {"artifact": "artifacts/chat-continuity/result.json", "checks": 6, "warnings": 0, "passed": true, "scope": "Production QML offscreen with fake model: exact history jump, paging, Enter continuation, safe retry and narrow/standard layouts."},
+      {"artifact": "artifacts/chat-drag-stream-ui/result.json", "checks": 5, "warnings": 0, "passed": true, "scope": "Production offscreen gesture/text-document coalescing and terminal source IDs; not real input or displayed frames."}
+    ],
+    "measurements": {
+      "before": "artifacts/chat-signal-delivery-before.json", "after": "artifacts/chat-signal-delivery-after.json",
+      "scope": "Single synthetic stress sample per 192/1000/8000 burst with/without presentation pause. All new batches enter one GUI callback. No native input, pixels, model request or private data; producer/GUI work redistribution, not overall performance acceptance."
+    },
+    "preservedFailures": [
+      {"artifact": "artifacts/chat-delivery-before.xml", "tests": 1, "failures": 1, "scope": "Production Backend received 8000 GUI callbacks for an 8000-delta queued burst before coalescing."},
+      {"artifact": "artifacts/diagnostic-isolation-before.xml", "tests": 12, "failures": 12, "scope": "Four diagnostic modes reached forbidden restoration or modal-dialog stubs on cache/data/socket failures. No real desktop action was executed."}
+    ],
+    "package": {
+      "buildId": "v0357-chat-delivery-20261005-a10", "status": "built-hidden-native-and-current-source-rechecked",
+      "sourceDigest": "91bea2c0464ae4139ceaeb2d3b915c1f6cbed226abb736ce98f6e31375cacfe5",
+      "executableSha256": "D3022B769878DD14D7AB1517AFB6670B964BFB8E10BE71078219F9C4F1A01C3D",
+      "files": 2472, "bytes": 289412274, "resourceCount": 60, "qmlWarnings": 0,
+      "releaseReady": false, "nativeStartup": "passed-hidden-probe", "nativeSystemMoveRuntimeVerified": false,
+      "receipt": "artifacts/v0357-chat-delivery-20261005-a10/candidate-build.json",
+      "finalIntegrity": "artifacts/v0357-chat-delivery-20261005-a10/bundle-integrity-final.json",
+      "hiddenStartup": "artifacts/v0357-chat-delivery-20261005-a10/packaged-windows-startup-v0357.json",
+      "hiddenStartupEvidence": {"nativeDispatchCount": 11, "nativeHitTestCount": 4, "eventLoopTicks": 33, "quickWindows": 18, "visibleWindows": 0, "trayPublished": false, "noActivateStyles": true, "transparentCornerPassed": true},
+      "scope": "Exact compiled module/resource/full-file identity; offscreen self-test/resource/pose checks and owned hidden qwindows dispatch/flags. No installation, real input, native presented-frame timing, live accounts, actual recovery or real-data migration."
+    },
+    "hashes": {
+      "src/lilies/app.py": "D83B91AB121AC1EB1AA55F97A41CAA14EE80391E427AD3771171661A51A811D0",
+      "src/lilies/backend.py": "671CB568473BF09D200BF64BD805E3950B6C3C16FB8F96AFAC2FEEC901BED0F7",
+      "src/lilies/chat_delivery.py": "D7B9649F0DEB6890424FDF009C7C7F177FE477F982EB4FB099DD9D9801EE9B32",
+      "tests/test_chat_delivery.py": "89CFAD718451BE797C633586FD8B09BA5AE51848A931215E2232A05532EB3122",
+      "tests/test_diagnostic_failure_isolation.py": "0C316F1EA7EFF574F378B4BB2EDDEAF689366DC8E174E3ED55C16387EEF7445E",
+      "scripts/measure_chat_signal_delivery.py": "A86AF798A0D51BF5401253682A05D2FDFBD40137A6A5D2FE19841FD33CF80F5E",
+      "tests/test_chat_stream_hot_path.py": "D985E1F255B8FD35C37A34872FA9DC233E37ED05491082941A0D853FD9DA3754"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Real mouse-to-pet lag, visible model concurrency, app switching, native focus/Z-order/DPI, GPU presentation and long-running behavior still require native user-visible acceptance. Hidden startup and queue counts do not prove them.",
+      "Diagnostic runs with no LILIES_DATA_DIR still use TemporaryDirectory's system default in app.main. All this turn's probes explicitly route to F, so that unconfigured default boundary remains to inspect/fix; do not claim general diagnostic F-only isolation is complete.",
+      "Actual upgrade/recovery/migration, optional live connector accounts and permanent cleanup remain unfinished/unverified. Release gates remain closed; no completed subset replaces the full objective."
+    ],
+    "nextAction": "All current handles are terminal, including the hidden native fixture. Keep real drag/model/long-run acceptance highest and retain the outstanding desktop-test coordination; do not repeat the unanswered question, show development windows, inject actual input or restart/replace installed 0.3.56. Safe concrete follow-up: inspect and correct the identified no-override diagnostic TemporaryDirectory default against the F-only invariant, using only synthetic roots, without real backup/token/chat access. Preserve all fourteen scopes and both release gates. No API key, download, account access or unrequested push."
+  },
+  "dragChatPresentationVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "The immediately preceding turn fulfilled the separate launch request: existing installed 0.3.56 was activated in compact mode, with no development acceptance. The preceding implementation turn made settings/consent UI progress. This continuation fully re-read the objective and returned to the highest-priority responsiveness path; all fourteen requirements remain intact, not replaced by packaging or a smaller passing subset.",
+    "changes": [
+      "Reproduced periodic tail-model notifications while character/resize/box pointer ownership is held. The existing productivity/companion pause did not stop ChatTimeline's 33 ms timer, so rendered text still reflowed during dragging.",
+      "Pointer-critical ownership now pauses only periodic stream presentation. All chunks and lazy full-text snapshots remain available; generation and persistence are unchanged. Last-owner release arms one normal refresh rather than laying out text in the release callback. A re-grab fences already-posted timeouts. Menu-only locks do not pause the stream, and shutdown release cannot restart it.",
+      "Explicit turn/retry/reset and terminal commit semantics remain immediate. A terminal result during a held gesture still binds its saved message ID and cannot replay the old draft after release. This intentionally does not eliminate every GUI notification or measure queued model-signal delivery, native input queue, compositor or presented-frame timing.",
+      "Production Main.qml offscreen press/cancel functions were exercised for three streaming gestures: the actual tail TextEdit had zero incremental changes while held and one merged change after each release. Synthetic F database/model chunks only; no live input, model, account, screenshot or desktop test.",
+      "An existing reading-clock test failed because it counted first-session discovery as a steady-state tick. It now separately asserts the first paper projection edge and preserves the one-read/no-rescan assertion on the following stable tick. No runtime reading logic or assertion about steady tick cost was relaxed."
+    ],
+    "verificationState": "Initial stream suite 64496, first broader regression 5596, corrected full regression 21480, companion regression 52891, build 42665 and final identity check 10936 are all terminal. Final two suites contain 164 distinct passing tests with zero failures/errors/skips. No live test/build handle remains. Failed reports are preserved separately, not counted as successes.",
+    "tests": [
+      {"artifact": "artifacts/chat-drag-stream-final.xml", "tests": 89, "failures": 0, "errors": 0, "skipped": 0, "seconds": 103.441, "scope": "Held/nested/re-grab/menu/shutdown stream behavior, production QML text-document updates, authoritative completion/source IDs, history/retry, idle timer and synthetic native-bridge/timing regression. Not actual desktop latency."},
+      {"artifact": "artifacts/chat-drag-companion-regression.xml", "tests": 75, "failures": 0, "errors": 0, "skipped": 0, "seconds": 141.250, "scope": "Quiet presence QML, model identity/broker and backend contracts using isolated/offline fixtures; no real model generation or external account."},
+      {"artifact": "artifacts/chat-drag-stream-ui/result.json", "checks": 5, "warnings": 0, "passed": true, "scope": "Actual production QML gesture ownership and TextEdit signals on offscreen; three held/release cycles and final commit."},
+      {"artifact": "artifacts/quiet-presence/result.json", "checks": 8, "warnings": 0, "passed": true, "scope": "Existing causal reading/pause/completion/drag-freeze behavior rechecked offscreen; targetFps properties are not measured native frames."}
+    ],
+    "preservedFailures": [
+      {"artifact": "artifacts/chat-drag-stream-before.xml", "tests": 10, "failures": 7, "scope": "Six reproducible held-stream ownership failures plus one scheduler-sensitive fixed 60 ms positive-delivery assertion. Positive delivery now uses a bounded predicate wait; no native timing conclusion."},
+      {"artifact": "artifacts/chat-drag-stream-verified.xml", "tests": 89, "failures": 1, "seconds": 105.094, "scope": "Old reading clock fixture mixed initial paper projection with stable clock reads. Split transition/steady assertions, then reran all 89 cases; the failed report name is historical, not proof of passing."}
+    ],
+    "package": {
+      "buildId": "v0357-drag-chat-20261005-a9", "status": "built-offscreen-and-current-source-rechecked",
+      "sourceDigest": "5f6adf939d4a60e4e87cb8fd6a99cfd346c22fd6aad84dd6e2c164a7fd9a3a73",
+      "executableSha256": "0666D924926DEDA01FA169AD34DB3AD00FEC8727A8D388F8050CE92C4753F9DA",
+      "files": 2472, "bytes": 289409558, "resourceCount": 60, "qmlWarnings": 0,
+      "releaseReady": false, "nativeStartup": "not-run", "nativeSystemMoveRuntimeVerified": false,
+      "receipt": "artifacts/v0357-drag-chat-20261005-a9/candidate-build.json",
+      "finalIntegrity": "artifacts/v0357-drag-chat-20261005-a9/bundle-integrity-final.json",
+      "scope": "Compiled module/resource/full-file identity, packaged offscreen self-test, compact resource and pose-click checks. Not installation, native drag/model concurrency, system recovery, live accounts or real-data migration."
+    },
+    "hashes": {
+      "src/lilies/backend.py": "E3FAD374405D417BD62082768621AFD11A9845055E5B70292EB45026B46AD560",
+      "src/lilies/chat_timeline.py": "20E05D9BC547DF4525610621671690ADEE3A8B262F0AC8640B3AE24EFD1E43D3",
+      "scripts/verify_chat_drag_stream_ui.py": "ABE27E5C4CF4435E967FC95ACA2B415A473624F46D2C6AC2ECB2D8F245662643",
+      "tests/test_chat_drag_stream.py": "0DA85905D3DC117BFB04BFB84BBE628205770600851A290944F546100273B373",
+      "tests/test_chat_drag_stream_ui.py": "94C72E758E1C6C0E36F6A93B09A04E1BE9F5F20D17958BC87F749E79FD1DA5D2",
+      "tests/test_idle_runtime_budget_v0340.py": "A7CB3B0BCF35FEFC62A7DCCE5EB1BC36FCDD14DCCB32260557EEF3A4FDC4D353"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Real drag/input delay under live model generation, application switching and long runtime remains highest and unverified. Qt signal delivery and terminal/DB work can still compete; eliminating periodic layouts alone is not smoothness acceptance.",
+      "Native focus/Z-order, display scaling, actual upgrade/recovery/migration and optional live accounts remain unverified. Permanent cleanup is still unfinished; both release gates stay closed and all other requirement scopes remain intact."
+    ],
+    "nextAction": "All named handles are terminal; do not treat them as running or restart on an observation timeout. Keep native drag acceptance highest. Desktop-test coordination remains outstanding: do not repeatedly ask the unanswered question or open development windows/restart the installed app. Safe performance work can measure synthetic worker-to-GUI signal backlog before deciding whether another hot-path change is warranted; do not infer real screen latency from that test. Preserve all fourteen requirements, explicit deployment/recovery gates, private data and installed 0.3.56. No real account access, model download, API key, native input injection or remote push."
+  },
+  "observationSettingsVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: removed a reproduced per-delta GUI-thread history copy, fixed bounded startup health and produced verified candidate a7. This continuation fully re-read the objective, inspected actual rendered settings/record surfaces, reduced observation-page density and tested minimum-size/high-scale consent and long-record interactions. All fourteen requirements remain unchanged; native drag, concurrent model/input and long-runtime acceptance remain highest and unproven.",
+    "changes": [
+      "Observation settings put current status, last-sent context kind, explicit screenshot consent and pause above the fold. Existing verbose mechanisms/capture/delivery details are disclosure content, never destroyed or used to change settings. Current state detail and failed/skipped observation reason stay outside the fold.",
+      "Actual consent now uses a centered paper dialog, four readable scope paragraphs, explicit Chinese decline/accept buttons and a scrolling body with pinned actions. Opening/closing never grants consent; explicit confirmation calls the existing local authorization setter. Reopening resets only the explanation's scroll, not settings drafts.",
+      "A 2x-scale implicit-height binding loop was found in the new dialog and fixed with an independent preferred surface size. The early long-record test mistakenly measured the TextArea parent; it was strengthened to measure the actual named ScrollView availableHeight. Existing shared-record layout passed long-title 360x360/360x450/520x610 boundaries without changing its layout or removing actions.",
+      "All tests use owned offscreen Qt windows, synthetic F data and stub capability discovery. The actual consent button is exercised through confirm and revoke on that fixture; no real model, account, screenshot or native desktop input. Installed/formal hashes remain unchanged."
+    ],
+    "verificationState": "UI exploration 1242, initial fixture suite 71976, preserved failed regression 80513, corrected regression 88137, companion regression 81378, build 49445 and final identity check 24443 are all terminal. Final two checks passed; no live handle remains. Final regression reports contain 46 distinct passing cases with no failures/errors/skips; the older failed run is not counted as a success.",
+    "tests": [
+      {"artifact": "artifacts/settings-density-verified.xml", "tests": 31, "failures": 0, "errors": 0, "skipped": 0, "seconds": 85.448, "scope": "Offscreen 1x/2x minimum-size settings, explicit consent/cancel/revoke, no implicit authorization, pause, visible failures, long-record actual viewport, existing grouped pages, drafts, awareness receipts, browser safety and shared-world workflows."},
+      {"artifact": "artifacts/settings-density-companion-regression.xml", "tests": 15, "failures": 0, "errors": 0, "skipped": 0, "seconds": 32.437, "scope": "Companion flow, frequency draft/atomic/projection behavior and synthetic presentation contracts. Not actual desktop input or native presentation acceptance."}
+    ],
+    "preservedFailures": [
+      {"artifact": "artifacts/settings-density-regression.xml", "tests": 31, "failures": 1, "scope": "New consent PaperDialog had an implicitHeight binding loop at 2x. Corrected preferred size, added visible scrollbar and reran all 31 cases; failure was not suppressed."}
+    ],
+    "visualEvidence": ["artifacts/settings-density-1/observation-520-700.png", "artifacts/settings-density-1/consent-minimum.png", "artifacts/settings-density-2/consent-end.png", "artifacts/settings-density-1/long-paper-360-360.png"],
+    "package": {
+      "buildId": "v0357-settings-density-20261005-a8", "status": "built-offscreen-and-current-source-rechecked",
+      "sourceDigest": "e5ca9a224b16dae4489b08ed646ea591fe0df28cef89a0d74e879c79fc3368cc",
+      "executableSha256": "D1F7F73705C298E8096AE045B96B83BC17891C567B90D98EAF0E5166EB905E16",
+      "files": 2472, "bytes": 289408975, "resourceCount": 60, "qmlWarnings": 0,
+      "releaseReady": false, "nativeStartup": "not-run",
+      "receipt": "artifacts/v0357-settings-density-20261005-a8/candidate-build.json",
+      "finalIntegrity": "artifacts/v0357-settings-density-20261005-a8/bundle-integrity-final.json",
+      "scope": "Fresh side-by-side package, compiled module/resource identity, offscreen self-test, compact resource and pose-click-mask checks. Native drag/input/focus/model concurrency, real data migration and account access did not participate."
+    },
+    "hashes": {
+      "qml/Main.qml": "3BC92949DA47BC1F1C5B91A5CB7C60A13CB5C69ECC79BF55312EC444431E2CAC",
+      "qml/SharedWorldWindow.qml": "12A50A7C407FD33D14643634E4F7B2F797F0446A0B435D2D5EAE0541B467C66A",
+      "scripts/verify_settings_density_ui.py": "B42E05AAC7F5CB3EEB4B38FC9F363E9F95C9AEC0D9161523AAE94FE02E933E4B",
+      "tests/test_settings_density_ui.py": "8080F32FF43BBC3D14E5F722A201B06479927E5215A01AA55E8FAC906099DF10"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Actual native drag/input delay, model concurrency, app switching, long-running performance, focus/Z-order and cross-monitor DPI remain unverified. Offscreen 2x scale is not native DPI acceptance.",
+      "Actual upgrade, shell restoration, real-data migration and optional live connector accounts remain unverified. Permanent data/program-backup uninstall cleanup remains unfinished. Both release gates remain closed; no completed subset replaces the full goal."
+    ],
+    "nextAction": "All handles from this continuation are terminal; do not restart them as live work. Keep all fourteen requirements and native drag/model/long-run acceptance highest, not a smaller passing subset. Desktop-test coordination remains outstanding and should not be repeatedly asked; do not open development windows or restart the installed app. Remaining safe release work includes implementing the explicitly opted-in permanent uninstall cleanup using exact-target synthetic F fixtures and interruption recovery; do not call retained backups a completed permanent uninstall. Real native/installation/account/migration acceptance is still required. No private chat/token access, real-account action, actual upgrade/uninstall or remote push."
+  },
+  "chatStreamAndHealthVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: the exact interrupted health-test handle reached terminal success, and the user's separate request to start the installed 0.3.56 compact app was fulfilled. This continuation re-read the complete objective, completed shared regression, reproduced and removed per-delta GUI-thread full-history copying, and built/verified a new isolated package. All fourteen requirements remain intact; native drag/model-concurrency/long-run responsiveness remains highest and unproven.",
+    "changes": [
+      "The fixed startup health interpreter now has a 35-second observation deadline and combined 64 KiB output bound. It runs the resolved base CPython directly, hidden and isolated, drains both pipes, requires process exit and one typed JSON object, and persists only fixed content-free fields. Unknown child/pipe cleanup blocks file rollback and cannot be overwritten by retry.",
+      "Backend no longer appends each model delta to a second full-history string. ChatTimeline provides a lazy cached compatibility snapshot including its pending tail, without flush/signals. Existing 33 ms tail coalescing remains. Retry, history reset and final authoritative text now share the same representation as the UI, avoiding mixed old/new or stale draft full-text results.",
+      "Synthetic baseline reproduced 202497500 cumulative left-side characters copied for a 200000-character history plus 1000 small deltas; this is a deterministic code-path count, not actual byte traffic, elapsed latency or native frames. The post-change hot-path test observes zero legacy history copies without dropping text.",
+      "The a6 package passed identity checking before runtime changes and was correctly refused afterward. A new a7 package is built separately; no old package, installed program, user data, model installation or remote repository is replaced."
+    ],
+    "verificationState": "Health handles 95814 and 91773, chat regression 17839, offscreen UI 29008, build 16192 and final identity check 75000 are all terminal exit 0. No live test/build handle remains. Three final XML suites contain 240 distinct test cases, zero failures/errors/skips; do not count the preserved red runs as final successes.",
+    "tests": [
+      {"artifact": "artifacts/health-probe-verified.xml", "tests": 85, "failures": 0, "errors": 0, "skipped": 0, "seconds": 70.714, "scope": "Startup/health protocol and outer-deadline tests. Actual verifier children are own hidden Python; main application identity, socket and restore use synthetic fixtures. No installed app or live private token."},
+      {"artifact": "artifacts/health-probe-shared-regression.xml", "tests": 63, "failures": 0, "errors": 0, "skipped": 0, "seconds": 96.965, "scope": "Shared pre-upgrade/quiescence, uninstall orchestration and both release-entry contracts; legacy JUnit format, no warning. Own hidden metadata fixtures only, not actual system restore."},
+      {"artifact": "artifacts/chat-stream-regression.xml", "tests": 92, "failures": 0, "errors": 0, "skipped": 0, "seconds": 142.588, "scope": "Synthetic stream hot path, lazy snapshot, timeline, history/retry, backend contracts, model identity and broker regression. Offscreen/offline; no real model or presented-frame timing."},
+      {"artifact": "artifacts/chat-continuity/result.json", "checks": 6, "warnings": 0, "passed": true, "scope": "Actual QML offscreen: exact history jump, older/newer paging, Enter continuation, retry without duplicate rows, narrow/standard layout. Synthetic F database and offline model only."}
+    ],
+    "preservedFailures": [
+      {"artifact": "artifacts/health-probe-before.xml", "tests": 3, "failures": 3, "scope": "Late verifier success accepted, extra output persisted, and unknown probe state allowed file rollback."},
+      {"artifact": "artifacts/health-probe-first-fix.xml", "tests": 30, "failures": 1, "scope": "Windows argument roundtrip harness serialized nested PS5 JSON arrays as value/Count wrappers. Return raw JSON and parse in Python; quoting logic was not weakened."},
+      {"artifact": "artifacts/health-probe-boundary-before.xml", "tests": 2, "failures": 2, "scope": "One-element health array accepted and an existing unknown probe identity overwritten."},
+      {"artifact": "artifacts/chat-stream-before.xml", "tests": 5, "failures": 4, "scope": "Red tests for cumulative full-history copying, mixed old/new retry snapshot, stale authoritative text, and absent lazy snapshot API."}
+    ],
+    "package": {
+      "buildId": "v0357-chat-stream-20261005-a7", "status": "built-offscreen-and-current-source-rechecked",
+      "sourceDigest": "be5c4ac09e9a080ff22d5c607f7b6d7d8af6aaa056b8cdf69139197d26846e61",
+      "executableSha256": "FC30F9A3F27E1CFB1382A629FA8CB61B6952B8A9F64EE3E306D51093B66386A1",
+      "files": 2472, "bytes": 289401525, "resourceCount": 60, "qmlWarnings": 0,
+      "releaseReady": false, "nativeStartup": "not-run",
+      "receipt": "artifacts/v0357-chat-stream-20261005-a7/candidate-build.json",
+      "finalIntegrity": "artifacts/v0357-chat-stream-20261005-a7/bundle-integrity-final.json",
+      "scope": "Exact compiled Python/resources and full package files checked after build. Packaged offscreen self-test, compact resource and pose-click-mask checks passed; no native input, Windows-shell recovery, live accounts or real-user migration. Historical packages were preserved."
+    },
+    "hashes": {
+      "scripts/install_probe.ps1": "8679CD7886F3C22C6C508EFFEBBC9436DBD06CB37FBAFA35EF1C08A4DFAE6593",
+      "scripts/install_startup.ps1": "355BC8AC3990BB80BD3689FAD4012C473961047C8480F31DF7E5FFB743FFE859",
+      "tests/test_health_probe_deadline.py": "F8D4846AC1EECD7ACD590A1ED907E4563C2E4D7E69226C5046CE0433EDD5E84D",
+      "src/lilies/backend.py": "B0D4D44DFEBCEC7B3A2B73B24EEC5A439FB92DDD3CD51116201DD8334B237F77",
+      "src/lilies/chat_timeline.py": "60EE4549DFE2BBED094EBD1BF5B706549720303476CF781C9A51C509D8F1DBD3",
+      "tests/test_chat_stream_hot_path.py": "5D806106A9FE63C62FA65E6AAE6273E75222DF82A1C5FD6AC393D952CCED9AB8"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "remaining": [
+      "Native drag/input latency, model concurrency, window switching, long-running behavior, focus/Z-order and habitat/manual interaction remain unverified. Removing a proven redundant operation does not prove user-visible smoothness.",
+      "Verifier deadline is an observation bound, followed by owned-child stop up to ten seconds and pending pipe waits up to one second each. Synchronous Process.Start/OS metadata calls are not given a hard wall-clock bound. No generic job-tree containment or installer-parent-death cleanup was added; fixed verifier does not spawn workers.",
+      "Permanent uninstall cleanup, actual upgrade/Windows recovery, live-account flows and real-data migration remain unfinished/unverified. External launches after a final identity check are not excluded. All fourteen requirements remain; no completed subset is substituted for full acceptance."
+    ],
+    "nextAction": "All handles from this continuation are terminal; do not restart them as live work. Keep all fourteen requirements and native drag/model/long-run acceptance highest. The desktop coordination question remains unanswered: do not repeat it, open development windows, inject input or restart the explicitly started installed app. Next safe product work is the outstanding broader settings/world responsive-layout review with synthetic offscreen content, preserving the activity-first UI and reducing density without removing capabilities. Optional permanent uninstall cleanup also remains unfinished; do not silently call retention a full uninstall. Real user-data/account verification, native recovery and release acceptance remain required before opening either release gate. No private chat/token access or remote push."
+  },
+  "recoverableUninstallVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "No implementation progress: the preceding read-only assessment restated known installed/candidate gaps. This continuation re-read the full objective and completed the recoverable-uninstall transaction and checked-restoration wiring. All fourteen original requirements remain intact; actual desktop responsiveness remains the highest unresolved acceptance.",
+    "changes": [
+      "Schema-three uninstall journals share the exact program target lock with install journals. A recorded program tree is moved to an explicit recovery copy and only owned fixed-role links are removed. Install entrypoints refuse uninstall journals. New operations cannot bypass interrupted uninstall/recovery, and explicit recovery is independent of a candidate build.",
+      "Uninstall restoration uses an independently verified candidate, never the installed legacy unchecked --restore. Before removal, held-image process identity checks stop only known mains, let watchers drain and require successful recovery. Unknown restoration stays outside file rollback; a late process blocks automatic rollback rather than having its files moved.",
+      "Shortcut target/argument ownership is inspected without executing links. Missing roots/Startup are not recreated, external edits and displaced conflicting bytes are retained, junctions and manifest direction changes are rejected. Two late reserved-tree checks initially failed and were fixed. A new callback naming collision caused recursive verification timeouts; the callback now has a distinct captured name.",
+      "The candidate uninstall entrypoint is unconditionally gated before process/link/file mutations. Personal data is preserved by default. RemoveData explicitly refuses before mutation: permanent data/backup cleanup is still unfinished, not silently substituted with retention or claimed as complete. Installed/formal 0.3.56 and the historical promotion wrapper were not changed."
+    ],
+    "verificationState": "Final handles 39298 and 76785 are terminal exit 0. Conflict suite 9493 and the final owned-metadata check also completed successfully. No current test handle needs polling.",
+    "tests": [
+      {"artifact": "artifacts/uninstall-verified-boundaries.xml", "tests": 67, "failures": 0, "errors": 0, "skipped": 0, "seconds": 271.277, "scope": "Final uninstall transaction, checked-restoration orchestration and both release-entry contracts. Real F-drive files/COM links and isolated hidden PowerShell interruptions; native process/shell restoration is substituted, no installed app or user data participates."},
+      {"artifact": "artifacts/uninstall-shared-regression.xml", "tests": 135, "failures": 0, "errors": 0, "skipped": 0, "seconds": 499.174, "scope": "Shared install/shortcut transactions, retention boundaries, process ownership and uninstall orchestration. Two existing record_property/xunit2 reporting warnings do not affect assertions; those two owned fixture metadata tests were rerun with compatible legacy JUnit below."},
+      {"artifact": "artifacts/uninstall-conflict-boundaries.xml", "tests": 6, "failures": 0, "errors": 0, "skipped": 0, "seconds": 16.711, "scope": "Junctions, altered operation/snapshot/link direction and external bytes racing removal. Included again in the full final boundary report; do not add counts."},
+      {"artifact": "artifacts/uninstall-owned-metadata.xml", "tests": 2, "failures": 0, "errors": 0, "skipped": 0, "seconds": 4.401, "scope": "Actual held-handle/CIM metadata only for two freshly created hidden fixture children; both native_owned_cim values verified, no warnings. Not actual Lilies, shell recovery, input or desktop acceptance."}
+    ],
+    "distinctFinalTestCases": 193,
+    "preservedFailures": [
+      {"artifact": "artifacts/uninstall-transaction-before.xml", "tests": 34, "failures": 2, "scope": "Late reserved stage/failed paths were not rechecked after the process guard."},
+      {"artifact": "artifacts/uninstall-startup-initial.xml", "tests": 9, "failures": 6, "scope": "Initial orchestration callback name collision caused recursion/timeouts in owned PowerShell fixtures. A later empty-catch fixture returned a failure exit; changed it to explicitly assert the observed exception and restoration."},
+      {"artifact": "artifacts/uninstall-final-boundaries.xml", "tests": 61, "failures": 1, "scope": "Behavioral tests passed; one static ordering assertion matched a comment instead of the command. Narrowed it to the actual invocation and reran the complete final set."}
+    ],
+    "package": {
+      "buildId": "v0357-recovery-outcomes-20261004-a6", "status": "unchanged-runtime-rechecked",
+      "sourceDigest": "9ebdb0d216c9767bc89a9153a6c055df7e642d6081de9cbb01a618788fe3892e",
+      "executableSha256": "31CA0FE36AB86C552809955176399FACC5FE1C5A67E308276436521C9E071AEE",
+      "files": 2472, "releaseReady": false, "nativeStartup": "not-run",
+      "scope": "Read-only check-candidate returned exit 0 after script-only changes. Runtime source/resources remain exact a6. The PowerShell entrypoints/helpers parse successfully; actual uninstall, install, shell restoration and user data did not participate."
+    },
+    "hashes": {
+      "scripts/uninstall_windows.ps1": "17BB9B79A1A09A53005DB749B8D5B222382E16F3C96E5641A7D15511A4758D38",
+      "scripts/uninstall_transaction.ps1": "DFE98A057914ABFBF73C919DC8348E27351F9632D8E813C223E1597051C95161",
+      "scripts/uninstall_startup.ps1": "279A6DA3AB8531B104D64181A7BB7320BF764D327954BA8FE0D65EEF857A8B67",
+      "scripts/install_transaction.ps1": "43EB59F92A3468FEC7143CDBB2FB5D699D17E8E7F1D1BF20DB9FA6536FEDB568",
+      "tests/test_uninstall_transaction.py": "6402E66D3277F97F397F6EDDFF755E7D16D40499CEC3759C7AF724BB412EB73D",
+      "tests/test_uninstall_startup.py": "1AFFA9F68D9A7F8B87F75E86201A7D423D4F79F4EA80B3E1AA3CF3718709AEDE",
+      "tests/test_windows_uninstaller_contract.py": "6BB6A3667B1F213855B7408E3B469ADE728A47ACA32B67258D81FC04E797CE50",
+      "tests/test_windows_installer_contract.py": "97C70938F1AC86CA8C250EC1C13A016536F2D804CBF34D1ACDF2DCBE67E175D7"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "historicalPromotionSha256": "D5FF95D3FFAF9E598B99AF61638FF624E67EE41A496F50DAE7EAB784709BD49B",
+    "remaining": [
+      "Actual drag/input latency, model concurrency, long-running behavior, native focus/Z-order, real shell restoration, live accounts and real-data migration remain unverified. The verified file/COM transactions and owned-fixture metadata do not establish those outcomes.",
+      "Permanent uninstall cleanup of retained program copies and explicitly opted-in data is not implemented or released. The candidate wrapper intentionally refuses RemoveData before mutation; this is unfinished work, not a changed acceptance definition. Native uninstall and recovery still require acceptance.",
+      "Final image checks cannot exclude every noncooperating external launch; startup-health interpreter launch still has no independent outer deadline. Both release gates remain closed. No model download, API key, private chat/token access, actual install/uninstall, desktop input or remote push occurred."
+    ],
+    "nextAction": "All test handles in this continuation are terminal; do not restart old suites as if they were live. Keep all fourteen requirements and native responsiveness highest. Do not repeat the already-requested desktop coordination or open development windows. The recoverable-uninstall default is implemented and fixture-tested, but full permanent cleanup is still unfinished: design explicit exact-target program-copy/data cleanup with recoverable interruption and opt-in boundaries in F fixtures before releasing it. Also retain the independent outer deadline gap in startup-health invocation. Neither install nor uninstall may bypass its release gate. No actual uninstall, user-data access, account flow or remote push is authorized by these fixture results."
+  },
+  "preUpgradeVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "No progress toward implementation: the preceding read-only assessment restated shipped/candidate gaps and proposed extensions, but did not change the requested end state or resolve native acceptance. This continuation re-read the full objective and current source, then implemented pre-upgrade process ownership and ordered recovery. All fourteen original requirements remain intact; real drag/input responsiveness is still the highest unverified requirement.",
+    "changes": [
+      "Installer shutdown no longer terminates by reusable PID. Exact image leases hold Process handles before metadata queries, verify path/creation time, and distinguish only recognized main roles from passive watchdog/restore roles. All roles and held identities are checked before stopping a main; inaccessible, inconsistent or unknown metadata fails closed. Enumerated handles are released, including failure paths.",
+      "Only verified old main processes are stopped. Watchdogs drain naturally; then the verified staged image performs checked restoration. Timeout cleanup is restricted to the held owned recovery child. Nonzero recovery, uncertain startup, remaining/new processes and changed staged content preserve old program files and the pending stage/journal.",
+      "BeforeActivate runs under the target transaction lock, outside the automatic file-rollback catch; guarded failure cannot move files underneath an unknown process. Payload/old-tree/shortcut checks repeat after the guard. Explicit recovery checks image quiescence both before dispatch and under the lock, without launching or stopping processes. NoLaunch still refuses to interrupt a running companion.",
+      "Two actual windowless F-drive fixture executables with Chinese/spaced paths verified Windows held-process/CIM role lookup for main and watchdog command lines. Each test queried and stopped only its own child. These are not actual Lilies watchdog/recovery or desktop tests."
+    ],
+    "tests": [
+      {"artifact": "artifacts/install-quiescence-regression.xml", "tests": 108, "failures": 0, "errors": 0, "skipped": 0, "seconds": 263.346, "scope": "Pre-upgrade synthetic process boundaries, owned startup, installer contracts and real F-fixture file transactions. The final added identity-set recheck and five added cases were rerun in the final boundary report."},
+      {"artifact": "artifacts/install-quiescence-final-boundary.xml", "tests": 64, "failures": 0, "errors": 0, "skipped": 0, "seconds": 100.088, "scope": "Final helper code: unknown/changed identities, passive watchers, recovery failures/timeout, late process/payload, fresh/no-launch installs, transaction guards and owned startup. Overlaps the preceding report."},
+      {"artifact": "artifacts/install-quiescence-owned-cim-final.xml", "tests": 2, "failures": 0, "errors": 0, "skipped": 0, "seconds": 4.912, "scope": "Actual Windows metadata for two independently created hidden fixture children, including Unicode/spaced image paths and main/passive role distinction. Both native_owned_cim values are verified; no installed app or user's process was targeted."},
+      {"artifact": "artifacts/install-quiescence-shortcut-health.xml", "tests": 117, "failures": 0, "errors": 0, "skipped": 0, "seconds": 263.126, "scope": "Synthetic F-drive shortcut/file interruption recovery, bounded authenticated health fixtures and candidate identity gates. No actual Start Menu, live user token, shell or account action."}
+    ],
+    "distinctFinalTestCases": 232,
+    "preservedFailures": [
+      {"artifact": "artifacts/install-quiescence-before.xml", "failures": 3, "scope": "Absent pre-activation and locked pre-recovery gates, and unrelated enumerated Process handle not disposed."}
+    ],
+    "package": {
+      "buildId": "v0357-recovery-outcomes-20261004-a6", "status": "unchanged-runtime-rechecked",
+      "sourceDigest": "9ebdb0d216c9767bc89a9153a6c055df7e642d6081de9cbb01a618788fe3892e",
+      "executableSha256": "31CA0FE36AB86C552809955176399FACC5FE1C5A67E308276436521C9E071AEE",
+      "files": 2472, "releaseReady": false, "nativeStartup": "not-run",
+      "scope": "Read-only check-candidate returned exit 0 after script-only changes. Runtime/source/resources remain exact a6; installation scripts are separately tested and are not evidence of an installed upgrade. No rebuild was needed."
+    },
+    "hashes": {
+      "scripts/install_startup.ps1": "1405EC41F3D4B2B17431CA4A985103F42C76360EE8AEBC2DA92A69FAADEC67F4",
+      "scripts/install_windows.ps1": "BFB0F74CD7562AE38724001575D4CE7ECE52A98DFD567DD2F7F3E5B58A215440",
+      "scripts/install_transaction.ps1": "6D867FCF603F794B799CC4B9D4BCC30DD8F0F390FEC5897B5534E27F910F0899",
+      "tests/test_install_quiescence.py": "7A1C7E23E7B3064B1861F4BCBFFCAC6FC9BA9964666F616F3162830D66931D40",
+      "tests/test_windows_installer_contract.py": "998CADCED2B2CF13FE6C512AAF55B4ACFAD269134F924E6343705C375EB15AE7"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "historicalPromotionSha256": "D5FF95D3FFAF9E598B99AF61638FF624E67EE41A496F50DAE7EAB784709BD49B",
+    "remaining": [
+      "Actual Lilies upgrade, real Windows shell recovery, native focus/Z order, presented drag latency, model concurrency, long-running use, accounts and real-data migration remain unverified. Do not generalize hidden fixture metadata tests or offscreen tests to these requirements.",
+      "The uninstall script still ignores recovery outcome and terminates by PID; it must be audited and fixed before release. Startup-health interpreter launch has no independent outer deadline. A noncooperating external launch after the final image check is not excluded by a file-transaction lock.",
+      "Installed/formal 0.3.56 remains unchanged. The unconditional install gate stays closed. No real chat, token, screenshot or account was accessed; no desktop input, model download, actual install/uninstall or remote push occurred."
+    ],
+    "nextAction": "All handles from this continuation are terminal: 43086 initial boundary, 1516 regression, 14109 final boundary and 72508 shortcut/health passed. The two final owned-CIM probes also returned exit 0 with no skip or warning. Keep all fourteen requirements active and native responsiveness highest pending the already-requested coordination; do not repeat that question or open development windows. Next safe release step is the uninstall failure-safety audit: verify exact targets without reparse escape, stop only identified main processes, let watchdogs finish, require checked restoration before changing files/shortcuts, preserve user data by default and retain recoverability on partial failure. Do not run the actual uninstaller or bypass the candidate release gate."
+  },
+  "recoveryOutcomesVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "No implementation progress: the preceding read-only research largely restated known installed/candidate gaps. This continuation fully re-read the objective, reproduced three recovery failures, and implemented observable restoration outcomes. All fourteen requirements remain intact; native drag/input responsiveness is still the highest unresolved acceptance.",
+    "changes": [
+      "Restoration now returns content-free observed outcomes for taskbars, desktop icons and login Shell state. Standalone CLI/watchdog retries for at most eight seconds; the GUI default is one non-waiting pass. Async visibility requests are verified rather than treated as completion.",
+      "Validated version-two backups preserve absent user Shell overrides and REG_SZ/REG_EXPAND_SZ types; legacy backups are supported. Invalid/missing/unavailable backups use visual fallback without guessing registry values. Backup access failures prevent hiding the desktop.",
+      "The CLI additionally recovers pending desktop-peek journals and returns exit 4 for incomplete/unknown recovery. F-root failure avoids fallback disk access. The wrapper no longer prints unconditional success; clean markers require explicit verified results, and diagnostic restoration performs no native mutations.",
+      "Watchdog Win32 process APIs preserve full HANDLE width. Access/wait errors and invalid PIDs cannot masquerade as a dead main process; handles close on every path. Native liveness was exercised only against a newly created, hidden, owned Python fixture child."
+    ],
+    "tests": [
+      {"artifact": "artifacts/shell-restore-final-regression.xml", "tests": 169, "failures": 0, "errors": 0, "skipped": 0, "seconds": 213.507, "scope": "Recovery logic, fixed data root, desktop peek, backend contracts, compact lifecycle and installer/probe contracts. Final tiny PID-validation/report type guards are covered by the later boundary/entrypoint runs."},
+      {"artifact": "artifacts/shell-restore-boundary-final.xml", "tests": 119, "failures": 0, "errors": 0, "skipped": 0, "seconds": 41.530, "scope": "Final recovery source, fixed-root behavior, synthetic peek journals and installer owned-child failure handling. Overlaps the other reports."},
+      {"artifact": "artifacts/shell-restore-entrypoints-owned.xml", "tests": 38, "failures": 0, "errors": 0, "skipped": 0, "seconds": 2.363, "scope": "Final entrypoint/liveness tests, including one actual owned hidden Python child; no user process or actual shell recovery."}
+    ],
+    "preservedFailures": [
+      {"artifact": "artifacts/shell-restore-before.xml", "failures": 3, "scope": "Actual silent recovery outcome, list-shaped backup crash and success exit despite failed restore."},
+      {"artifact": "artifacts/shell-restore-first-fix.xml", "scope": "Oversize JSON used as pytest parameter ID exceeded Windows environment-string limit before the test. Added bounded case names without changing payloads, then reran."}
+    ],
+    "package": {
+      "buildId": "v0357-recovery-outcomes-20261004-a6", "status": "passed-offscreen-only",
+      "sourceDigest": "9ebdb0d216c9767bc89a9153a6c055df7e642d6081de9cbb01a618788fe3892e",
+      "executableSha256": "31CA0FE36AB86C552809955176399FACC5FE1C5A67E308276436521C9E071AEE",
+      "artifact": "artifacts/v0357-recovery-outcomes-20261004-a6/candidate-build.json",
+      "finalIdentityArtifact": "artifacts/v0357-recovery-outcomes-20261004-a6/bundle-integrity-final.json",
+      "modules": 73, "resources": 60, "files": 2472, "bytes": 289401174, "qmlWarnings": 0,
+      "postProbeIdentityRecheckPassed": true, "historicalA5RejectedAsStale": true,
+      "nativeStartup": "not-run", "releaseReady": false,
+      "scope": "Complete code/resource/file identity and offscreen self-test/resource/click-mask probes only. No actual --restore, installation, user-data migration, native drag or model-quality test. Build 2778 and post-probe check 76929 both terminal exit 0."
+    },
+    "distinctFinalTestCases": 191,
+    "hashes": {
+      "src/lilies/core/shell.py": "FE52996ED59B3AD9E861B869EC5E599C72F1276B33156B61ACC050486B11D111",
+      "src/lilies/core/recovery.py": "8BFDEDC194714E3AE1043176353F5968DCAD59D9918753A9F1C71C9DCDD37183",
+      "src/lilies/watchdog.py": "33FC3E387B82FAEB2470BE9E0A5188084F442D1276B67E372AFFF71AF9D41C9E",
+      "src/lilies/app.py": "5FD54B925555BD9F0CDA34003108CC0C1FF6C72B19A5E673C98599B2C4BEEA68",
+      "scripts/restore_windows.ps1": "9E927D1FF1B89DEF8D71B5F05E37644834779653BCA6968E11B62E6187959AF5",
+      "tests/test_shell_restore_outcome.py": "1EC795FF50C925B412793FCC07AD0A9A738F117F80618E0A55B12CBD9A17DCB2",
+      "tests/test_recovery_entrypoints.py": "F8D4AAE40E3332E3F136010CABDEC8305491A61C5026F14B80AFDC072846CF91"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "historicalPromotionSha256": "D5FF95D3FFAF9E598B99AF61638FF624E67EE41A496F50DAE7EAB784709BD49B",
+    "remaining": [
+      "No actual Windows shell restoration, real-data migration/upgrade, native focus, presented drag latency, model concurrency or long-running behavior is proved by these tests. Visibility readback does not establish unobscured pixels or full Z order.",
+      "Legacy pre-upgrade PID-based shutdown still needs identity-safe ownership. The uninstall script also currently ignores recovery exit status and needs an in-scope failure-safe audit before release. No actual install/uninstall was performed.",
+      "All original feature and privacy requirements remain active. No native coordination question was repeated, no desktop window or host input was used, and no real chat/token/account was accessed."
+    ],
+    "nextAction": "All current sessions are terminal: 60745, 11791, 13873, build 2778 and final identity check 76929 succeeded. The a6 package is exact and isolated, not installed or native-accepted. Keep all fourteen requirements and the unconditional installer gate. Next safe release work is identity-safe pre-upgrade shutdown: hold exact process handles/creation times, stop only verified owned targets, let watchdogs finish, then run verified staged recovery again before moving files so the live old shell cannot re-hide restored chrome. Unknown process state must preserve the pending transaction. Also audit the uninstall script, which still ignores recovery exit and stops by PID. Native responsiveness remains highest pending already-requested coordination; do not repeat the question or open development windows. No remote push, actual data/account access or model download."
+  },
+  "paperSourceConfirmationVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "No implementation progress: the preceding read-only report revalidated installed versus candidate status and largely restated known gaps. This continuation re-read the entire objective, resumed the three exact outstanding test handles to terminal success, then reproduced and fixed the known paper-association defect. All fourteen requirements remain intact; native drag and long-running responsiveness are still the highest unresolved acceptance.",
+    "changes": [
+      "Two regression cases proved that both ordinary save and term auto-save silently filed unrelated selections under the active paper. Active paper context now supplies a candidate only; public quick-save is independent, and paper association requires a frozen, explicit one-use confirmation.",
+      "The existing non-focusable selection bubble previews title, user-marked page, locator and source. It offers paper/independent/cancel without a new window. Long titles are limited to two lines so the no-document-recognition and local-memory disclosures remain visible at 340px.",
+      "Offer authority stays in Python; QML returns only its opaque id and destination. Expiry, new selection, dismissal, drag, shutdown and privacy cancel old offers. Invalid/changed/deleted sources cannot leave a partial card or research memory. Each follow-up needs its own save choice, while model input remains only the current source and explicit question.",
+      "Term results with a suggested paper now await the same destination choice; terms without a paper keep independent auto-save. Existing cards and original documents are not rewritten or retrospectively guessed. No schema change or new model/socket tool was added."
+    ],
+    "tests": {
+      "artifact": "artifacts/paper-association-regression.xml",
+      "passed": 213, "failures": 0, "errors": 0, "skipped": 0, "seconds": 225.152,
+      "uiArtifact": "artifacts/paper-association-ui-final.xml",
+      "uiPassed": 7, "uiFailures": 0, "uiErrors": 0, "uiSkipped": 0, "uiSeconds": 140.218,
+      "scope": "Synthetic F-drive databases, offline model fixtures, simulated capture identities and real offscreen QML clicks. Covers save choices, expiry/cancel, immutable page snapshot, privacy/drag, stale source rollback, unchanged stateless model inputs, paper flows, task contracts, search/shared-world records, bubbles, work resumption and compact drag regression. Not native WPS/PDF compatibility, keyboard focus, presented latency or live model validation.",
+      "screenshots": "artifacts/paper-source-confirmation",
+      "visualReview": "Inspected 340px/430px long-title and changed-source renders. Initial long title obscured provenance/disclosure; fixed two-line title and spacing, added visible disclosure geometry assertions and reran the actual QML checks.",
+      "paperNotebookFlow": "artifacts/paper-notebook/result.json: ten checks passed with real confirm-button clicks and no QML warnings before the final title-spacing adjustment; the final dedicated confirmation suite covers that layout adjustment."
+    },
+    "preservedFailures": [
+      {"artifact": "artifacts/paper-association-before.xml", "failures": 2, "scope": "Unrelated selections and term cards inherited the active paper without confirmation."},
+      {"artifact": "artifacts/paper-association-ui-tests.xml", "failures": 1, "passed": 2, "scope": "Test harness could not convert QQuickText::TextFormat through PySide; replaced with a QML boolean expression, preserving the plain-text assertion."}
+    ],
+    "package": {
+      "buildId": "v0357-paper-source-20261004-a5", "status": "passed-offscreen-only", "releaseReady": false,
+      "artifact": "artifacts/v0357-paper-source-20261004-a5/candidate-build.json",
+      "finalIdentityArtifact": "artifacts/v0357-paper-source-20261004-a5/bundle-integrity-final.json",
+      "sourceDigest": "3614d53e9bf9dc328e252f5ebfb40f6361648a0d9c9076f97f05ec515508b67c",
+      "executableSha256": "1C63A8DADD819CA1DAD9C33A156E1CF5062724C2F7C3FE9ED27DB9ABE5B38398",
+      "files": 2472, "bytes": 289392474, "resources": 60, "windows": 18, "qmlWarnings": 0,
+      "postProbeIdentityRecheckPassed": true, "nativeStartup": "not-run",
+      "historicalA4RejectedAsStale": true,
+      "scope": "Fresh complete package verified against runtime source, all compiled application modules/resources and original file inventory after offscreen probes. No installed program, true desktop shell, user database or account was used. Build 71759 and final check 48261 both terminal exit 0."
+    },
+    "hashes": {
+      "src/lilies/core/selection.py": "742E006CAA7EE62BCEE42D3528BC7B79C44AE2D8F917157D22CAD2E5783BC419",
+      "src/lilies/backend.py": "A69D2C850C1291E5B4B1ED3096B81860E3659B510C22679854A0F179343D350D",
+      "qml/Main.qml": "E6388A32D12212790AF4C18E4F997CD67C2B03FD8644A006149471D1D3C9EA62",
+      "qml/PaperDesk.qml": "2278B1BE5AC40BAA88D3492A7E60D37197714A92171235184B1CD313859D89EC",
+      "tests/test_selection_paper_confirmation.py": "924E9A3285F0FF940BAD8B71467A253A5D54788D633BF6FD15C9B6BBD2F7434E",
+      "scripts/verify_paper_source_confirmation_ui.py": "F60C583F4C6613B025E9460C76BE55DDA2C106013FE0D0FDD815BA537EE9D8F8"
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "historicalPromotionSha256": "D5FF95D3FFAF9E598B99AF61638FF624E67EE41A496F50DAE7EAB784709BD49B",
+    "remaining": [
+      "Native drag/input-to-display timing, real model concurrency, focus and long-running behavior remain unproved. No new desktop coordination request was sent and no real desktop input was injected.",
+      "The new a5 passed exact current-source identity and offscreen probes, not native behavior or actual deployment. Historical a4 reports cannot stand in for modified runtime source; synthetic migration/file-recovery evidence remains limited to its stated scope.",
+      "Real installation and account workflows remain gated. Recovery exit zero still does not prove actual Windows shell restoration; legacy pre-upgrade process shutdown remains a separate identity-safety gap."
+    ],
+    "nextAction": "All sessions from this continuation are terminal, including 14161, 45021 (initial hover-layout fixture failed), 95978 (corrected full paper flow passed), 7787 (test enum converter failed), 29019 (corrected UI passed), 31857 (213 final regression cases), 84138 (7 final UI cases), 71759 (a5 build) and 48261 (post-probe identity). Keep all fourteen requirements active. Next safe work is observable recovery failure reporting and identity-safe pre-upgrade shutdown; retain the unconditional installer gate. Native drag/model/long-run/focus and real reader tests remain highest unresolved but await already-requested coordination; do not repeat the scheduling question or open desktop windows. No installation, actual data access, remote push, account action or model download occurred."
+  },
+  "startupHealthVerification": {
+    "status": "implemented-isolated-tests-passed",
+    "collectedThisTurn": "Resumed exact handles 3277, 31913 and 15320; all returned exit 0. No run was restarted because a prior observation ended.",
+    "scope": "Owned-process FILETIME/image/held-handle verification and connected-loopback endpoint ownership before sending a token; sustained fresh Qt heartbeat inside AfterActivate; owned-child/quiescence/recovery callback before file rollback. Tests use synthetic services and own hidden fixture children, never installed Lilies or its real token.",
+    "reports": [
+      {"path": "artifacts/install-startup-peer-verified-tests.xml", "passed": 77, "failures": 0, "errors": 0, "skipped": 0, "seconds": 53.019},
+      {"path": "artifacts/install-startup-file-regression.xml", "passed": 49, "failures": 0, "errors": 0, "skipped": 0, "seconds": 188.811},
+      {"path": "artifacts/install-startup-shortcut-regression.xml", "passed": 37, "failures": 0, "errors": 0, "skipped": 0, "seconds": 283.417}
+    ],
+    "hashes": {
+      "scripts/install_startup.ps1": "F5889011ECBF74E9111135359D97E1A10039D493BA5AC13A59B5BD9604D589DF",
+      "scripts/verify_install_health.py": "57E808825747F5C4B4520642C9F90C00F627005BA317F231AA84FCF65496AE54",
+      "tests/test_install_startup.py": "C16752B320663924D6C72FBBF3CC6BD0A45E812A9332EA349351C310BF09D5E3",
+      "tests/test_install_health.py": "5CDDAB289B599B57D86FF1E57DF878BDBAE13A0367590271B1197995E37BEA8D",
+      "scripts/install_windows.ps1": "F7CAFDC9CBDFBDF40201BDC240D131B298B60E472721F14DC61D3DE699C8CA30",
+      "tests/test_windows_installer_contract.py": "AA6A7A7E49530E35730F996C12AF7ED2126A65A377946AD48F78C4FC1C223036"
+    },
+    "remaining": "No actual Lilies startup, real-user-data migration or observable Windows shell restoration was verified. Internal protocol deadlines do not add an independent watchdog around Python interpreter launch. Legacy pre-update shutdown is not protected by the new owned-launch helper. The unconditional release gate remains closed."
+  },
+  "shortcutTransactionVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: the read-only audit confirmed installed 0.3.56 versus unpublished candidate functionality and identified the active-paper association risk from current source. This continuation re-read the full objective and resumed unfinished transactional shortcut work. The full fourteen requirements remain active; actual native input responsiveness is still the highest unresolved acceptance item.",
+    "changes": [
+      "A versioned optional four-role shortcut plan stores old/new bytes and hashes durably in the F-drive transaction before any program swap. The gated installer now consumes this plan, removing independent post-commit shortcut writes. Existing startup opt-in is preserved; NoShortcuts remains no shortcut mutation.",
+      "Windows PowerShell File.Replace uses a real sibling backup, not an invalid null/empty backup path. Fixed a test-only escaped path before verifying actual COM-generated shortcut targets and arguments inside F fixtures.",
+      "Recovery checks displaced replacement/removal bytes both at entry and immediately before retaining temporary files. Unknown external edits stop recovery and preserve files; atomic-boundary and late-retention failures were reproduced. Known interrupted writes can resume in a fresh process.",
+      "AfterActivate and BeforeRollback callbacks order optional caller startup/quiescence around recovery, but only synthetic callbacks were tested. The real installer startup-health path remains unfinished and release-gated; the legacy launch outside commit is explicitly not claimed as readiness."
+    ],
+    "tests": {
+      "shortcutArtifact": "artifacts/install-shortcut-final-tests.xml",
+      "shortcutStatus": "passed",
+      "shortcutPassed": 46,
+      "shortcutFailures": 0,
+      "shortcutErrors": 0,
+      "shortcutSkipped": 0,
+      "shortcutSeconds": 307.046,
+      "programArtifact": "artifacts/install-shortcut-final-program-tests.xml",
+      "programPassed": 85,
+      "programFailures": 0,
+      "programErrors": 0,
+      "programSkipped": 0,
+      "programSeconds": 214.556,
+      "scope": "Hidden Windows PowerShell processes, synthetic program bytes and COM-generated links only in F-drive fixtures. Covers actual file operations, abrupt child-process exit, repeat calls, external conflicts, startup preference, and source-level installer integration. No Windows Start Menu, actual application process, shell, real user database or native UI was changed."
+    },
+    "preservedFailures": [
+      {"artifact": "artifacts/install-shortcut-displaced-before.xml", "passed": 24, "failures": 2, "scope": "External edits in displaced replace/remove temporaries were incorrectly accepted by recovery."},
+      {"artifact": "artifacts/install-shortcut-retention-reproduced.xml", "failures": 1, "scope": "A late external change after the entry preflight was incorrectly archived and treated as successful recovery."},
+      {"artifact": "artifacts/install-shortcut-retention-before.xml", "errors": 1, "scope": "Fixture import error before the behavioral test ran; corrected without relaxing assertions."}
+    ],
+    "hashes": {
+      "install_shortcuts.ps1": "62041E75B119749BEAB5BCFD18A5354DC6098119E0D93B6C829DC13208C44F85",
+      "install_transaction.ps1": "5AA95BE5705C24D799203C405351F7AE0553AA15AE8A5AF01E404CC0223B18C7",
+      "install_windows.ps1": "9EE2E19CAF7902212F9D07C08E16BBA253E02241B750DD4627C0BF0F46875375",
+      "verify_install_transaction.ps1": "30F978910095630A69032AAB0FD1D076AB487AA9329F72CB38129F04429128C6",
+      "test_install_shortcuts.py": "4898841B054F5961FE3E81165E894183F846949759F2D6B1557A0467B3548B90",
+      "test_shortcut_retention_boundary.py": "B230EAE0E4E60FCF0EE24FC36EDC218AB20EA408E731143D6C4EA6D043BB40B9",
+      "test_windows_installer_contract.py": "E94729E2E1FD74EC312EB346DFD9E939E6E3BE522013FA3EF8E80B3C7E4424BF"
+    },
+    "fullPayloadRehearsal": {
+      "artifact": "artifacts/install-transaction-rehearsal-04b4c002/result.json",
+      "buildId": "v0357-drag-timing-20261004-a4",
+      "passed": true,
+      "releaseReady": false,
+      "sourceFiles": 2472,
+      "sourceBytes": 289384275,
+      "sourceInventorySha256": "88994446CD109C0EC56D4AEE4CD73F8E2DE08A440CDFCE1E3E9EC2DEF97D4C0B",
+      "shortcutActivationVerified": true,
+      "originalShortcutsRestored": true,
+      "oldFilesRestored": true,
+      "sourceUnchanged": true,
+      "scope": "All current candidate program files and real COM-generated shortcuts staged, activated and rolled back over synthetic old fixtures. Nothing executed and no real installation, Start Menu, shell or user data touched. Prior 04b4c001 run preceded the final retention fix and is not the final helper evidence."
+    },
+    "package": {
+      "buildId": "v0357-drag-timing-20261004-a4",
+      "readOnlyIdentityPreflightPassed": true,
+      "runtimeSourcesUnchangedThisTurn": true,
+      "sourceDigest": "1eca015eab9c4df186853685722a1884e5ffb35165d3adc6888ac96c7a2b31af",
+      "executableSha256": "F1716F0011AB36684863D5BFA7D12C72B157821527CD5BADA3297D7138A1DEFE",
+      "releaseReady": false
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "historicalPromotionSha256": "D5FF95D3FFAF9E598B99AF61638FF624E67EE41A496F50DAE7EAB784709BD49B",
+    "remaining": [
+      "Actual native drag/input-to-display timing, model concurrency, window switching and long-running use remain unproved; application timing and offscreen checks are not substitutes.",
+      "Real startup health tied to the newly started process, safe owned-process shutdown before rollback, real user-data upgrade and native packaged workflows remain pending. The unconditional release gate stays closed.",
+      "The latest audit identified that active-paper metadata can be attached to selections without proving their document identity. Verify and add an explicit source-association safeguard without changing stateless model requests."
+    ],
+    "nextAction": "All test/rehearsal sessions from this continuation are terminal, including final 5878, 99121 and 86804. The 46 shortcut/integration cases and 85 program/identity cases passed on final helper sources; do not sum earlier overlapping runs. Keep all fourteen requirements and the unmodified installed/formal 0.3.56. Next safe implementation is authentic startup health and owned-child quiescence inside the transaction, plus the identified paper-association safeguard. Native desktop coordination remains unanswered: no development windows, user-app screenshots, input injection, installed restart or repeated scheduling question. No remote push, model download, user-data read or account access."
+  },
+  "previousInstallIdentityVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: source-level bounded drag timing and 200 related checks filled a measurement gap without claiming presented latency. The old a3 package was correctly labelled historical. This continuation re-read the entire objective, reproduced and fixed install/recovery ordering failures, added read-only exact-build preflight, rebuilt the complete current candidate, and rehearsed its full file payload. The full fourteen-requirement objective remains active; native responsiveness is still the highest unresolved acceptance item.",
+    "changes": [
+      "One pending operation per installation target is enforced for prepare, complete and restore. A committed transaction with unfinished recovery is pending, not terminal.",
+      "Recovery validates ownership, retained old files and quarantine availability before writing recovery intent, so a rejected wrong-order rollback does not poison a newer operation. Old files are rechecked immediately before restoration.",
+      "The gated installer now requires an explicit side-by-side BuildId; read-only preflight compares fresh current-source code/resources and package hashes with the original exact build receipt/inventory. It never trusts releaseReady to authorize installation. Recovery remains independent of a new build."
+    ],
+    "tests": {
+      "artifact": "artifacts/install-candidate-identity-tests.xml",
+      "passed": 93, "failures": 0, "errors": 0, "skipped": 0,
+      "seconds": 206.867,
+      "breakdown": {"fileTransactions": 49, "installerSourceContracts": 8, "candidateIdentity": 36},
+      "scope": "Hidden PowerShell children operating only on synthetic F-drive file trees; no actual Lilies app/process, shell, shortcut or user data actions. Candidate unit fixtures use an isolated archive substitute, supplemented by actual full-package verification below. Covers crash/retry/ordering, exact-byte restoration, repeated calls, external file conflicts, source and DLL changes, stale/corrupt receipts, path overrides and no-write preflight.",
+      "additionalArtifact": "artifacts/install-order-version-data-tests.xml",
+      "additionalPassed": 16,
+      "additionalFailures": 0,
+      "additionalScope": "Current version alignment and isolated database migration/backup regression; not a real user-data upgrade."
+    },
+    "preservedFailures": [
+      {"artifact": "artifacts/install-order-before-tests.xml", "failures": 5, "scope": "Actual reproduced unsafe old-transaction entry, new preparation after interrupted committed rollback, and false recovery intent on wrong-order rollback."},
+      {"artifact": "artifacts/install-order-fixed-tests.xml", "passed": 55, "failures": 1, "scope": "The remaining case failed while creating its intentionally long pending-record fixture under an overlong temporary path, before exercising the helper. The final 93-case run uses a shorter F-drive root with the same assertions and data."}
+    ],
+    "hashes": {
+      "install_transaction.ps1": "FE478ECF6D77208473CA5D1D42AF406B649C235B771C59636C03A8CDEE306158",
+      "install_windows.ps1": "8F8AA676F2FFEAE46B38E509CC6CC2087B056D1BDC0C474B3B39FB1967EE19C2",
+      "verify_candidate_bundle.py": "C7D97DE08E2AD1513746C2655F830D597A8A5EEB25C5A651E4842C684775B0FC",
+      "test_install_transaction.py": "2E1108485E2E7DDC5DC85E08A62F227EC6B0C7EF2AA7A59A0364E4F5502730E9",
+      "test_candidate_bundle.py": "951582253D6E17A146147F08DDFC6E30517231715A91F3D96027B898EA03D508",
+      "test_windows_installer_contract.py": "006E3B342D045BC1F7AF9D269DB0702F5FD59250BCA4C86180ED877536BE5D10"
+    },
+    "package": {
+      "buildId": "v0357-drag-timing-20261004-a4",
+      "receipt": "artifacts/v0357-drag-timing-20261004-a4/candidate-build.json",
+      "finalIntegrityReport": "artifacts/v0357-drag-timing-20261004-a4/bundle-integrity-final.json",
+      "sourceDigest": "1eca015eab9c4df186853685722a1884e5ffb35165d3adc6888ac96c7a2b31af",
+      "executableSha256": "F1716F0011AB36684863D5BFA7D12C72B157821527CD5BADA3297D7138A1DEFE",
+      "pythonModules": 72, "containsDragTiming": true, "resources": 60,
+      "files": 2472, "bytes": 289384275, "windowIdentities": 18, "qmlWarnings": 0,
+      "selfTestPassed": true, "compactResourcesPassed": true, "poseClickMasksPassed": true,
+      "postProbeIntegrityPassed": true, "readOnlyIdentityPreflightPassed": true,
+      "historicalA3RejectedAsStale": true,
+      "offscreenOnly": true, "windowsStartup": "not-run", "releaseReady": false,
+      "scope": "Exact frozen current-source package and offscreen checks. This build contains the prior timing change; application/data sources were not otherwise changed this turn. No installed replacement or actual desktop test."
+    },
+    "fullPayloadRehearsal": {
+      "artifact": "artifacts/install-transaction-rehearsal-04a4c001/result.json",
+      "buildId": "v0357-drag-timing-20261004-a4",
+      "passed": true, "releaseReady": false,
+      "sourceFiles": 2472, "sourceBytes": 289384275,
+      "sourceInventorySha256": "88994446CD109C0EC56D4AEE4CD73F8E2DE08A440CDFCE1E3E9EC2DEF97D4C0B",
+      "oldFilesRestored": true, "sourceUnchanged": true,
+      "scope": "All current candidate program files staged, activated by directory rename and explicitly rolled back over synthetic old bytes. Previous bytes restored and new payload retained. No executable launch, process shutdown, shortcuts, user database or real installation."
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "historicalPromotionSha256": "D5FF95D3FFAF9E598B99AF61638FF624E67EE41A496F50DAE7EAB784709BD49B",
+    "remaining": [
+      "Real native drag/input-to-display timing, model concurrency, window switching and long-running use; offscreen checks and application timings do not prove these.",
+      "Transactional shortcut changes and startup/health failure recovery; exact package identity does not replace whole-installer or native release acceptance.",
+      "Native selection/reader/global-hotkey compatibility, actual data upgrade/rollback, whole packaged user workflows and live model/account acceptance."
+    ],
+    "nextAction": "Keep all fourteen requirements active. The current a4 package is isolated and verified, not installed or release-approved. Do not reuse historical promotion scripts or toggle releaseReady. Native test coordination is still unanswered: no desktop development windows, input injection, user-app screenshots or installed restart, and do not repeat the same question. A remaining safe implementation step is durable shortcut/startup-health failure recovery, coupled to the program transaction and tested with F-only substitutes before releasing the installer. All handles from this continuation (49696, 16619, 33951, 57278, 17224, 47417 and the immediate extra regression command) are terminal. No remote push, model download or user-data access."
+  },
+  "dragTimingVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "The previous continuation completed the selection boundary, 204 related checks, exact a3 candidate and synthetic frozen-data migration, and identified that historical native direct-drag records have counts but no delivery/consumption timing. This continuation re-read the complete objective and added bounded, process-opt-in timing to the existing direct path. All fourteen requirements remain; actual native responsiveness is still unresolved.",
+    "sourceOnly": true,
+    "changes": "New DragTimingProbe and --drag-timing process option, measuring existing bridge delivery-to-consumption, bridge pull gaps, synchronous setPosition call duration and call-start gaps. Fixed-space histograms only, no raw trajectories, content, new global hooks, screenshots, cursor polls, model requests or hot-path file I/O. Defaults off and does not enable another running process. Limits: 600 seconds per process, 32 character gestures, 30 seconds and 100000 observations per gesture. Reentrant returns are generation fenced. The existing delayed latest-only writer persists an independently versioned directTiming block only after release; null is used for unmeasured quantities.",
+    "tests": {
+      "artifact": "artifacts/drag-timing-regression-tests.xml",
+      "passed": 200,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 34.105,
+      "newTimingCases": 28,
+      "scope": "Pure deterministic clock tests, QObject window/input substitutes, and existing offscreen QML regression. Covers default-zero timestamp work, event coalescing, missing data, expiry/count bounds, nested calls, stale return fencing, normal release delivery, deduplication, failed geometry, native stream exclusion, deferred F-only persistence, hit tests, native drag lifecycle, snapshots, window resource lifecycle and socket schema. No actual display latency, native application window manipulation, WPS, active model or long-run desktop session was tested.",
+      "initialArtifact": "artifacts/drag-timing-initial-tests.xml",
+      "initialPassed": 119,
+      "initialNote": "Earlier overlapping implementation revision; do not add its count to the final 200."
+    },
+    "hashes": {
+      "app.py": "A7B24865C83E82339DBE4F0D73BAD068C183754F16FAA6CBBAB0FBCEAB3E38CF",
+      "drag_timing.py": "1E4AA5CB60B38AD65C06354D0C5DF9D7F9D5A5E83DE337B37B138DDFB6E0C610",
+      "test_drag_timing.py": "6B0390354E74EE6C0283F84212F2D98E1627F658921A7C1CB829C266485553E8",
+      "candidateMainQmlUnchangedThisTurn": "12B31934DF847B5A5C74326B0914A0CE7290FE03F5DBE0DDEA2C6D36BBBFF5C5",
+      "installedExeUnchanged": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+      "formalMainQmlUnchanged": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1"
+    },
+    "limitations": [
+      "Application timestamps begin after Qt delivers an event, not at hardware input. Synchronous geometry return does not prove presentation; pull/call gaps include scheduling and natural pauses and are not FPS.",
+      "This is a short optional diagnostic, not continuous monitoring. It retains only the latest finished gesture, and expiry does not mean the drag ended.",
+      "No current-source executable was built this turn. a3 and its frozen migration remain historical, exact-to-that-package evidence only; neither includes these new source changes.",
+      "Real drag with model concurrency, app switches, mixed DPI and long runtime; native reader compatibility; live connector accounts; exact candidate promotion and complete upgrade recovery still need acceptance."
+    ],
+    "nextAction": "Keep the entire objective active. Native interaction testing still needs the previously requested coordination; do not repeat the question, inject input, show development windows, restart the installed app, or promote the historical a3 as current. Timing instrumentation is now ready at source level, but true cursor-to-display measurement and an approved isolated native session remain necessary. If doing release work meanwhile, finish exact-build promotion gating and transactional shortcut/startup recovery with F-drive substitutes before any install. Session 43312 and the initial test command are terminal. No commit/push, user data access, new model or API key."
+  },
+  "selectionBoundaryVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: the user-requested read-only audit verified installed 0.3.56 versus unpublished candidate source, identified the selection foreground/clipboard boundary, and distinguished offscreen checks from unproved native responsiveness. This continuation re-read the whole objective, finished the in-progress selection implementation, reproduced and fixed eight further reentrant cancellation/provenance failures, ran the final regression, and rebuilt the complete current candidate. All fourteen requirements remain in this tracker; native responsiveness is still the highest unresolved one.",
+    "selectionBoundary": {
+      "tests": 204,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "artifact": "artifacts/selection-boundary-verified-tests.xml",
+      "scope": "Current selection boundary plus stateless prompts, reading cards/paper provenance, awareness, backend integration, model broker, real offscreen QML selection/provided-text flows and offscreen drag regression. Input, clipboard, windows, model and user records are isolated substitutes; these are not native reader or end-to-end latency tests. The suite includes 79 selection-boundary cases; the preceding 78-case run overlaps and must not be added.",
+      "selectionSha256": "B7B91CC7089FC8AFACBEE16404D710FF7605BEC0E6EA73AC38BC6FC4CC02E70A",
+      "backendSha256": "F3AF9C07BB03A5D77DF5B9361859A836248B4E737AB418CBA40414EF56882BE0",
+      "boundaryTestsSha256": "224A07DC49CA8059C5EFD06AAD372F0C07EADA4B4FF474B2B954EC362A667DF4",
+      "changes": "Generation-fenced capture, process/foreground/focus/policy revalidation around clipboard access, owner attribution, shared-window event cancellation, monitor/privacy/drag cancellation, frozen source provenance at selection release, and stale model-result suppression. Reentrant adapters cannot revive a retired capture or invalidate a newer one.",
+      "limitations": "Ctrl+C compatibility capture is not atomic across Windows processes. Unknown clipboard owner/process identity is skipped conservatively; real WPS/PDF/browser compatibility and clipboard delayed-rendering latency are not proved. Cancellation after copying may leave the selected text in the clipboard instead of restoring an untrusted old backup. Standard-control password detection is not a guarantee for arbitrary custom controls. No global logging, model download or new model context was added."
+    },
+    "preservedFailureEvidence": [
+      {
+        "artifact": "artifacts/selection-boundary-current-tests.xml",
+        "passed": 190,
+        "errors": 2,
+        "reason": "A long Chinese parameter value expanded the pytest case name beyond Windows' 32767-character environment-variable limit, failing setup and teardown before that case ran. Explicit short case names retain the same long-input assertions; the final complete suite passed."
+      },
+      {
+        "artifact": "artifacts/selection-reentrancy-before-tests.xml",
+        "failures": 8,
+        "reason": "Controlled policy/provenance callbacks could pause or replace a capture yet allow obsolete clipboard access or overwrite the newer selection. Tests first reproduced each failure; current-state checks after adapters and generation-fenced provenance handling fixed them without weakening assertions."
+      }
+    ],
+    "package": {
+      "buildId": "v0357-selection-20261004-a3",
+      "receipt": "artifacts/v0357-selection-20261004-a3/candidate-build.json",
+      "finalIntegrityReport": "artifacts/v0357-selection-20261004-a3/bundle-integrity-final.json",
+      "sourceDigest": "3e579446421595c7335a5a3bfb1fe6d8321063f3a0473d6130fc0e819b19c2c6",
+      "executableSha256": "C574E202C4ACB79AD8DFF17CBA8A195EA4D61A213CE26C4C079F6CBA2BE8C79D",
+      "pythonModules": 71,
+      "resources": 60,
+      "files": 2472,
+      "bytes": 289378514,
+      "windowIdentities": 18,
+      "qmlWarnings": 0,
+      "selfTestPassed": true,
+      "compactResourcesPassed": true,
+      "poseClickMasksPassed": true,
+      "postProbeIntegrityPassed": true,
+      "windowsStartup": "not-run",
+      "releaseReady": false,
+      "scope": "Exact frozen program and packaged resources, offscreen startup/resource/mask checks only. Earlier a2 proof remains historical: backend.py and selection.py changed after that build, so a2 does not contain this fix."
+    },
+    "frozenDataRehearsal": {
+      "artifact": "artifacts/migration-v0357-selection-20261004-a3/result.json",
+      "passed": true,
+      "releaseReady": false,
+      "legacySchema": 6,
+      "candidateSchema": 10,
+      "baselineTables": 39,
+      "nonemptyBaselineTables": 28,
+      "failureScenarios": 8,
+      "scope": "Fresh rehearsal using pinned installed 0.3.56 and current a3 frozen data modules with synthetic F-drive records. Checks all original rows/rowids, WAL backup, migration denial and abrupt data-child exit, retry, old-runtime write/re-upgrade and preservation of new records. No actual installation or real user database accessed."
+    },
+    "existingNativeDragEvidence": {
+      "source": "F:/code/Lilies in the box/private-data/runtime/pet-drag-latest.json",
+      "sourceSha256": "A0B286C923FDA2B50FDCD1B7EB4073196055E29A025D0C628C16CBDE4551BB1B",
+      "fileLastWriteUtc": "2026-10-03T12:00:21Z",
+      "applicationVersion": "0.3.56",
+      "mode": "direct",
+      "durationMs": 237.754,
+      "directMoveCommits": 26,
+      "devicePixelRatio": 1.5,
+      "screenRefreshRate": 165.019,
+      "scope": "Read-only selected timing/count fields from one already-recorded installed-runtime gesture; no screenshots, input injection, new desktop windows or chat/credential inspection. Aggregate commits/duration do not measure presented FPS or cursor-to-frame latency, and zero native-start timings do not prove zero latency in direct mode. This is historical evidence, not current-candidate acceptance."
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "historicalPromotionSha256": "D5FF95D3FFAF9E598B99AF61638FF624E67EE41A496F50DAE7EAB784709BD49B",
+    "notProven": [
+      "Real drag/input-to-display latency, concurrent model generation, application switching and long-run responsiveness",
+      "Native selection/clipboard/reader compatibility and complete packaged user workflows",
+      "Exact-build promotion, transactional shortcut/startup failure recovery, native startup and real upgrade/rollback",
+      "Live model quality and Calendar/Slack account acceptance"
+    ],
+    "nextAction": "Keep the full objective active. The current a3 package now contains and verifies the selection fix; do not install it or reuse historical promotion wrappers. Native responsiveness remains highest priority: existing diagnostics contain aggregate movement counts but not direct-mode input-to-frame timing, so examine bounded opt-in timing evidence before the coordinated native test rather than presenting counts as FPS. Previously requested desktop-test coordination is still unanswered; do not inject host input, show development windows or restart the installed app. Safe release work also remains: exact-candidate promotion gate and transactional shortcut/startup failure handling with isolated substitutes. All test/build/migration handles from this continuation are terminal; no remote push or model download."
+  },
+  "installerVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "The preceding audit yielded concrete installed-versus-candidate evidence: 0.3.56 still has incomplete history/retry/task surfaces, candidate features are not deployed, and selection has an asynchronous foreground-revalidation risk. The last implementation turn left an untested installer helper. This continuation re-read the full objective, validated and hardened that helper, replaced the delete-before-copy candidate code path, and kept actual installation gated. Native responsiveness is still the highest unresolved requirement; this file retains the full objective.",
+    "installerTransactions": {
+      "tests": 51,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "artifact": "artifacts/install-transaction-verified-tests.xml",
+      "scope": "44 executable file-transaction cases in synthetic F-drive trees using hidden Windows PowerShell children, plus 7 installer-source contracts. Checks byte-exact old restoration, Unicode and empty directories, retained new payload, copy/validation failures, state conflicts, fresh install, repeat calls, exclusive locks, junctions and destination bounds. Eight successful recovery scenarios explicitly exit their own child process without finally blocks, including interruption during recovery and before manifest publication. Real app processes are never started or killed.",
+      "helperSha256": "1A93F5ABBF8254D2C31E68B33F3CC3CA77AA348BBA47601A84CDD514789D6C6D",
+      "installerSha256": "53632424A461CE76C152F96FE9449B528737218053999607FDD7BA0BA9AAED4D",
+      "initialFailures": "Preserved initial reports exposed Windows PowerShell module-path-dependent Get-FileHash availability, oversized pending-record paths, and .NET normalization hiding trailing-dot aliases. Hashing now uses file streams, pending records have short independent names, raw path spelling is checked before normalization, and the final run uses short isolated fixture paths. Arbitrarily long Windows PowerShell paths are not claimed supported."
+    },
+    "regression": {
+      "tests": 30,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "artifact": "artifacts/install-transaction-regression-tests.xml",
+      "scope": "Candidate bundle, Windows version metadata, current version alignment, database schema and data migration checks. Separate from the 51-case installer run; not the entire project suite."
+    },
+    "fullPayloadRehearsal": {
+      "artifact": "artifacts/install-transaction-rehearsal-20261004/result.json",
+      "verifier": "scripts/verify_install_transaction.ps1",
+      "verifierSha256": "0DB39325334D8EEA8D1F9C34CC73AD96401B6501B5528F4538564ECB0F02B93A",
+      "passed": true,
+      "releaseReady": false,
+      "buildId": "v0357-continuity-20261003-a2",
+      "files": 2472,
+      "bytes": 289374137,
+      "sourceInventorySha256": "58B0AFE98C4D7423161441C5A1217CCF998CAEE785CC290191E02B577DB72ADD",
+      "scope": "Full candidate file tree was staged, hash-checked, activated by rename, then explicitly rolled back over synthetic old files. Original source and restored old tree matched their initial inventories; new files remain retained. No EXE launch, shortcuts, native shell, production installation, private chats or database access."
+    },
+    "packageIntegrity": "artifacts/v0357-continuity-20261003-a2/bundle-integrity-install-20261004.json",
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "historicalPromotionSha256": "D5FF95D3FFAF9E598B99AF61638FF624E67EE41A496F50DAE7EAB784709BD49B",
+    "notProven": [
+      "Native drag latency, model concurrency, app switching and long-running responsiveness",
+      "Whole-installer execution, actual process shutdown, shortcut changes and application-start failure recovery",
+      "Exact-build release/promotion acceptance and real installed data upgrade/rollback",
+      "Live model quality, account OAuth, native PDF and global-hotkey compatibility"
+    ],
+    "nextAction": "Keep the complete goal active. Finish an exact-side-by-side candidate promotion gate and transactional shortcut/startup failure handling before enabling installation. Exercise those with isolated substitutes, preserve historical wrappers and official user data, and do not treat the file-only rehearsal as native or full-install acceptance. The newly observed selection timing boundary also needs a focused candidate review. Native drag/focus/input verification still awaits the already-requested coordination; no desktop windows, injected host input, user-app screenshots, installed restart or remote push without it."
+  },
+  "frozenMigrationVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: added the exact-frozen-data migration rehearsal and rejection tests. The attempted test command terminated before startup with exit code -1073741205 and no session, so no migration result was claimed. This continuation re-read the full objective, inspected current files, ran the tests successfully, completed two fresh exact-package rehearsals, and identified the remaining delete-before-copy installer risk. Native drag remains the highest outstanding acceptance gate; this does not narrow the full objective.",
+    "regression": {
+      "tests": 98,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "artifact": "artifacts/candidate-migration-verified-tests.xml",
+      "scope": "Migration verifier rejection rules, schema/backup failure recovery, chat/retry, task editing, paper notebook, shared world and package integrity contracts. F-drive synthetic data and offscreen test application only. Does not exercise the real installer, official user data, native desktop or live models."
+    },
+    "initialRegression": {
+      "tests": 12,
+      "failures": 0,
+      "artifact": "artifacts/candidate-migration-gate-tests-b.xml",
+      "scope": "Initial successful verifier-unit run; overlaps the final 98-case run. Previous failed shell-start attempt produced no test XML or live session."
+    },
+    "migrationRehearsal": {
+      "artifact": "artifacts/migration-v0357-20261004-a2/result.json",
+      "initialArtifact": "artifacts/migration-v0357-20261004-a1/result.json",
+      "verifier": "scripts/verify_candidate_migration.py",
+      "verifierSha256": "9943436EFABBC04BBBA365B37AD1615EF93B309F5E82AE24A5CB3BED62582691",
+      "legacyExecutableSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+      "candidateExecutableSha256": "2CCA33EDE6436274BEE8568FE887E47F5AC0C3248CA68271FEEBD08D90B9B9F0",
+      "legacySchema": 6,
+      "candidateSchema": 10,
+      "baselineTables": 39,
+      "nonemptyBaselineTables": 28,
+      "passed": true,
+      "releaseReady": false,
+      "failureCases": 8,
+      "failureScope": "For each migration 7/8/9/10: SQLite authorizer denial after DDL begins, and a separate data-only child that exits abruptly with code 87 at the same point. Each rollback preserved old rows/rowids/schema and the expected completed migration prefix; retry reached exact schema 10. No app process was terminated.",
+      "preservationScope": "All old table rows/rowids and original table/index definitions compared, not just counts. Seed includes Unicode/emoji chat, identity/Canon/disabled/forgotten memories, reading cards, layouts, permissions, recurring/completed/archived tasks, linked finished/paused focus, reading, reminders/delivery dedupe, growth/unlocks/outbox and synthetic connector BLOB/policy. Committed WAL was included in backup; corrupt-backup refusal preserved the previous good copy and cleaned temporary files. Three reopens were identical; completing an old occurrence gave no duplicate award.",
+      "rollbackScope": "New reply revision, paper/page/annotation, hidden world letter and a work-resumption data-format fixture survived opening with the exact old database modules, an old-runtime message write and re-upgrade. Snapshot recovery was into a separate file; the post-upgrade database was retained, never replaced with older data. Only an explicit allowlist of data modules was loaded from pinned executables under isolated package names; no GUI/app entry point, network, credentials, model, installed replacement or user data was used.",
+      "limitations": "Proves compatibility and recovery for this synthetic data fixture and these exact frozen data modules, not full old/new application startup, all settings migrations, native windows, every connector table's live semantics, DPAPI decryption, arbitrary older releases or real installation rollback. The work-resumption fixture verifies its persisted format only; no native restore service was imported."
+    },
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "formalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "historicalPromotionSha256": "D5FF95D3FFAF9E598B99AF61638FF624E67EE41A496F50DAE7EAB784709BD49B",
+    "installerAudit": {
+      "path": "scripts/install_windows.ps1",
+      "finding": "Current installer recursively removes the target at line 91 before copying the source at line 102. A copy failure can leave the installation incomplete. It also still consumes legacy dist rather than the side-by-side candidate identity. Do not use it for this release or manually copy the candidate to bypass readiness checks.",
+      "executed": false
+    },
+    "notProven": [
+      "Real desktop drag latency, concurrent generation/switching, long runtime and native GPU/focus/DPI behavior",
+      "Candidate native startup, complete packaged new-feature user flows and live model quality",
+      "Safe staged directory replacement, failure/crash journal recovery, new promotion/install gate and real installed rollback",
+      "Live Calendar/Slack account acceptance and native reader/hotkey compatibility"
+    ],
+    "nextAction": "Keep the complete goal active. Implement a validated staged program-directory replacement with retained old files, copy/rename/verification failure recovery and explicit journal recovery; exercise only synthetic F-drive install trees. A new v0.3.57 release path must consume the exact side-by-side package and fresh gates, not mutate or reuse historical wrappers. Data rehearsal is not permission to install or to overwrite newer user data with an old backup. Native input tests still await the already-requested coordination; no development windows, host screenshots, injected input, remote push or installed restart without that coordination."
+  },
+  "candidatePackagingVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: fixed the pure Slack first-time manifest preview, verified 156 connector cases and 157 overlapping combined candidate cases, and identified 21 new runtime files absent from the historical promotion allowlist. This turn gives the entire candidate a distinct build identity and verifies a complete side-by-side package. The full objective remains intact; native drag is still the highest outstanding acceptance gate.",
+    "regression": {
+      "tests": 177,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "artifact": "artifacts/candidate-continuity-regression-tests.xml",
+      "scope": "Current v0.3.57 source: chat continuity/retry, task editing, awareness receipts, paper notebook, work resumption, box search, quiet motion, shared world, distinct outfit/pose policy, Main.qml/settings, schema/data backup and migration failure recovery, probe cleanup. F-drive synthetic data and offscreen QML only; no live model, account or user data. This is not the full repository suite or installed migration acceptance."
+    },
+    "packagingContracts": {
+      "tests": 52,
+      "failures": 0,
+      "errors": 0,
+      "artifact": "artifacts/candidate-window-contract-tests.xml",
+      "scope": "Candidate manifest and compiled-code/resource verification, version alignment, installer preflight contracts, exact compact window identity/persistence, source offscreen resource lifecycle, QML dependency pruning and existing self-test/startup contracts. Does not execute installation or native startup. Includes 5 rejection cases for missing, duplicate, extra, unnamed and wrong-root windows."
+    },
+    "initialIdentityContracts": {
+      "tests": 31,
+      "artifact": "artifacts/candidate-identity-verified-tests.xml",
+      "scope": "Passed after refreshing ignored local setuptools metadata to 0.3.57. Overlaps the final 52-case packaging run; counts are not additive."
+    },
+    "priorFailedRuns": [
+      {
+        "artifact": "artifacts/candidate-identity-initial-tests.xml",
+        "tests": 31,
+        "failures": 1,
+        "reason": "Ignored egg-info metadata still declared 0.3.56. Refreshed locally through setuptools egg_info (the venv has no pip); no dependency download and no weakened assertion."
+      },
+      {
+        "artifact": "artifacts/v0357-continuity-20261003-a1/packaged-self-test-v0357.json",
+        "buildId": "v0357-continuity-20261003-a1",
+        "reason": "Actual package integrity passed, but self-test expected the old 16-window UI while the candidate contains 18. All persistence flags were already disabled. Replaced the count-only gate with an exact 18-identity gate including boxSearchWindow/sharedWorldWindow; negative identity tests remain fail-closed. Rebuilt as a2 without changing or deleting the failed package/report. No success receipt was produced for a1."
+      }
+    ],
+    "package": {
+      "applicationVersion": "0.3.57",
+      "buildId": "v0357-continuity-20261003-a2",
+      "path": "dist/v0357-continuity-20261003-a2/LiliesInTheBox",
+      "receipt": "artifacts/v0357-continuity-20261003-a2/candidate-build.json",
+      "sourceDigest": "61e92dffa9c4d000a461c418fbfd4742c9c278ce905b6cc3d4aa2a381dfa1523",
+      "executableSha256": "2CCA33EDE6436274BEE8568FE887E47F5AC0C3248CA68271FEEBD08D90B9B9F0",
+      "fileVersion": "0.3.57.0",
+      "pythonModulesMatched": 71,
+      "resourcesMatched": 60,
+      "packageFiles": 2472,
+      "totalBytes": 289374137,
+      "sourceAndPackageMatchAfterProbes": true,
+      "finalIntegrityReport": "artifacts/v0357-continuity-20261003-a2/bundle-integrity-final.json",
+      "selfTestPassed": true,
+      "qmlWarnings": 0,
+      "windowIdentities": 18,
+      "compactResourcesPassed": true,
+      "poseClickMasksPassed": true,
+      "windowsStartup": "not-run",
+      "releaseReady": false,
+      "scope": "Actual frozen package self-test and resource process, plus real offscreen QML using packaged pose resources. Full compiled-code, embedded manifest, resource set and hash checks passed before and after diagnostics. Does not prove every packaged feature interaction, hardware rendering, user-input responsiveness or live model quality."
+    },
+    "notProven": [
+      "Real desktop drag latency, model-concurrent input, long-run performance and native GPU rendering",
+      "Native startup for this candidate, Win32 restoration, multiple monitors, virtual desktops and elevated windows",
+      "Live model reply quality, native reader/file-picker/hotkey/IME compatibility and realistic large-library latency",
+      "Real Calendar/Slack OAuth, network behavior and account acceptance",
+      "End-to-end packaged new-feature workflows, historical v0.3.56-to-current migration rehearsal, promotion, installed deployment and rollback"
+    ],
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "installedAndFormalMainQmlSha256": "6D68D6C05D4C24C21B7678FEE5254643A350401AE5BCCCA0BDDD8BEAB99EC1B1",
+    "historicalPromotionSha256": "D5FF95D3FFAF9E598B99AF61638FF624E67EE41A496F50DAE7EAB784709BD49B",
+    "nextAction": "Keep the full objective active. Native drag/model-concurrency/long-run acceptance remains highest priority, but the existing request for a convenient desktop test remains unanswered; no native development windows, host screenshots or injected input. Next safe work: rehearse migration and rollback with synthetic v0.3.56 data and the exact candidate, then build a v0.3.57 promotion/install path that consumes all new runtime files and fresh evidence without changing historical wrappers. Current installer still targets legacy dist and is not ready for this isolated candidate; README explicitly forbids bypassing this. Do not install, restart the user's app or push remotely merely because package checks pass."
+  },
+  "slackBootstrapVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: completed the user's read-only feature audit with freshly verified installed/formal/candidate Main.qml hashes, installed executable identity and source-backed remaining gaps. No implementation or tests were claimed in that review. This continuation fixes the source-verified Slack first-time bootstrap and checks the combined candidate; the full objective remains intact.",
+    "regression": {
+      "tests": 156,
+      "failures": 0,
+      "errors": 0,
+      "artifact": "artifacts/slack-bootstrap-verified-tests.xml",
+      "scope": "Pure first-time preview, all scope/assistance combinations, rejected parameters, real QML bootstrap and optional use/settings flows, independent policy drafts, retained-content security, assistance and exact confirmation, Calendar/Slack protocols, socket transport and backend contracts. F-drive synthetic data; no live account, credentials, browser or external writes."
+    },
+    "priorConnectorRegression": {
+      "tests": 27,
+      "failures": 0,
+      "errors": 0,
+      "artifact": "artifacts/connector-ui-final-tests.xml",
+      "scope": "Final connector availability tests, actual QML navigation, hydration/draft protection, seven-case connector UI, original-link success/failure reporting, Main.qml and existing settings UI. Overlaps the 92-case run; counts are not additive."
+    },
+    "supplementalRegression": {
+      "tests": 157,
+      "failures": 0,
+      "errors": 0,
+      "artifact": "artifacts/continuity-combined-tests.xml",
+      "scope": "Combined candidate regression: chat continuity/retry, task editing, awareness receipts, paper notebook, work resumption, box search, quiet motion, shared world, distinct outfit/pose policy, Main.qml and grouped settings. Includes real offscreen QML with synthetic collaborators and isolated F-drive data. Not full repository, packaged, native Windows, live model or account acceptance; do not sum overlapping runs as distinct guarantees."
+    },
+    "priorBoundaryRegression": {
+      "tests": 92,
+      "artifact": "artifacts/connector-boundary-verified-tests.xml",
+      "scope": "Earlier optional-connector implementation regression; overlaps current and prior runs."
+    },
+    "initialBootstrapRegression": {
+      "tests": 53,
+      "artifact": "artifacts/slack-bootstrap-initial-tests.xml",
+      "scope": "Initial successful targeted run; wholly overlaps the 156-case final connector regression."
+    },
+    "priorFailedRuns": [
+      {
+        "artifact": "artifacts/slack-bootstrap-first-tests.xml",
+        "tests": 0,
+        "reason": "Initial command referenced a nonexistent hydration test filename; collection ran no tests. Corrected to the existing v0354 file and completed targeted/final regressions."
+      },
+      {
+        "artifact": "artifacts/connector-boundary-tests.xml",
+        "tests": 40,
+        "failures": 2,
+        "reason": "New tests sent partial policy replacements, unintentionally restoring necessary scope and clearing their synthetic rows. Tests now preserve canonical policy and change only the intended axis. Runtime semantics and privacy gates were not weakened."
+      }
+    ],
+    "qml": {
+      "bootstrapChecks": 6,
+      "optionalConnectorChecks": 7,
+      "separateWorkflowChecks": {"chatContinuity": 6, "taskEditing": 9, "paperDesk": 10, "activitySurface": 7},
+      "separateWorkflowScope": "Production QML with synthetic backend/native/model collaborators; four verifiers completed in this turn, all flags true and no QML warnings. Not live Windows input or model quality proof.",
+      "platform": "offscreen",
+      "network": "none",
+      "warnings": 0,
+      "currentTurnScope": "Actual QML first-time generation calls the production pure builder without client ID. Preview excludes tokens/account/channel IDs, never saves or authorizes, invalidates on scope/assistance/redirect/provider changes, and never falls back to old saved output on failure. Existing seven-case optional-connector suite rerun. Explicit CJK font and 480/680px preview review; no host clipboard copy action triggered."
+    },
+    "visualReview": [
+      "artifacts/slack-bootstrap/first-time-480.png",
+      "artifacts/slack-bootstrap/preview-680.png"
+    ],
+    "notProven": [
+      "Real desktop drag latency, model-concurrent input, long-run performance and native GPU rendering",
+      "Native Win32 restoration, multiple monitors, virtual desktops and elevated windows",
+      "Live model reply quality and native reader/file-picker compatibility",
+      "Real Calendar/Slack OAuth, network behavior and account acceptance",
+      "Packaged release, migration, installed deployment and rollback of the candidate changes"
+    ],
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "releaseAudit": {
+      "currentVersion": "0.3.56",
+      "installedMatchesPreviousRelease": true,
+      "missingNewRuntimeFilesInCurrentPromotionList": 21,
+      "checkedResourcesAbsentFromExistingPackage": ["qml/PaperDesk.qml", "qml/TaskEditor.qml", "qml/SharedWorldWindow.qml", "qml/BoxSearch.qml", "qml/QuietPetMotion.qml", "themes/first-encounter/assets/lilith-outfit-summer-cotton-transparent-v1.png"],
+      "scope": "Read-only audit: existing v0.3.56 dist and promotion script predate the new candidate. Do not run promotion or present those old package reports as evidence for current source."
+    },
+    "nextAction": "Full objective stays active. Bootstrap is fixed and connector regression passed. Next safe action is a distinct candidate build/release identity and complete package/promotion coverage for new runtime files, with migration/rollback and fresh package evidence; do not reuse or mutate historical v0.3.56 proof. Native drag timing during generation, switching and long runtime is still the highest acceptance gate. The prior desktop-test coordination request remains unanswered, so no native development windows, screenshots of user apps or injected desktop input. Real model quality and live connector account acceptance remain unproved. No remote push."
+  },
+  "previousVerification": {
+    "classification": "progress",
+    "previousGoalTurn": "Progress: the read-only audit verified installed 0.3.56 UI hashes match formal source, distinguished unpublished candidate features, inspected completed quiet-motion reports (77 and 9 passing cases, overlapping), and identified remaining summer visual alias and native acceptance gaps. This implementation turn closes the independent summer asset and quiet-response candidate work; it does not narrow or complete the full goal.",
+    "regression": {
+      "tests": 70,
+      "failures": 0,
+      "errors": 0,
+      "artifact": "artifacts/summer-outfit-verified-tests.xml",
+      "scope": "Final summer/quiet-motion source: outfit asset and real-QML readiness/anchor checks, manifest compatibility, all-pose clothing preservation, fixed reaction gate/backend worker delivery, 8-check Main.qml quiet presence, resolver, pose assets, geometry/click masks, habitat and drag/focus contracts. Offscreen and synthetic input only."
+    },
+    "supplementalRegression": {
+      "tests": 14,
+      "failures": 0,
+      "errors": 0,
+      "artifact": "artifacts/summer-world-final-tests.xml",
+      "scope": "Final world-source fix and test corrections: actual QML wardrobe update, image Ready and resolved local source, restorable world entry at multiple sizes, theme/socket tests. No installed app or user database touched."
+    },
+    "priorFailedRuns": [
+      {
+        "artifact": "artifacts/summer-outfit-ui-tests.xml",
+        "tests": 10,
+        "failures": 1,
+        "reason": "Legacy assertion expected 10 baked combinations because summer was an alias. Replaced with 5 truthful first-encounter baked combinations and explicit layered preservation of summer in all 5 activity poses; final 70-case run exercises these checks."
+      },
+      {
+        "artifact": "artifacts/summer-world-verified-tests.xml",
+        "tests": 17,
+        "failures": 2,
+        "reason": "World verifier compared relative Image.source via toLocalFile without resolving its QML context; fixed to exact resolved path plus Image.Ready. Existing theme-token test still expected pre-0.3.56 warm-white surface; aligned to current cold-white token. Both checks pass in final 14-case run; not skipped."
+      }
+    ],
+    "qml": {
+      "quietPresenceChecks": 8,
+      "worldScene": true,
+      "outfits": 6,
+      "platform": "offscreen",
+      "model": "offline stub",
+      "warnings": 0,
+      "currentTurnScope": "Quiet-presence real Main.qml and six-outfit rendering verified this turn. Deep model quality, live Windows focus and actual drag responsiveness are not proved. Source-readiness verifier now checks Image.Ready rather than URL equality alone."
+    },
+    "visualReview": [
+      "artifacts/summer-outfit/light.png",
+      "artifacts/summer-outfit/dark.png",
+      "artifacts/summer-outfit/reading.png",
+      "artifacts/quiet-presence/reading-cardigan.png",
+      "artifacts/quiet-presence/perched-reading.png"
+    ],
+    "asset": {
+      "path": "themes/first-encounter/assets/lilith-outfit-summer-cotton-transparent-v1.png",
+      "sha256": "7912af5d2d72b21a062cea487e212e1f593c616cdcccc61b46b6ddbff924c369",
+      "size": [
+        941,
+        1672
+      ],
+      "mode": "RGBA",
+      "method": "built-in imagegen; identity-preserve edit; generated bytes/alpha copied unchanged",
+      "prompt": "docs/summer-outfit-v1-prompt.txt",
+      "quality": "All existing production thresholds unchanged; 3 transparent pixels contain hidden RGB (ratio 0.000003361088), within the pre-existing 0.0005 policy. Deep/light and reading previews reviewed. Six distinct hashes; no pixel-processing workaround."
+    },
+    "notProven": [
+      "Real desktop drag latency and native GPU performance",
+      "Native Win32 window restoration, multi-monitor DPI, virtual desktop and administrator-window behavior",
+      "Live model reply quality",
+      "Native file picker and actual reader page-jump compatibility",
+      "Packaged release of these changes"
+    ],
+    "installedExeSha256": "1026BF8A23D300D79B6271B61C182334EFA606A2B469C487CC31A67D31F224BF",
+    "nextAction": "Full objective remains active. User has been asked asynchronously when a 2-minute native drag test is convenient; do not open desktop development windows or inject input without coordination. Safe work still available: connector boundary/settings review and broader regression/release preparation. Native drag/model-concurrency/long-run timing remains highest unresolved acceptance; final packaging, migration, backup and rollback remain required. No promotion, native manipulation or remote push this turn."
+  },
+  "requirements": [
+    {
+      "id": "performance",
+      "status": "pending",
+      "scope": "Real desktop input lag, concurrent generation and app switching, long running stability, no habitat/manual-drag conflict. Offscreen gates do not prove native performance.",
+      "sourceDiagnostic": "Bounded opt-in DragTimingProbe measures application-side timings only. A7/a9/a10 improved chat hot paths, a12 corrected event-queue backpressure, and a13 defers hidden cleanup under pointer ownership. A14 uses actual offscreen QML input to reproduce/fix a removed or reordered radial button retaining its gesture reason, chat pause and sometimes local depth; 21 integration combinations and 132 regression tests pass. These functional/code checks, short installed WM_NULL replies and hidden startup do not establish mouse-to-pet delay, model/app-switch overlap, automatic/manual conflict, focus/GPU presentation or long-run smoothness. See local-gesture-teardown-red.json, local-gesture-matrix-d0a7da30.json and the a14 receipt. Do not attribute the user's original lag solely to these isolated defects."
+    },
+    {
+      "id": "activity-first-ui",
+      "status": "implemented-tested",
+      "scope": "One current action; task/focus/reading-specific state; rules in details; disconnected connectors kept secondary.",
+      "evidence": [
+        "scripts/verify_settings_density_ui.py",
+        "tests/test_settings_density_ui.py",
+        "artifacts/settings-density-verified.xml",
+        "artifacts/settings-density-1/result.json",
+        "artifacts/settings-density-2/result.json",
+        "qml/ActivityHero.qml",
+        "scripts/verify_activity_surface_ui.py",
+        "artifacts/activity-surface/result.json",
+        "tests/test_focus_main_integration_qml.py"
+      ],
+      "remaining": "Grouped settings, status-first observation, explicit consent and long shared-record minimum-size boundaries have now been reviewed in actual offscreen QML at 1x/2x and included in a8 package checks. Native focus, real display scaling and user experience still require validation; no claim that every possible dialog/content combination was covered."
+    },
+    {
+      "id": "history-continuation",
+      "status": "implemented-tested",
+      "scope": "Search to exact message, browse old/new pages, continue original conversation, restart retains active conversation.",
+      "evidence": [
+        "tests/test_chat_continuity.py",
+        "scripts/verify_chat_continuity_ui.py",
+        "artifacts/chat-continuity/result.json"
+      ],
+      "remaining": "Packaged release verification and broader regression"
+    },
+    {
+      "id": "safe-retry",
+      "status": "implemented-tested",
+      "scope": "No duplicate user message; archive old answer; failed/cancelled retry preserves original; no action replay; old answers viewable, not indexed as live memories.",
+      "evidence": [
+        "tests/test_chat_continuity.py",
+        "scripts/verify_chat_continuity_ui.py",
+        "artifacts/chat-continuity/result.json"
+      ],
+      "remaining": "Packaged release verification and broader regression"
+    },
+    {
+      "id": "task-editing",
+      "status": "implemented-tested",
+      "scope": "Edit, postpone, repeat, reopen mistaken completion; associate focus with task; preserve deterministic growth and compensation.",
+      "evidence": [
+        "tests/test_task_editing.py",
+        "scripts/verify_task_editing_ui.py",
+        "artifacts/task-editing/result.json"
+      ],
+      "remaining": "Packaged verification and final whole-goal regression"
+    },
+    {
+      "id": "honest-awareness",
+      "status": "implemented-tested",
+      "scope": "Clearly distinguish application signal, user-selected content, no observation and historical/reused evidence; retain privacy gates and closed browser pixel capture; explicit stateless pasted-text explanation.",
+      "evidence": [
+        "src/lilies/core/awareness.py",
+        "qml/ContextLabel.qml",
+        "tests/test_awareness.py",
+        "artifacts/awareness/result.json",
+        "artifacts/awareness-verified-tests.xml",
+        "artifacts/awareness-drag-tests.xml"
+      ],
+      "remaining": "Live model response quality and native interaction remain unverified. A8 offscreen settings/consent checks keep status, last-sent type and failure reason visible, and prove confirmation/revoke against only a synthetic local store with stub discovery. Package checks passed; image request initiation still does not prove service receipt or successful interpretation."
+    },
+    {
+      "id": "paper-companion",
+      "status": "implemented-tested",
+      "scope": "Explicit paper session, provenance/page/return link, understood/unresolved/citable cards, review only marked material, continue next time; default selection remains stateless.",
+      "evidence": [
+        "tests/test_card_search_source.py",
+        "scripts/verify_card_source_ui.py",
+        "artifacts/card-source-ui-a0286415.json",
+        "artifacts/card-source-verified.xml",
+        "artifacts/card-source-shared.xml",
+        "scripts/verify_paper_resume_ui.py",
+        "tests/test_paper_resume_ui.py",
+        "artifacts/paper-resume-red-02.json",
+        "artifacts/paper-resume-88fa3a1e.json",
+        "artifacts/paper-resume-verified.xml",
+        "artifacts/paper-resume-shared.xml",
+        "tests/test_paper_notebook.py",
+        "scripts/verify_paper_desk_ui.py",
+        "artifacts/paper-notebook/result.json",
+        "artifacts/paper-combined-tests.xml",
+        "tests/test_selection_paper_confirmation.py",
+        "scripts/verify_paper_source_confirmation_ui.py",
+        "artifacts/paper-association-before.xml",
+        "artifacts/paper-association-regression.xml",
+        "artifacts/paper-association-ui-final.xml",
+        "artifacts/paper-source-confirmation/result.json"
+      ],
+      "remaining": "Native PDF picker/default-reader compatibility and deployed user workflows remain. A16 adds explicit saved-card source opening from search, joined provenance revalidation and canonical PDF validation; it preserves a15 restart/navigation/draft behavior. These fixture proofs do not guarantee a native reader jumps pages or preserve original file bytes/internal state. Per-result source confirmation remains, including term cards. Page/locator are user-entered and frozen at selection time. Saved cards remain locally recallable; ordinary selection requests still contain no history or paper metadata."
+    },
+    {
+      "id": "work-resumption",
+      "status": "implemented-tested",
+      "scope": "Save current task, explicitly chosen resources, next step and recoverable window layout; preview then resume without claiming unsaved/internal application restoration.",
+      "evidence": [
+        "artifacts/paper-resume-88fa3a1e.json",
+        "artifacts/paper-resume-shared.xml",
+        "src/lilies/core/work_resumption.py",
+        "src/lilies/work_resumption_controller.py",
+        "qml/ResumptionShelf.qml",
+        "tests/test_work_resumption.py",
+        "tests/test_work_resumption_ui.py",
+        "artifacts/work-resumption/result.json",
+        "artifacts/work-resumption-verified-tests.xml",
+        "artifacts/work-resumption-ui-verified-tests.xml"
+      ],
+      "remaining": "Native Win32/multi-monitor/virtual-desktop/elevation verification and packaged migration. Restoration only targets existing matching windows, never reconstructs closed apps or internal state. Strong fingerprint/title or display changes conservatively skip; resources require explicit one-use preview confirmation. Schema 9 and all bookmark content stay in the existing F-drive database; no model/socket execution route was added."
+    },
+    {
+      "id": "box-search",
+      "status": "implemented-tested",
+      "scope": "Keyboard entry for indexed apps, task-linked focus, exact historical messages, papers/reading cards and confirmed reminder previews; local deterministic execution, no general shell or model request.",
+      "evidence": [
+        "scripts/measure_box_search_library.py",
+        "tests/test_box_search_library.py",
+        "artifacts/search-library-038c6f39.json",
+        "artifacts/search-library-verified.xml",
+        "tests/test_card_search_source.py",
+        "scripts/verify_card_source_ui.py",
+        "artifacts/card-source-ui-a0286415.json",
+        "artifacts/card-source-red.xml",
+        "artifacts/card-source-verified.xml",
+        "artifacts/card-source-shared.xml",
+        "artifacts/paper-resume-88fa3a1e.json",
+        "artifacts/paper-resume-verified.xml",
+        "artifacts/paper-resume-shared.xml",
+        "src/lilies/core/box_search.py",
+        "src/lilies/box_search_controller.py",
+        "qml/BoxSearch.qml",
+        "tests/test_box_search.py",
+        "scripts/verify_box_search_ui.py",
+        "artifacts/box-search/result.json",
+        "artifacts/box-search-regression-tests.xml",
+        "artifacts/box-search-focused-tests.xml",
+        "artifacts/box-search-verified-tests.xml"
+      ],
+      "remaining": "Native global hotkey conflict/focus/IME, actual launch/default-reader behavior and concurrent real-library UI latency remain. A 20K-message/2K-card synthetic library now verifies exact IDs/provider limits, real cancellation and latest-query worker coalescing: 55 service queries, median 17.673ms and maximum 73.089ms. This excludes archival/index writes, QML debounce/rendering, real model load and disk cold-start. A16 supports saved-card source confirmation without guessing standalone sources or switching the reading session. Existing app index and fixed reminder grammar remain; no automatic filesystem scan, model or shell. Package checks pass, not deployed native acceptance."
+    },
+    {
+      "id": "nonverbal-presence",
+      "status": "implemented-tested",
+      "scope": "Reading prop, quiet pause/perch, short task-completion motion and intentional interaction; natural transitions without extra unsolicited speech.",
+      "evidence": [
+        "qml/QuietPetMotion.qml",
+        "src/lilies/core/quiet_reactions.py",
+        "tests/test_quiet_reactions.py",
+        "scripts/verify_quiet_presence_ui.py",
+        "artifacts/quiet-presence/result.json",
+        "artifacts/summer-outfit-verified-tests.xml"
+      ],
+      "remaining": "Native visual/performance/focus and release verification remain. Motion is causal for explicit reading, pause and committed tasks; not a new painted pose set. Reading prop follows body grip, no added hit region. Drag freezes local animation, suppressed/stale/duplicate actions are discarded, no model/prose or replay. Small source-band overlap mitigates visible seams; actual GPU quality still needs validation."
+    },
+    {
+      "id": "distinct-summer-outfit",
+      "status": "implemented-tested",
+      "scope": "Replace summer visual alias with independently reviewed transparent artwork; preserve approved Lilith appearance, anchor and click-mask gates.",
+      "evidence": [
+        "themes/first-encounter/assets/lilith-outfit-summer-cotton-transparent-v1.png",
+        "themes/first-encounter/theme.json",
+        "docs/summer-outfit-v1-prompt.txt",
+        "docs/outfit-asset-gate.md",
+        "artifacts/outfit-runtime-gate.json",
+        "artifacts/summer-outfit-verified-tests.xml",
+        "artifacts/summer-world-final-tests.xml"
+      ],
+      "remaining": "Candidate only; native GPU/high-DPI review and packaged installation remain. Summer dress has a new independent approved-generation master and calibrated feet anchor; legacy baked poses still depict first-encounter clothes, so summer uses its own layered renderer. No claim of a full matching painted summer pose set."
+    },
+    {
+      "id": "shared-world",
+      "status": "implemented-tested",
+      "scope": "Paper shelf from explicitly started reading sessions, manually saved versioned dialogue letters, and completed project task occurrences. Visible timestamps and source routes, reversible hide and confirmed removal, no fabricated completion or automatic Canon.",
+      "evidence": [
+        "artifacts/paper-resume-88fa3a1e.json",
+        "artifacts/paper-resume-shared.xml",
+        "src/lilies/core/shared_world.py",
+        "src/lilies/shared_world_controller.py",
+        "qml/SharedWorldWindow.qml",
+        "tests/test_shared_world.py",
+        "scripts/verify_shared_world_ui.py",
+        "artifacts/shared-world/result.json",
+        "artifacts/shared-world-regression-tests.xml",
+        "artifacts/shared-world-focused-tests.xml"
+      ],
+      "remaining": "Native focus/drag, realistic large-library responsiveness and packaged migration/release verification. Schema 10 stores references/hash/tombstones only, no copied prose; deleted originals resolve unavailable, saved retry versions reuse existing revisions, reopened projects are labeled revoked. Paper position and task notes are current-source data, not invented historical snapshots. No model/socket action or memory/Canon promotion was added. GUI tested at 360/520/640px; physical paper-shelf entry tested, other matching decoration mappings share the same handler."
+    },
+    {
+      "id": "connector-boundary",
+      "status": "partial",
+      "scope": "Keep Calendar/Slack optional, preserve confirmation/security, no expanded connector scope or fabricated live-account acceptance.",
+      "evidence": [
+        "qml/V03ConnectorSetup.qml",
+        "src/lilies/connectors/runtime.py",
+        "tests/test_connector_assistance_v03.py",
+        "tests/test_connector_usability.py",
+        "scripts/verify_connector_usability.py",
+        "artifacts/connector-usability/result.json",
+        "artifacts/connector-boundary-verified-tests.xml",
+        "artifacts/connector-ui-final-tests.xml",
+        "tests/test_slack_manifest_preview.py",
+        "scripts/verify_slack_bootstrap_ui.py",
+        "artifacts/slack-bootstrap/result.json",
+        "artifacts/slack-bootstrap-verified-tests.xml"
+      ],
+      "remaining": "Pure draft bootstrap is now implemented and tested, with scope-matched user events and no token/configuration access. Native focus/DPI, packaged verification, actual Slack App registration and callback acceptance, live OAuth and account behavior remain unproved. Existing fixed-port IPv4 loopback receiver is unchanged; custom URI reception is not supported. External connections remain optional and per-item execution still requires explicit confirmation."
+    },
+    {
+      "id": "release",
+      "status": "partial",
+      "scope": "Backups, migration and failure checks, end-to-end QML and actual supported desktop verification, packaged verification, user-data preservation and deploy with rollback; no unrequested remote push.",
+      "evidence": [
+        "artifacts/v0357-card-source-20261005-a16/candidate-build.json",
+        "artifacts/v0357-card-source-20261005-a16/bundle-integrity-final.json",
+        "artifacts/v0357-card-source-20261005-a16/packaged-windows-startup-v0357.json",
+        "artifacts/card-source-verified.xml",
+        "artifacts/card-source-shared.xml",
+        "artifacts/v0357-paper-resume-20261005-a15/candidate-build.json",
+        "artifacts/v0357-paper-resume-20261005-a15/bundle-integrity-final.json",
+        "artifacts/v0357-paper-resume-20261005-a15/packaged-windows-startup-v0357.json",
+        "artifacts/paper-resume-verified.xml",
+        "artifacts/paper-resume-shared.xml",
+        "artifacts/v0357-gesture-teardown-20261005-a14/candidate-build.json",
+        "artifacts/v0357-gesture-teardown-20261005-a14/bundle-integrity-final.json",
+        "artifacts/v0357-gesture-teardown-20261005-a14/packaged-windows-startup-v0357.json",
+        "artifacts/local-gesture-final.xml",
+        "artifacts/local-gesture-shared-regression.xml",
+        "artifacts/local-gesture-matrix-d0a7da30.json",
+        "artifacts/v0357-pointer-resources-20261005-a13/candidate-build.json",
+        "artifacts/v0357-pointer-resources-20261005-a13/bundle-integrity-final.json",
+        "artifacts/v0357-pointer-resources-20261005-a13/packaged-windows-startup-v0357.json",
+        "artifacts/resource-pointer-final.xml",
+        "artifacts/resource-pointer-startup-regression.xml",
+        "artifacts/v0357-event-queue-20261005-a12/candidate-build.json",
+        "artifacts/v0357-event-queue-20261005-a12/bundle-integrity-final.json",
+        "artifacts/v0357-event-queue-20261005-a12/packaged-windows-startup-v0357.json",
+        "artifacts/win-event-backpressure-verified.xml",
+        "artifacts/win-event-response-boundaries.xml",
+        "artifacts/v0357-diagnostic-data-20261005-a11/candidate-build.json",
+        "artifacts/v0357-diagnostic-data-20261005-a11/bundle-integrity-final.json",
+        "artifacts/v0357-diagnostic-data-20261005-a11/packaged-windows-startup-v0357.json",
+        "artifacts/diagnostic-data-verified.xml",
+        "artifacts/diagnostic-data-app-regression.xml",
+        "tests/test_diagnostic_data_lifecycle.py",
+        "artifacts/v0357-chat-delivery-20261005-a10/candidate-build.json",
+        "artifacts/v0357-chat-delivery-20261005-a10/bundle-integrity-final.json",
+        "artifacts/v0357-chat-delivery-20261005-a10/packaged-windows-startup-v0357.json",
+        "artifacts/chat-delivery-final.xml",
+        "artifacts/diagnostic-isolation-verified.xml",
+        "tests/test_diagnostic_failure_isolation.py",
+        "artifacts/v0357-drag-chat-20261005-a9/candidate-build.json",
+        "artifacts/v0357-drag-chat-20261005-a9/bundle-integrity-final.json",
+        "artifacts/chat-drag-stream-final.xml",
+        "artifacts/chat-drag-companion-regression.xml",
+        "artifacts/v0357-settings-density-20261005-a8/candidate-build.json",
+        "artifacts/v0357-settings-density-20261005-a8/bundle-integrity-final.json",
+        "artifacts/v0357-chat-stream-20261005-a7/candidate-build.json",
+        "artifacts/v0357-chat-stream-20261005-a7/bundle-integrity-final.json",
+        "scripts/install_probe.ps1",
+        "tests/test_health_probe_deadline.py",
+        "artifacts/health-probe-verified.xml",
+        "artifacts/health-probe-shared-regression.xml",
+        "scripts/uninstall_transaction.ps1",
+        "scripts/uninstall_startup.ps1",
+        "scripts/uninstall_windows.ps1",
+        "tests/test_uninstall_transaction.py",
+        "tests/test_uninstall_startup.py",
+        "tests/test_windows_uninstaller_contract.py",
+        "artifacts/uninstall-verified-boundaries.xml",
+        "artifacts/uninstall-shared-regression.xml",
+        "artifacts/uninstall-owned-metadata.xml",
+        "artifacts/uninstall-conflict-boundaries.xml",
+        "scripts/install_startup.ps1",
+        "tests/test_install_quiescence.py",
+        "artifacts/install-quiescence-regression.xml",
+        "artifacts/install-quiescence-final-boundary.xml",
+        "artifacts/install-quiescence-owned-cim-final.xml",
+        "artifacts/install-quiescence-shortcut-health.xml",
+        "artifacts/v0357-recovery-outcomes-20261004-a6/candidate-build.json",
+        "artifacts/v0357-recovery-outcomes-20261004-a6/bundle-integrity-final.json",
+        "src/lilies/core/recovery.py",
+        "tests/test_shell_restore_outcome.py",
+        "tests/test_recovery_entrypoints.py",
+        "artifacts/shell-restore-final-regression.xml",
+        "artifacts/shell-restore-boundary-final.xml",
+        "artifacts/shell-restore-entrypoints-owned.xml",
+        "artifacts/v0357-paper-source-20261004-a5/candidate-build.json",
+        "artifacts/v0357-paper-source-20261004-a5/bundle-integrity-final.json",
+        "scripts/install_startup.ps1",
+        "scripts/verify_install_health.py",
+        "tests/test_install_health.py",
+        "tests/test_install_startup.py",
+        "artifacts/install-startup-peer-verified-tests.xml",
+        "artifacts/install-startup-file-regression.xml",
+        "artifacts/install-startup-shortcut-regression.xml",
+        "scripts/install_shortcuts.ps1",
+        "tests/test_install_shortcuts.py",
+        "tests/test_shortcut_retention_boundary.py",
+        "artifacts/install-shortcut-final-tests.xml",
+        "artifacts/install-shortcut-final-program-tests.xml",
+        "artifacts/install-transaction-rehearsal-04b4c002/result.json",
+        "artifacts/install-candidate-identity-tests.xml",
+        "artifacts/install-order-version-data-tests.xml",
+        "artifacts/v0357-drag-timing-20261004-a4/candidate-build.json",
+        "artifacts/v0357-drag-timing-20261004-a4/bundle-integrity-final.json",
+        "artifacts/install-transaction-rehearsal-04a4c001/result.json",
+        "scripts/install_transaction.ps1",
+        "tests/test_install_transaction.py",
+        "tests/test_windows_installer_contract.py",
+        "scripts/verify_install_transaction.ps1",
+        "artifacts/install-transaction-verified-tests.xml",
+        "artifacts/install-transaction-regression-tests.xml",
+        "artifacts/install-transaction-rehearsal-20261004/result.json",
+        "scripts/verify_candidate_bundle.py",
+        "tests/test_candidate_bundle.py",
+        "scripts/build_windows.ps1",
+        "artifacts/candidate-window-contract-tests.xml",
+        "artifacts/candidate-continuity-regression-tests.xml",
+        "artifacts/v0357-continuity-20261003-a2/candidate-build.json",
+        "artifacts/v0357-continuity-20261003-a2/bundle-integrity-final.json",
+        "scripts/verify_candidate_migration.py",
+        "tests/test_candidate_migration.py",
+        "artifacts/migration-v0357-20261004-a2/result.json",
+        "artifacts/candidate-migration-verified-tests.xml"
+      ],
+      "remaining": "Current independent a16 passed package/offscreen and hidden native startup checks; a15 is historical and correctly refused as stale. Diagnostic F-only isolation and previous event/gesture/resource protections remain. Hidden HWND messages and offscreen source workflows are not actual input/presented-frame, reader or native link acceptance. Recoverable uninstall is fixture-tested, but permanent data/backup cleanup remains unfinished and RemoveData refuses. Health observation has a 35-second deadline with bounded owned-process/pipe cleanup; synchronous OS launch/metadata stalls and installer-parent death are not generically contained. Actual upgrade, native recovery, drag/model/long-run behavior, live accounts and private-data migration remain unverified. Noncooperating external launches after final checks remain possible. Installed/formal 0.3.56 stays unchanged; install/uninstall gates remain closed without force bypass."
+    }
+  ],
+  "invariants": [
+    "No new model downloads or OpenAI API key",
+    "Lilies-created persistent data stays on F drive",
+    "Do not open development windows over the user's desktop or inject real mouse input without coordination",
+    "Keep full objective intact across goal continuations",
+    "Do not call the goal complete until every requirement is supported by current evidence"
+  ]
+}

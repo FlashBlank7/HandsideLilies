@@ -167,7 +167,7 @@ def test_shipped_habitat_variant_manifest_is_bounded_and_complete() -> None:
         "poseWideWindowSprawlV1",
     }
     assert all(
-        definition.get("optionalArtworkEnabled") is False
+        definition.get("optionalArtworkEnabled") is True
         for definition in variants.values()
         if definition.get("optionalArtworkAsset")
     )
@@ -179,7 +179,7 @@ def test_shipped_habitat_variant_manifest_is_bounded_and_complete() -> None:
         for name in ("window-perch-tucked", "window-perch")
     } == {"poseWindowDangleV1"}
     assert all(
-        variants[name]["proceduralLayeredFallback"] is True
+        variants[name]["proceduralLayeredFallback"] is False
         for name in (
             "micro-corner-grip",
             "compact-title-curl",
@@ -210,7 +210,9 @@ def test_qml_variants_transform_layers_around_contact_and_fail_open_assets() -> 
     assert 'objectName: "petLayeredProfileRotation"' in source
     assert "root.renderedContactX" in source
     assert "root.renderedContactY" in source
-    assert source.count("mirror: root.habitatMirror") >= 3
+    assert "mirrored: root.habitatMirror" in source
+    assert 'objectName: "petContinuousFigure"' in source
+    assert 'id: headRegion' not in source
     assert "layeredSupportCordPoint" in source
     assert "figureFrame.mapToItem" in source
     assert "habitatVariantDefinition.optionalArtworkAsset" in source
@@ -326,7 +328,7 @@ passed = all(
     and value["inside"]
     for name, value in results.items()
 )
-passed = passed and abs(results["small"]["rotation"] - results["large"]["rotation"]) >= 40.0
+passed = passed and all(abs(result['rotation']) < 10 for result in results.values())
 print(json.dumps({"passed": passed, "results": results}, ensure_ascii=False))
 raise SystemExit(0 if passed else 1)
 '''

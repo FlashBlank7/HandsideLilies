@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .awareness import evidence
+
 
 READING_ACTIONS = ("explain", "translate", "term", "ask")
 READING_ACTION_LABELS = {
@@ -85,4 +87,5 @@ def reading_bubble_metadata(
         "savedCardId": saved_card_id,
         "autoSaved": request.action == "term" and bool(saved_card_id),
         "ephemeral": True,
+        "awareness": evidence("selected-text"),
     }

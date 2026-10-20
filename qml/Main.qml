@@ -6,6 +6,18 @@ import QtQuick.Dialogs
 
 Window {
     id: desktop
+    // One QVariant conversion per notification, shared by all controls. Reading
+    // the full Python map separately in every label blocks the GUI on updates.
+    readonly property var companionStatus: backend.companionService.activityStatus
+    readonly property var companionPreferences: backend.companionService.preferences
+    readonly property var companionDelivery: backend.companionService.deliveryStatus
+    readonly property var habitatSnapshot: backend.habitatState
+    // These getters query SQLite. Share each notification's result between
+    // the pet, focus aura and panels instead of rereading it per consumer.
+    readonly property var focusSnapshot: backend.focusStatus
+    readonly property var readingSnapshot: backend.readingStatus
+    readonly property var wardrobeSnapshot: backend.wardrobeState
+    readonly property var worldSnapshot: backend.boxWorldStatus
     property var savedBoxLayout: backend.boxLayout()
     property var themePalette: backend.themeManifest.palette || ({})
     property var themeDock: backend.themeManifest.dock || ({})
@@ -66,12 +78,12 @@ Window {
     property bool desktopPresentationPending: false
     property int desktopPresentationReplayCount: 0
     property int desktopPresentationDispatchCount: 0
-    readonly property string petPresenceState: String((backend.habitatState || {}).state || "desktop")
-    readonly property string petPresenceReason: String((backend.habitatState || {}).reason || "")
-    readonly property bool petPresenceVisible: (backend.habitatState || {}).visible !== false
-    readonly property bool petPresenceFocusActive: Boolean((backend.focusStatus || {}).active)
+    readonly property string petPresenceState: String((desktop.habitatSnapshot || {}).state || "desktop")
+    readonly property string petPresenceReason: String((desktop.habitatSnapshot || {}).reason || "")
+    readonly property bool petPresenceVisible: (desktop.habitatSnapshot || {}).visible !== false
+    readonly property bool petPresenceFocusActive: Boolean((desktop.focusSnapshot || {}).active)
     readonly property bool petPresenceFocusPaused: petPresenceFocusActive
-                                                   && Boolean((backend.focusStatus || {}).paused)
+                                                   && Boolean((desktop.focusSnapshot || {}).paused)
     readonly property bool petPresenceSuppressed: !petPresenceVisible
                                                    || petPresenceState === "silent"
                                                    || petPresenceState === "blocked"
@@ -95,7 +107,7 @@ Window {
                 "medium": "中等窗口",
                 "large": "大窗口"
             }
-            var sizeClass = String((backend.habitatState || {}).windowSizeClass || "")
+            var sizeClass = String((desktop.habitatSnapshot || {}).windowSizeClass || "")
             var targetLabel = sizeLabels[sizeClass] || "当前窗口"
             return "当前 · 已贴靠 " + targetLabel + "，移动窗口时会平滑跟随"
         }
@@ -125,8 +137,9 @@ Window {
     component LiliesPaperButton: Button {
         id: paperButton
         property bool selected: false
+        property bool primary: false
         implicitWidth: Math.max(48, paperButtonText.implicitWidth + 24)
-        implicitHeight: 36
+        implicitHeight: 38
         leftPadding: 12
         rightPadding: 12
         font.family: "Microsoft YaHei UI"
@@ -134,7 +147,8 @@ Window {
         contentItem: Text {
             id: paperButtonText
             text: paperButton.text
-            color: !paperButton.enabled ? "#aaa198"
+            color: !paperButton.enabled ? "#a5a8b0"
+                   : paperButton.primary ? "#ffffff"
                    : paperButton.selected ? desktop.cordColor : desktop.inkColor
             font: paperButton.font
             horizontalAlignment: Text.AlignHCenter
@@ -142,32 +156,112 @@ Window {
             elide: Text.ElideRight
         }
         background: Rectangle {
-            radius: 8
-            color: paperButton.flat && !paperButton.hovered && !paperButton.selected
+            radius: 10
+            color: paperButton.primary ? (paperButton.down ? "#7e4c58" : "#985c69")
+                   : paperButton.flat && !paperButton.hovered && !paperButton.selected
                    ? "transparent"
                    : paperButton.down ? "#e8e7eb"
                    : paperButton.selected ? "#f0e7e9"
                    : paperButton.hovered ? "#f0f1f3" : "#fafafb"
-            border.width: 0
+            border.width: paperButton.visualFocus ? 1 : 0
+            border.color: "#b88b94"
             opacity: paperButton.enabled ? 1.0 : 0.62
         }
     }
 
     component PaperSection: GroupBox {
         id: section
-        topPadding: 38
-        leftPadding: 16; rightPadding: 16; bottomPadding: 18
+        topPadding: 56
+        leftPadding: 22; rightPadding: 22; bottomPadding: 24
+        font.family: "Microsoft YaHei UI"
+        font.pixelSize: 14
+        palette.text: "#434852"
+        palette.windowText: "#434852"
         label: Text {
-            x: section.leftPadding; y: 12
+            x: section.leftPadding; y: 20
             text: section.title
             color: "#4c5058"
             font.family: "Microsoft YaHei UI"
-            font.pixelSize: 13
-            font.weight: Font.DemiBold
+            font.pixelSize: 16
+            font.weight: Font.Medium
         }
         background: Rectangle {
-            radius: 12
-            color: "#f4f5f7"
+            radius: 16
+            color: "#ffffff"
+            border.width: 1
+            border.color: "#e8e9ee"
+        }
+    }
+
+    component PaperLabel: Label {
+        font.family: "Microsoft YaHei UI"
+        font.pixelSize: 14
+        lineHeight: 1.4
+        color: "#747c88"
+    }
+
+    component PaperNumber: SpinBox {
+        id: number
+        implicitHeight: 40
+        leftPadding: 34; rightPadding: 34
+        up.indicator: Rectangle {
+            x: number.width - width
+            height: number.height; implicitWidth: 32
+            color: number.up.pressed ? "#e5e7ed" : "transparent"
+            radius: 9
+            Text { anchors.centerIn: parent; text: "+"; font.pixelSize: 20; color: "#808793" }
+        }
+        down.indicator: Rectangle {
+            height: number.height; implicitWidth: 32
+            color: number.down.pressed ? "#e5e7ed" : "transparent"
+            radius: 9
+            Text { anchors.centerIn: parent; text: "−"; font.pixelSize: 20; color: "#808793" }
+        }
+    }
+
+    component PaperComboBox: ComboBox {
+        id: picker
+        implicitWidth: 180
+        implicitHeight: 40
+        font.family: "Microsoft YaHei UI"
+        font.pixelSize: 14
+        leftPadding: 12; rightPadding: 30
+        contentItem: Text {
+            text: picker.displayText
+            font: picker.font
+            color: picker.enabled ? "#444953" : "#9398a1"
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        indicator: Item {
+            x: picker.width - 24
+            y: (picker.height - height) / 2
+            width: 10; height: 8
+            Rectangle { x: 0; y: 3; width: 6; height: 1.5; rotation: 45; color: "#8b909a"; antialiasing: true }
+            Rectangle { x: 4; y: 3; width: 6; height: 1.5; rotation: -45; color: "#8b909a"; antialiasing: true }
+        }
+        background: Rectangle {
+            radius: 9
+            color: picker.down ? "#edeef2" : "#f5f6f8"
+            border.width: picker.visualFocus ? 1 : 0
+            border.color: "#b88b94"
+        }
+    }
+
+    component PaperTextField: TextField {
+        id: field
+        implicitHeight: 40
+        padding: 12
+        font.family: "Microsoft YaHei UI"
+        font.pixelSize: 14
+        color: "#444953"
+        placeholderTextColor: "#9196a0"
+        selectByMouse: true
+        background: Rectangle {
+            radius: 9
+            color: "#f5f6f8"
+            border.width: field.activeFocus ? 1 : 0
+            border.color: "#b88b94"
         }
     }
 
@@ -176,15 +270,17 @@ Window {
         implicitWidth: 9
         implicitHeight: 9
         padding: 1
+        policy: ScrollBar.AsNeeded
+        visible: size < 1.0
         contentItem: Rectangle {
             implicitWidth: 7
             implicitHeight: 7
             radius: 4
-            color: paperScrollBar.pressed ? desktop.cordColor : "#9f9385"
+            color: paperScrollBar.pressed ? desktop.cordColor : "#a7abb4"
             opacity: paperScrollBar.active ? 0.74 : 0.36
         }
         background: Rectangle {
-            color: "#eee6da"
+            color: "transparent"
             radius: 4
             opacity: paperScrollBar.active ? 0.52 : 0.22
         }
@@ -370,11 +466,15 @@ Window {
     }
 
     function openWorkPanel(sectionName) {
+        // Settings is an always-on-top tool window. Retire it before opening
+        // a sibling panel so it cannot cover the requested wardrobe page.
+        backend.setChatOpen(false)
         backend.openWorkPanelSection(String(sectionName || "work"))
     }
 
     function openConnectorSetup(providerName) {
         connectorSetup.provider = providerName === "slack" ? "slack" : "calendar"
+        connectorSetup.showUsage()
         connectorSetup.requestedVisible = true
         if (!backend.dockSuppressed) {
             connectorSetup.raise()
@@ -545,6 +645,7 @@ Window {
     }
 
     function presentChatPage(pageIndex) {
+        backend.setWorkPanelOpen(false)
         chatWindow.page = Math.max(0, Number(pageIndex || 0))
         chatWindow.presentationRecoveryArmed =
                 chatWindow.visibility === Window.Minimized
@@ -571,6 +672,19 @@ Window {
         // guarded one-shot capture resolves its active-window context.
         backend.setChatOpen(false)
         companionScreenObservationDelay.restart()
+    }
+
+    function openFunctionLibraryAction(actionId) {
+        var action = String(actionId || "")
+        // Opening a feature is independent of the three optional pin slots.
+        // Preserve the companion library entrance as its settings page.
+        if (action === "companion") {
+            presentChatPage(3)
+            return
+        }
+        if (action !== "memory")
+            backend.setChatOpen(false)
+        activateQuickAction(action)
     }
 
     function activateQuickAction(actionId) {
@@ -600,7 +714,7 @@ Window {
             // privacy/pause/busy state rejects it, open the status page so the
             // reason and controls are visible instead of making the click
             // appear dead.
-            if (Number(backend.companionService.deliveryStatus.unreadCount || 0) > 0) {
+            if (Number(desktop.companionDelivery.unreadCount || 0) > 0) {
                 if (!backend.companionService.reopenUnread())
                     presentChatPage(3)
             } else if (!backend.companionService.requestNow()) {
@@ -665,7 +779,7 @@ Window {
         active: backend.shellMode !== "compact"
                 && backend.renderer === "video"
                 && backend.assetUrl("video") !== ""
-        asynchronous: false
+        asynchronous: true
         source: Qt.resolvedUrl("CinematicDesktopVideo.qml")
         onLoaded: {
             item.appBackend = backend
@@ -685,6 +799,9 @@ Window {
         }
         function onOpenConversationRequested() {
             desktop.presentChatPage(0)
+        }
+        function onOpenReadingDeskRequested() {
+            desktop.presentChatPage(2)
         }
         function onApplicationActivationRequested(action) {
             if (backend.dockSuppressed) {
@@ -757,7 +874,7 @@ Window {
         anchors.fill: parent
         active: backend.shellMode !== "compact"
                 && (backend.renderer === "scene2d" || backend.assetUrl("video") === "")
-        asynchronous: false
+        asynchronous: true
         sourceComponent: Component {
             Item {
                 id: liveScene
@@ -767,7 +884,8 @@ Window {
                 Image {
                     anchors.fill: parent
                     source: backend.assetUrl("background")
-                    cache: false
+                    asynchronous: true
+                    cache: true
                     fillMode: Image.PreserveAspectCrop
                     smooth: true
                     mipmap: true
@@ -777,7 +895,8 @@ Window {
         Image {
             anchors.fill: parent
             source: backend.assetUrl("cartonBack")
-            cache: false
+            asynchronous: true
+            cache: true
             fillMode: Image.Stretch
             smooth: true
             opacity: 0.74
@@ -792,7 +911,8 @@ Window {
         Image {
             anchors.fill: parent
             source: backend.assetUrl("crackGlow")
-            cache: false
+            asynchronous: true
+            cache: true
             fillMode: Image.Stretch
             smooth: true
             opacity: 0.22 + desktop.sceneBreath * 0.18
@@ -823,7 +943,8 @@ Window {
         Image {
             anchors.fill: parent
             source: backend.assetUrl("cartonForeground")
-            cache: false
+            asynchronous: true
+            cache: true
             fillMode: Image.Stretch
             smooth: true
             opacity: 0.70
@@ -916,7 +1037,8 @@ Window {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: parent.height * 0.05 + desktop.sceneBreath * 2
                 source: backend.assetUrl("lilith")
-                cache: false
+                asynchronous: true
+                cache: true
                 fillMode: Image.PreserveAspectFit
                 smooth: true
                 mipmap: true
@@ -974,111 +1096,12 @@ Window {
         }
     }
 
-    Item {
+    DesktopIconLayer {
         id: iconLayer
+        appBackend: backend
         anchors.fill: parent
         anchors.bottomMargin: 92
         visible: backend.shellMode !== "compact" && !backend.introActive
-
-        Repeater {
-            model: iconLayer.visible ? backend.desktopItems : []
-            delegate: Item {
-                id: iconDelegate
-                required property var modelData
-                width: 92
-                height: 100
-                x: Math.max(12, Math.min(iconLayer.width - width - 12, Number(modelData.x)))
-                y: Math.max(18, Math.min(iconLayer.height - height - 18, Number(modelData.y)))
-
-                Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: 60
-                    height: 60
-                    radius: 18
-                    color: iconMouse.containsMouse ? "#fffdf7" : "#f4eee4"
-                    border.color: iconMouse.containsMouse ? "#a99a84" : "#cfc3b2"
-                    border.width: 1
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: modelData.glyph
-                        color: modelData.source === "desktop" ? "#9f3129" : "#777168"
-                        font.family: "Segoe UI Symbol"
-                        font.pixelSize: 25
-                    }
-                    Rectangle {
-                        visible: Boolean(modelData.pinned)
-                        width: 9; height: 9; radius: 5
-                        color: "#9f3129"
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.margins: 5
-                    }
-                    Text {
-                        visible: modelData.group && modelData.group !== "未分组"
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        anchors.margins: 5
-                        text: modelData.group.substring(0, 1)
-                        color: "#887765"
-                        font.pixelSize: 10
-                    }
-                }
-
-                Text {
-                    anchors.top: parent.top
-                    anchors.topMargin: 66
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: parent.width
-                    text: modelData.name
-                    color: "#4d4a45"
-                    font.family: "Microsoft YaHei UI"
-                    font.pixelSize: 12
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                }
-
-                MouseArea {
-                    id: iconMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    acceptedButtons: Qt.LeftButton
-                    drag.target: iconDelegate
-                    drag.minimumX: 4
-                    drag.maximumX: iconLayer.width - iconDelegate.width - 4
-                    drag.minimumY: 4
-                    drag.maximumY: iconLayer.height - iconDelegate.height - 4
-                    onDoubleClicked: backend.openItem(modelData.itemId)
-                    onReleased: backend.saveIconPosition(modelData.itemId, iconDelegate.x, iconDelegate.y)
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.RightButton
-                    onClicked: iconMenu.popup()
-                }
-
-                Menu {
-                    id: iconMenu
-                    MenuItem {
-                        text: modelData.pinned ? "取消固定" : "固定到桌面"
-                        onTriggered: backend.setIconPinned(modelData.itemId, !Boolean(modelData.pinned))
-                    }
-                    MenuItem { text: "打开所在位置"; onTriggered: backend.revealItem(modelData.itemId) }
-                    MenuSeparator { }
-                    Menu {
-                        title: "分组"
-                        MenuItem { text: "未分组"; onTriggered: backend.setIconGroup(modelData.itemId, "未分组") }
-                        MenuItem { text: "工作"; onTriggered: backend.setIconGroup(modelData.itemId, "工作") }
-                        MenuItem { text: "资料"; onTriggered: backend.setIconGroup(modelData.itemId, "资料") }
-                        MenuItem { text: "娱乐"; onTriggered: backend.setIconGroup(modelData.itemId, "娱乐") }
-                    }
-                    MenuItem { text: "从当前布局隐藏"; onTriggered: backend.hideIcon(modelData.itemId) }
-                }
-            }
-        }
     }
 
     Rectangle {
@@ -1649,8 +1672,23 @@ Window {
         suppressed: backend.dockSuppressed
     }
 
+    BoxSearch {
+        appBackend: backend
+        screen: petWindow.screen
+    }
+
+    SharedWorldWindow {
+        appBackend: backend
+        screen: petWindow.screen
+    }
+
     V03WorkPanel {
         id: workPanel
+        focusInfo: desktop.focusSnapshot
+        readingInfo: desktop.readingSnapshot
+        outfitItems: desktop.wardrobeSnapshot.outfits || []
+        poseItems: desktop.wardrobeSnapshot.poses || []
+        boxWorldInfo: desktop.worldSnapshot
         transientParent: null
         appBackend: backend
         requestedSection: backend.workPanelSection
@@ -1679,6 +1717,7 @@ Window {
 
     V03BoxWorldScene {
         id: boxWorldScene
+        sharedWorldState: desktop.worldSnapshot
         objectName: "boxWorldSceneWindow"
         transientParent: null
         appBackend: backend
@@ -1737,9 +1776,9 @@ Window {
     V03FocusTimerAura {
         id: focusTimerAura
         appBackend: backend
-        focusInfo: backend.focusStatus
+        focusInfo: desktop.focusSnapshot
         focusTransition: backend.focusTransition
-        presenceInfo: backend.habitatState
+        presenceInfo: desktop.habitatSnapshot
         presentationEnabled: !diagnosticWindowProbe && petWindow.visible
                              && !petWindow.manualDragActive
         paperColor: desktop.surfaceColor
@@ -2380,7 +2419,17 @@ Window {
             // Re-enable normal pose Behaviors before detaching so Lilith can
             // settle after, never during, pointer-critical motion.
             compactLilith.interactionSnap = false
-            backend.detachPetHabitat(x, y)
+            if (typeof backend.finishPetPlacement === "function") {
+                backend.finishPetPlacement({
+                    "x": x, "y": y, "width": width, "height": height,
+                    "figureLeft": compactLilith.figureLeft,
+                    "figureTop": compactLilith.figureTop,
+                    "figureWidth": compactLilith.figureWidth,
+                    "figureHeight": compactLilith.figureHeight
+                })
+            } else {
+                backend.detachPetHabitat(x, y)
+            }
             // Recheck only after the release transition has settled. This
             // keeps the final visible figure recoverable at monitor edges.
             dragPresentationSettleTimer.restart()
@@ -2510,6 +2559,15 @@ Window {
             })
         }
 
+        property bool pointerFlushQueued: false
+
+        function flushQueuedPointerEvent() {
+            pointerFlushQueued = false
+            if (manualDragActive && !nativeSystemMoveActive
+                    && !nativeSystemMoveStartPending)
+                followPendingPointerEventInternal(true)
+        }
+
         function followPointerEvent(pointerX, pointerY) {
             if (!manualDragActive)
                 return
@@ -2523,6 +2581,13 @@ Window {
             dragFallbackPointerX = Number(pointerX)
             dragFallbackPointerY = Number(pointerY)
             dragPointerEventPending = true
+            // Consume the newest event once at the next GUI turn, without
+            // waiting for a rendered frame. FrameAnimation remains only the
+            // missed-event safety net; the bridge deduplicates equal points.
+            if (!pointerFlushQueued) {
+                pointerFlushQueued = true
+                Qt.callLater(flushQueuedPointerEvent)
+            }
         }
 
         function followPendingPointerEvent() {
@@ -2602,6 +2667,7 @@ Window {
         }
 
         FrameAnimation {
+            objectName: "dragFallbackFrameDriver"
             // Drive the compatibility fallback from the actual Qt Quick frame
             // clock. A fixed 16 ms timer drifts against 60/120/144 Hz displays
             // and can submit geometry just after DWM's composition deadline.
@@ -2654,7 +2720,7 @@ Window {
             interval: 340
             repeat: false
             onTriggered: {
-                if (petWindow.manualDragActive || backend.habitatState.attached)
+                if (petWindow.manualDragActive || desktop.habitatSnapshot.attached)
                     return
                 var figureCenterX = petWindow.x + compactLilith.figureLeft
                                     + compactLilith.figureWidth / 2
@@ -2674,7 +2740,7 @@ Window {
         function applyHabitatState() {
             if (petWindow.manualDragActive || petWindow.resizeDragActive)
                 return
-            var habitat = backend.habitatState || ({})
+            var habitat = desktop.habitatSnapshot || ({})
             if (!habitat.attached)
                 return
             var habitatPose = String(habitat.pose || "")
@@ -2720,7 +2786,7 @@ Window {
                         || observedGestureCounter
                            !== Number(petWindow.nativeSystemMoveGestureCounter))
                     return
-                if (!backend.habitatState.attached)
+                if (!desktop.habitatSnapshot.attached)
                     desktop.constrainCompactPet(true)
             })
         }
@@ -2975,14 +3041,14 @@ Window {
 
             V03PetPoseResolver {
                 id: petPoseResolver
-                habitatState: backend.habitatState || ({})
+                habitatState: desktop.habitatSnapshot || ({})
                 chatOpen: backend.chatOpen
                 selectionBubble: backend.selectionBubble || ({})
                 companionBubble: backend.companionService.bubble || ({})
-                readingStatus: backend.readingStatus || ({})
-                focusStatus: backend.focusStatus || ({})
+                readingStatus: desktop.readingSnapshot || ({})
+                focusStatus: desktop.focusSnapshot || ({})
                 equippedPose: String(
-                    (backend.wardrobeState.current || {}).pose_id || "idle-prayer")
+                    (desktop.wardrobeSnapshot.current || {}).pose_id || "idle-prayer")
             }
 
             V03PetBody {
@@ -2996,12 +3062,17 @@ Window {
                 inputEnabled: true
                 characterHeight: compactWindow.boxSize * 2.20
                 pose: petPoseResolver.resolvedPose
+                quietActivity: petPoseResolver.quietActivity
+                reactionEvent: backend.petReaction
+                quietSuppressed: backend.companionSuppressed
+                                 || desktop.habitatSnapshot.state === "blocked"
+                                 || desktop.habitatSnapshot.state === "silent"
                 paused: petWindow.manualDragActive
                         || petWindow.resizeDragActive
                         || petWindow.localGestureDepth > 0
                         || !petWindow.visible
-                        || backend.habitatState.state === "blocked"
-                lowPower: backend.habitatState.state === "silent"
+                        || desktop.habitatSnapshot.state === "blocked"
+                lowPower: desktop.habitatSnapshot.state === "silent"
                           || !backend.sceneActive
                           || !compactWindow.highMotion
                 cordStart: supportCordPoint
@@ -3059,7 +3130,7 @@ Window {
                 id: companionUnreadCue
                 objectName: "desktopPetCompanionUnreadCue"
                 readonly property int unreadCount: Number(
-                    (backend.companionService.deliveryStatus || {}).unreadCount || 0)
+                    (desktop.companionDelivery || {}).unreadCount || 0)
                 visible: unreadCount > 0 && !compactWindow.expanded
                 width: Math.max(30, Math.min(42, compactWindow.boxSize * 0.27))
                 height: width
@@ -3377,7 +3448,7 @@ Window {
                         compactWindow.petCenterX + spiralX * compactWindow.boxSize - width / 2
                     readonly property real desiredY:
                         compactWindow.petCenterY + spiralY * compactWindow.boxSize - height / 2
-                    property var companionActivity: backend.companionService.activityStatus || ({})
+                    property var companionActivity: desktop.companionStatus || ({})
                     readonly property bool desktopDiscoveryActive:
                         modelData.action === "settings" && backend.shellMode === "compact"
                     property string visibleLabel: modelData.action === "peek"
@@ -3507,9 +3578,32 @@ Window {
                         property real latestTranslationY: 0
                         property bool translationPending: false
                         property bool gestureStarted: false
+                        property string gestureOwner: ""
                         property bool nativeGestureClaimed: false
                         property int rawEventCount: 0
                         property int sceneCommitCount: 0
+                        function finishGestureOwnership(cancelled) {
+                            if (!gestureStarted)
+                                return
+                            // Latch the original owner: Repeater teardown can
+                            // invalidate/rebind modelData before destruction.
+                            // Clear our latch before calling another object so
+                            // release and destruction cannot finish twice.
+                            gestureStarted = false
+                            translationPending = false
+                            var owner = gestureOwner
+                            var claimed = nativeGestureClaimed
+                            gestureOwner = ""
+                            nativeGestureClaimed = false
+                            try {
+                                petWindow.endLocalGesture(
+                                    "action", claimed, cancelled,
+                                    rawEventCount, sceneCommitCount, 0)
+                            } finally {
+                                if (owner !== "")
+                                    backend.setPetInteractionLock(owner, false)
+                            }
+                        }
                         function flushPendingTranslation() {
                             if (!translationPending)
                                 return false
@@ -3529,8 +3623,8 @@ Window {
                         }
                         onActiveChanged: {
                             if (active) {
-                                backend.setPetInteractionLock(
-                                    "component-" + String(modelData.action), true)
+                                gestureOwner = "component-" + String(modelData.action)
+                                backend.setPetInteractionLock(gestureOwner, true)
                                 componentButton.dragStartOffsetX = componentButton.offsetX
                                 componentButton.dragStartOffsetY = componentButton.offsetY
                                 latestTranslationX = Number(translation.x)
@@ -3543,20 +3637,18 @@ Window {
                                     "action")
                             } else if (gestureStarted) {
                                 flushPendingTranslation()
-                                if (!compactWindow.actionGridMode) {
+                                var completedAction = gestureOwner.slice(
+                                    "component-".length)
+                                var completedX = componentButton.offsetX
+                                var completedY = componentButton.offsetY
+                                var completedScale = componentButton.buttonScale
+                                var shouldSave = !compactWindow.actionGridMode
+                                finishGestureOwnership(false)
+                                if (shouldSave) {
                                     backend.saveComponentLayout(
-                                        modelData.action,
-                                        componentButton.offsetX,
-                                        componentButton.offsetY,
-                                        componentButton.buttonScale)
+                                        completedAction, completedX, completedY,
+                                        completedScale)
                                 }
-                                gestureStarted = false
-                                petWindow.endLocalGesture(
-                                    "action", nativeGestureClaimed, false,
-                                    rawEventCount, sceneCommitCount, 0)
-                                nativeGestureClaimed = false
-                                backend.setPetInteractionLock(
-                                    "component-" + String(modelData.action), false)
                             }
                         }
                         onTranslationChanged: {
@@ -3567,12 +3659,11 @@ Window {
                             rawEventCount += 1
                         }
                         Component.onDestruction: {
-                            if (nativeGestureClaimed) {
-                                petWindow.endLocalGesture(
-                                    "action", true, true, rawEventCount,
-                                    sceneCommitCount, 0)
-                                nativeGestureClaimed = false
-                            }
+                            // Qt need not emit activeChanged(false) when a
+                            // removed delegate destroys its held DragHandler.
+                            // Local depth/locks exist even without a native
+                            // controller. Do not persist a cancelled layout.
+                            finishGestureOwnership(true)
                         }
                     }
                     FrameAnimation {
@@ -3934,6 +4025,10 @@ Window {
         transientParent: null
         property var bubbleData: backend.selectionBubble
         property string bubbleText: String(selectionBubble.bubbleData.text || "")
+        property var saveOffer: ({})
+        property string saveError: ""
+        readonly property bool choosingSave: Boolean(saveOffer.id)
+        readonly property int selectionRequestId: Number(bubbleData.requestId || 0)
         property bool hasDetails: bubbleText.length > 170 || bubbleText.indexOf("\n") >= 0
         property bool expanded: hasDetails && bubbleHover.hovered
         // Four reading actions plus the optional save action need a real
@@ -3947,8 +4042,10 @@ Window {
             330 + Math.sqrt(Math.max(1, bubbleText.length)) * 16))
         property int detailHeight: Math.max(270, Math.min(440,
             155 + Math.ceil(Math.max(1, bubbleText.length) / 28) * 24))
-        width: expanded ? Math.min(detailWidth, Screen.width - 24) : compactWidth
-        height: expanded ? Math.min(detailHeight, Screen.height - 32) : compactHeight
+        width: choosingSave ? Math.min(430, Screen.width - 24)
+              : expanded ? Math.min(detailWidth, Screen.width - 24) : compactWidth
+        height: choosingSave ? Math.min(320, Screen.height - 32)
+               : expanded ? Math.min(detailHeight, Screen.height - 32) : compactHeight
         x: Math.max(Screen.virtualX + 12,
                     Math.min(Number(selectionBubble.bubbleData.x || 0) + 18,
                              Screen.virtualX + Screen.width - width - 12))
@@ -3964,7 +4061,25 @@ Window {
                  && !petWindow.resizeDragActive
         color: "transparent"
         flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus
-        onVisibleChanged: { if (visible) raise() }
+        function cancelSave() {
+            var offerId = String(saveOffer.id || "")
+            saveOffer = ({})
+            if (offerId) backend.cancelSelectionSave(offerId)
+        }
+        function chooseSave(destination) {
+            var result = backend.confirmSelectionSave(String(saveOffer.id || ""), destination)
+            saveOffer = ({})
+            saveError = result.ok ? "" : String(result.error || "没有保存，请重试")
+        }
+        function beginSave() {
+            saveError = ""
+            var result = backend.prepareSelectionSave()
+            if (!result.ok) { saveError = String(result.error || "没有可保存的结果"); return }
+            saveOffer = result
+            if (!result.hasPaper) chooseSave("independent")
+        }
+        onSelectionRequestIdChanged: { cancelSave(); saveError = "" }
+        onVisibleChanged: { if (visible) raise(); else cancelSave() }
         Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
         Behavior on height { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
@@ -4010,12 +4125,20 @@ Window {
                         }
                     }
                     Label {
-                        text: "莉莉丝 · Luna-medium"
+                        text: "莉莉丝"
                         color: "#777067"
                         font.pixelSize: 12
                     }
+                    ContextLabel {
+                        objectName: "selectionContextLabel"
+                        Layout.fillWidth: true
+                        evidence: selectionBubble.bubbleData.awareness || ({})
+                        extraDetail: String(selectionBubble.bubbleData.sourceLength || 0) + " 字 · 不读取整篇"
+                            + (selectionBubble.bubbleData.paperAssociation === "user-confirmed" ? " · 出处由你确认"
+                               : selectionBubble.bubbleData.paperAssociation === "unconfirmed" ? " · 论文归属尚未确认" : "")
+                    }
                     Label {
-                        visible: selectionBubble.hasDetails && !selectionBubble.expanded
+                        visible: selectionBubble.hasDetails && !selectionBubble.expanded && !selectionBubble.choosingSave
                         text: "悬停展开"
                         color: "#a39080"
                         font.pixelSize: 11
@@ -4035,7 +4158,7 @@ Window {
                 }
 
                 Label {
-                    visible: !selectionBubble.expanded
+                    visible: !selectionBubble.expanded && !selectionBubble.choosingSave
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     text: selectionBubble.bubbleText
@@ -4049,7 +4172,7 @@ Window {
                 }
 
                 ScrollView {
-                    visible: selectionBubble.expanded
+                    visible: selectionBubble.expanded && !selectionBubble.choosingSave
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
@@ -4064,8 +4187,79 @@ Window {
                     }
                 }
 
+                ScrollView {
+                    objectName: "selectionSavePreview"
+                    visible: selectionBubble.choosingSave
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    contentWidth: availableWidth
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 7
+                        Text {
+                            Layout.fillWidth: true
+                            text: "这段文字属于这篇论文吗？"
+                            font.pixelSize: 16; color: "#353b45"; wrapMode: Text.Wrap
+                        }
+                        Text {
+                            objectName: "selectionSavePaperTitle"
+                            Layout.fillWidth: true
+                            text: String(selectionBubble.saveOffer.paperTitle || "")
+                            textFormat: Text.PlainText; font.pixelSize: 15; color: "#985c69"
+                            wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
+                        }
+                        Text {
+                            objectName: "selectionSavePaperLocation"
+                            Layout.fillWidth: true
+                            text: "第 " + String(selectionBubble.saveOffer.page || 1) + " 页 · 你标记的位置"
+                                + (selectionBubble.saveOffer.locator ? "\n" + selectionBubble.saveOffer.locator : "")
+                            textFormat: Text.PlainText; font.pixelSize: 13; color: "#687180"; wrapMode: Text.Wrap
+                            maximumLineCount: 2; elide: Text.ElideRight
+                        }
+                        Text {
+                            objectName: "selectionSavePaperSource"
+                            Layout.fillWidth: true
+                            text: String(selectionBubble.saveOffer.sourceUri || "")
+                            textFormat: Text.PlainText; font.pixelSize: 12; color: "#687180"; elide: Text.ElideMiddle
+                        }
+                        Text {
+                            objectName: "selectionSaveDisclosure"
+                            Layout.fillWidth: true
+                            text: "未自动识别文档。若来自别处，请独立保存。\n保存的卡片可由本地记忆查阅。"
+                            font.pixelSize: 12; color: "#687180"; wrapMode: Text.Wrap
+                        }
+                    }
+                }
                 RowLayout {
-                    visible: !Boolean(selectionBubble.bubbleData.error)
+                    visible: selectionBubble.choosingSave
+                    Layout.fillWidth: true
+                    QuietAction {
+                        objectName: "selectionSaveToPaper"
+                        text: "存入本篇"; primary: true; focusPolicy: Qt.NoFocus
+                        onClicked: selectionBubble.chooseSave("paper")
+                    }
+                    QuietAction {
+                        objectName: "selectionSaveIndependent"
+                        text: "独立保存"; focusPolicy: Qt.NoFocus
+                        onClicked: selectionBubble.chooseSave("independent")
+                    }
+                    Item { Layout.fillWidth: true }
+                    QuietAction {
+                        objectName: "selectionSaveCancel"
+                        text: "取消"; focusPolicy: Qt.NoFocus
+                        onClicked: selectionBubble.cancelSave()
+                    }
+                }
+                Text {
+                    objectName: "selectionSaveError"
+                    visible: selectionBubble.saveError !== ""
+                    Layout.fillWidth: true
+                    text: selectionBubble.saveError; textFormat: Text.PlainText
+                    font.pixelSize: 12; color: "#8b3933"; wrapMode: Text.Wrap
+                }
+                RowLayout {
+                    visible: !Boolean(selectionBubble.bubbleData.error) && !selectionBubble.choosingSave
                     Layout.fillWidth: true
                     Layout.preferredHeight: 30
                     spacing: 5
@@ -4142,7 +4336,7 @@ Window {
                         TapHandler {
                             enabled: !Boolean(selectionBubble.bubbleData.savedCardId)
                                      && !Boolean(selectionBubble.bubbleData.busy)
-                            onTapped: backend.saveSelectionCard()
+                            onTapped: selectionBubble.beginSave()
                         }
                     }
                 }
@@ -4153,7 +4347,7 @@ Window {
 
         Timer {
             interval: 20000
-            running: selectionBubble.visible && !Boolean(selectionBubble.bubbleData.busy) && !bubbleHover.hovered && !selectionQuestion.visible
+            running: selectionBubble.visible && !Boolean(selectionBubble.bubbleData.busy) && !bubbleHover.hovered && !selectionQuestion.visible && !selectionBubble.choosingSave
             repeat: false
             onTriggered: backend.dismissSelectionBubble()
         }
@@ -4249,6 +4443,7 @@ Window {
         objectName: "chatWindow"
         transientParent: null
         property int page: 0
+        property bool historySearchOpen: false
         property string editingMemoryId: ""
         property string selectedMemoryPartition: ""
         property string pendingDeleteFragmentId: ""
@@ -4256,8 +4451,10 @@ Window {
         property bool presentationResetHidden: false
         property bool presentationRecoveryArmed: false
         property int presentationStableChecks: 0
-        width: Math.min(Screen.width - 40, 600)
-        height: Math.min(Screen.height - 60, 800)
+        width: Math.min(Screen.width - 40, 680)
+        height: Math.min(Screen.height - 60, 840)
+        minimumWidth: Math.min(520, Screen.width - 40)
+        minimumHeight: Math.min(540, Screen.height - 60)
         x: Screen.virtualX + Screen.width - width - 26
         y: Screen.virtualY + Math.max(24, (Screen.height - height) / 2)
         visible: backend.chatOpen && !backend.dockSuppressed
@@ -4280,8 +4477,8 @@ Window {
 
         Rectangle {
             anchors.fill: parent
-            radius: 18
-            color: desktop.surfaceRaisedColor
+            radius: 20
+            color: "#fafafb"
             border.color: desktop.hairlineColor
             border.width: 1
 
@@ -4292,8 +4489,8 @@ Window {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 24
-                spacing: 18
+                anchors.margins: 28
+                spacing: 22
 
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -4309,9 +4506,17 @@ Window {
                                 onPressed: chatWindow.startSystemMove()
                             }
                         }
+                        LiliesPaperButton {
+                            objectName: "chatBoxSearchButton"
+                            text: "快搜"
+                            flat: true
+                            onClicked: backend.openBoxSearch()
+                            ToolTip.visible: hovered
+                            ToolTip.text: backend.boxSearchHotkey
+                        }
                         Label {
                             text: backend.chatBusy ? "在想了" : "初遇 · 莉莉丝的盒子"
-                            color: "#81786e"
+                            color: "#8b8e98"
                             font.pixelSize: 12
                         }
                         LiliesPaperButton {
@@ -4324,7 +4529,7 @@ Window {
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: 8
                         LiliesPaperButton {
                             objectName: "chatPageConversationButton"
                             Layout.fillWidth: true
@@ -4379,13 +4584,40 @@ Window {
                     Layout.minimumWidth: 0
 
                     ColumnLayout {
+                        spacing: 12
                         RowLayout {
                             Layout.fillWidth: true
-                            LiliesPaperButton { text: "新对话"; flat: true; onClicked: backend.newConversation() }
-                            LiliesPaperButton { text: "重试"; flat: true; enabled: !backend.chatBusy; onClicked: backend.retryLastMessage() }
+                            LiliesPaperButton { text: "新对话"; flat: true; enabled: !backend.chatBusy; onClicked: backend.newConversation() }
+                            Item { Layout.fillWidth: true }
+                            LiliesPaperButton {
+                                objectName: "chatHistoryToggle"
+                                text: "找旧对话"
+                                flat: true
+                                selected: chatWindow.historySearchOpen
+                                onClicked: {
+                                    chatWindow.historySearchOpen = !chatWindow.historySearchOpen
+                                    if (chatWindow.historySearchOpen) historyQuery.forceActiveFocus()
+                                    else { historyQuery.clear(); backend.searchHistory("") }
+                                }
+                            }
+                            LiliesPaperButton {
+                                objectName: "chatPreviousRepliesButton"
+                                text: "旧回答"; flat: true
+                                visible: backend.replyRevisions.length > 0
+                                enabled: !backend.chatBusy
+                                onClicked: previousReplies.open()
+                            }
+                            LiliesPaperButton { objectName: "chatRetryButton"; text: "重新回答"; flat: true; enabled: !backend.chatBusy; onClicked: backend.retryLastMessage() }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: chatWindow.historySearchOpen
                             TextField {
                                 id: historyQuery
+                                objectName: "chatHistoryInput"
                                 Layout.fillWidth: true
+                                implicitHeight: 40
+                                leftPadding: 12
                                 placeholderText: "找一句旧话"
                                 color: "#292622"
                                 placeholderTextColor: "#756e65"
@@ -4403,29 +4635,105 @@ Window {
                             LiliesPaperButton { text: "查找"; flat: true; onClicked: backend.searchHistory(historyQuery.text) }
                         }
                         Rectangle {
-                            visible: backend.historyResults.length > 0
+                            visible: chatWindow.historySearchOpen && backend.historyResults.length > 0
                             Layout.fillWidth: true
-                            Layout.preferredHeight: visible ? Math.min(180, 42 + backend.historyResults.length * 38) : 0
+                            Layout.preferredHeight: visible ? Math.min(210, 14 + backend.historyResults.length * 78) : 0
                             radius: 12
-                            color: "#f4eadc"
-                            border.color: "#d2c5b2"
+                            color: "#f0f1f4"
+                            border.color: "#e4e5ea"
                             ListView {
                                 anchors.fill: parent
                                 anchors.margins: 7
                                 clip: true
                                 spacing: 4
                                 model: backend.historyResults
-                                delegate: Label {
+                                delegate: ItemDelegate {
+                                    required property int index
                                     required property var modelData
+                                    objectName: "chatHistoryResult_" + index
                                     width: ListView.view.width
-                                    text: modelData.speaker + "：" + modelData.content
-                                    color: modelData.role === "user" ? "#6f6256" : "#596f6a"
-                                    elide: Text.ElideRight
+                                    height: 74
+                                    enabled: !backend.chatBusy
+                                    Accessible.name: "回到对话：" + modelData.content
+                                    contentItem: Column {
+                                        spacing: 5
+                                        Label {
+                                            width: parent.width
+                                            text: modelData.speaker + " · " + String(modelData.createdAt).slice(0, 10)
+                                            color: "#858a91"; font.pixelSize: 11
+                                            textFormat: Text.PlainText
+                                        }
+                                        Label {
+                                            width: parent.width
+                                            text: modelData.content
+                                            color: "#424852"; font.pixelSize: 13
+                                            textFormat: Text.PlainText
+                                            wrapMode: Text.Wrap; maximumLineCount: 2
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                    background: Rectangle { radius: 8; color: parent.hovered ? "#e8e5e9" : "transparent" }
+                                    onClicked: {
+                                        if (backend.openHistoryMessage(modelData.conversationId, modelData.messageId))
+                                            chatWindow.historySearchOpen = false
+                                    }
                                 }
                             }
                         }
                         RowLayout {
                             Layout.fillWidth: true
+                            visible: backend.chatPage.hasOlder || backend.chatPage.hasNewer
+                            enabled: !backend.chatBusy
+                            LiliesPaperButton {
+                                objectName: "chatOlderPageButton"
+                                text: "更早"; flat: true; enabled: backend.chatPage.hasOlder
+                                onClicked: backend.browseChatPage("older")
+                            }
+                            Label {
+                                Layout.fillWidth: true; elide: Text.ElideRight
+                                text: backend.chatPage.hasNewer ? "正在看旧记录" : "已到最近的对话"
+                                font.pixelSize: 12; color: "#858a91"
+                            }
+                            LiliesPaperButton {
+                                objectName: "chatNewerPageButton"
+                                text: "较新"; flat: true; enabled: backend.chatPage.hasNewer
+                                onClicked: backend.browseChatPage("newer")
+                            }
+                            LiliesPaperButton {
+                                text: "回到最近"; flat: true; visible: backend.chatPage.hasNewer
+                                onClicked: backend.browseChatPage("latest")
+                            }
+                        }
+                        Dialog {
+                            id: previousReplies
+                            objectName: "chatPreviousRepliesDialog"
+                            title: "之前的回答"
+                            modal: true; focus: true
+                            width: Math.min(chatWindow.width - 48, 560)
+                            height: Math.min(chatWindow.height - 80, 540)
+                            anchors.centerIn: parent
+                            standardButtons: Dialog.Close
+                            contentItem: ListView {
+                                clip: true; spacing: 24
+                                model: backend.replyRevisions
+                                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                                delegate: Column {
+                                    required property var modelData
+                                    width: ListView.view.width - 12
+                                    spacing: 8
+                                    Label { text: String(modelData.archived_at).slice(0, 16).replace("T", " "); color: "#858a91"; font.pixelSize: 12 }
+                                    TextEdit {
+                                        width: parent.width; text: modelData.content
+                                        textFormat: TextEdit.PlainText; wrapMode: TextEdit.Wrap
+                                        readOnly: true; selectByMouse: true
+                                        font.pixelSize: 15; color: "#424852"
+                                    }
+                                }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
                             visible: backend.chatBusy
                             Rectangle {
                                 Layout.preferredWidth: 11
@@ -4458,11 +4766,17 @@ Window {
                             }
                         }
                         ChatTimelineView {
+                            id: conversationTimeline
                             objectName: "chatTimelineView"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             timelineModel: backend.chatTimeline
                             busy: backend.chatBusy
+                            onSaveLetterRequested: function(messageId, text) { backend.sharedWorld.saveLetter(messageId, text) }
+                            Connections {
+                                target: backend
+                                function onChatPositionRequested(index) { conversationTimeline.focusRow(index) }
+                            }
                         }
                         Rectangle {
                             id: toolConfirmation
@@ -4500,14 +4814,14 @@ Window {
                                 var value = promptInput.text.trim()
                                 if (!value || backend.chatBusy)
                                     return
-                                backend.sendMessage(value)
+                                if (backend.sendMessage(value) === false) return
                                 promptInput.clear()
                                 Qt.callLater(function() { promptInput.forceActiveFocus() })
                             }
                             TextArea {
                                 id: promptInput
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: Math.max(74, Math.min(132, contentHeight + topPadding + bottomPadding + 8))
+                                Layout.preferredHeight: Math.max(86, Math.min(150, contentHeight + topPadding + bottomPadding + 8))
                                 objectName: "chatPromptInput"
                                 placeholderText: "说点什么…"
                                 wrapMode: Text.Wrap
@@ -4518,7 +4832,7 @@ Window {
                                 font.family: "Microsoft YaHei UI"
                                 font.pixelSize: 16
                                 font.weight: Font.Normal
-                                padding: 12
+                                padding: 16
                                 background: Rectangle {
                                     color: "#ffffff"
                                     radius: 14
@@ -4536,9 +4850,10 @@ Window {
                             }
                             LiliesPaperButton {
                                 objectName: "chatSendButton"
-                                selected: true
-                                implicitWidth: 62
-                                implicitHeight: 42
+                                primary: true
+                                enabled: backend.chatBusy || promptInput.text.trim().length > 0
+                                implicitWidth: 68
+                                implicitHeight: 44
                                 text: backend.chatBusy ? "停止" : "发送"
                                 onClicked: {
                                     if (backend.chatBusy) backend.cancelMessage()
@@ -4624,107 +4939,41 @@ Window {
                         }
                     }
 
-                    ColumnLayout {
-                        spacing: 10
-                        Label {
-                            Layout.fillWidth: true
-                            text: "只有你主动收进盒子的选区会保存在这里；阅读卡不会自动进入主对话或长期记忆。"
-                            wrapMode: Text.Wrap
-                            color: "#6f675e"
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            TextField {
-                                id: readingQuery
-                                Layout.fillWidth: true
-                                placeholderText: "搜索原文、解释、追问或标题"
-                                onAccepted: backend.searchReadingCards(text, readingKind.currentValue)
-                                onTextChanged: if (!text) backend.searchReadingCards("", readingKind.currentValue)
-                            }
-                            ComboBox {
-                                id: readingKind
-                                Layout.preferredWidth: 112
-                                textRole: "text"
-                                valueRole: "value"
-                                model: [
-                                    { text: "全部", value: "" },
-                                    { text: "简释", value: "explain" },
-                                    { text: "翻译", value: "translate" },
-                                    { text: "术语", value: "term" },
-                                    { text: "追问", value: "ask" }
-                                ]
-                                onActivated: backend.searchReadingCards(readingQuery.text, currentValue)
-                            }
-                            Button { text: "搜索"; onClicked: backend.searchReadingCards(readingQuery.text, readingKind.currentValue) }
-                        }
-                        ListView {
-                            id: readingCardList
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            clip: true
-                            spacing: 8
-                            model: backend.readingItems
-                            delegate: Rectangle {
-                                required property var modelData
-                                width: ListView.view.width
-                                height: 132
-                                radius: 8
-                                color: "#fffdf8"
-                                border.color: "#d1c3ae"
-                                border.width: 1
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 11
-                                    spacing: 4
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        Label {
-                                            text: ({ explain: "简释", translate: "翻译", term: "术语", ask: "追问" })[modelData.kind] || modelData.kind
-                                            color: "#a9473e"
-                                            font.pixelSize: 11
-                                        }
-                                        Label {
-                                            Layout.fillWidth: true
-                                            text: modelData.title
-                                            color: "#4d4a45"
-                                            font.bold: true
-                                            elide: Text.ElideRight
-                                        }
-                                        Button { text: "删除"; flat: true; onClicked: backend.deleteReadingCard(modelData.card_id) }
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: modelData.source_text
-                                        color: "#8a8177"
-                                        font.pixelSize: 11
-                                        maximumLineCount: 2
-                                        elide: Text.ElideRight
-                                        wrapMode: Text.Wrap
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        Layout.fillHeight: true
-                                        text: modelData.answer
-                                        color: "#514c46"
-                                        font.pixelSize: 13
-                                        maximumLineCount: 3
-                                        elide: Text.ElideRight
-                                        wrapMode: Text.Wrap
-                                    }
-                                }
-                            }
-                            Label {
-                                anchors.centerIn: parent
-                                visible: readingCardList.count === 0
-                                text: "还没有收进盒子的论文卡片"
-                                color: "#9b9287"
-                            }
-                        }
+                    PaperDesk {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        appBackend: backend
                     }
 
+                    ColumnLayout {
+                        spacing: 18
+                        SettingsNavigation {
+                            id: companionNavigation
+                            objectName: "companionNavigation"
+                            heading: "陪伴"
+                            sections: [
+                                {id: "daily", title: "日常陪伴"},
+                                {id: "frequency", title: "出现频率"},
+                                {id: "interests", title: "聊些什么"},
+                                {id: "observation", title: "屏幕与隐私"},
+                                {id: "sources", title: "内容来源"}
+                            ]
+                            entries: [
+                                {id: "companion", section: "daily", title: "主动陪伴", keywords: "启用 关闭 暂停 未读 气泡"},
+                                {id: "frequency", section: "frequency", title: "出现频率", keywords: "自定义 分钟 每日 上限 次数 安静 活泼"},
+                                {id: "diagnostics", section: "observation", title: "观察状态", keywords: "截图 模型 检测 等待 运行 记录 状态 失败 未读"},
+                                {id: "policy", section: "observation", title: "应用策略", keywords: "静默 保护 黑名单 浏览器"},
+                                {id: "interests", section: "interests", title: "兴趣、场景与内容", keywords: "话题 吐槽 科普 新闻 世界观 权重"},
+                                {id: "memory", section: "observation", title: "智能观察与本地记忆", keywords: "截图 隐私 授权 保存 忘记"},
+                                {id: "sources", section: "sources", title: "实时内容源", keywords: "订阅 RSS 新闻 论文 更新"}
+                            ]
+                            onFilterChanged: Qt.callLater(function() { companionSettingsScroll.contentItem.contentY = 0 })
+                        }
                     ScrollView {
                         id: companionSettingsScroll
                         objectName: "companionSettingsPage"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
                         Layout.minimumWidth: 0
                         clip: true
                         // Basic Controls uses an overlay scrollbar. Reserve its
@@ -4734,7 +4983,12 @@ Window {
                         rightPadding: 9
                         contentWidth: availableWidth
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                        ScrollBar.vertical: LiliesPaperScrollBar { }
+                        ScrollBar.vertical: LiliesPaperScrollBar {
+                            parent: companionSettingsScroll
+                            x: companionSettingsScroll.width - width
+                            y: companionSettingsScroll.topPadding
+                            height: companionSettingsScroll.availableHeight
+                        }
                         function formatAutomaticWait(secondsValue) {
                             var total = Math.max(0, Math.ceil(Number(secondsValue || 0)))
                             var minutes = Math.floor(total / 60)
@@ -4785,7 +5039,7 @@ Window {
                         property int customMinutesDraft: 25
                         property int customDailyDraft: 12
                         function backendFrequencySnapshot() {
-                            var preferences = backend.companionService.preferences || ({})
+                            var preferences = desktop.companionPreferences || ({})
                             var savedMode = String(preferences.frequency || "balanced")
                             var rememberedMinimum = Number(
                                 preferences.customMinimumMinutes)
@@ -4992,15 +5246,17 @@ Window {
 
                             PaperSection {
                                 title: "主动陪伴"
+                                visible: companionNavigation.matches("companion")
                                 Layout.fillWidth: true
                                 ColumnLayout {
                                     width: parent.width
+                                    spacing: 14
                                     Rectangle {
                                         objectName: "companionModeSummary"
                                         Layout.fillWidth: true
                                         implicitHeight: companionModeSummaryColumn.implicitHeight + 20
                                         radius: 10
-                                        color: "#f7f3eb"
+                                        color: "#f6f7f9"
                                         border.color: desktop.hairlineColor
                                         ColumnLayout {
                                             id: companionModeSummaryColumn
@@ -5012,43 +5268,43 @@ Window {
                                             spacing: 7
                                             RowLayout {
                                                 Layout.fillWidth: true
-                                                Label {
-                                                    text: "主动陪伴运行模式"
+                                                PaperLabel {
+                                                    text: "日常陪伴"
                                                     color: desktop.inkColor
                                                     font.bold: true
                                                 }
                                                 Item { Layout.fillWidth: true }
-                                                Label {
+                                                PaperLabel {
                                                     objectName: "companionRunModeLabel"
-                                                    text: !Boolean(backend.companionService.activityStatus.configuredEnabled)
+                                                    text: !Boolean(desktop.companionStatus.configuredEnabled)
                                                           ? "已关闭"
-                                                          : (Boolean(backend.companionService.activityStatus.paused)
+                                                          : (Boolean(desktop.companionStatus.paused)
                                                              ? "已暂停" : "运行中")
-                                                    color: !Boolean(backend.companionService.activityStatus.configuredEnabled)
-                                                           || Boolean(backend.companionService.activityStatus.paused)
+                                                    color: !Boolean(desktop.companionStatus.configuredEnabled)
+                                                           || Boolean(desktop.companionStatus.paused)
                                                            ? "#8b6b58" : desktop.focusColor
                                                     font.bold: true
                                                 }
                                             }
                                             RowLayout {
                                                 Layout.fillWidth: true
-                                                Label {
+                                                PaperLabel {
                                                     text: "智能屏幕理解"
                                                     color: desktop.inkColor
                                                     font.bold: true
                                                 }
                                                 Item { Layout.fillWidth: true }
-                                                Label {
+                                                PaperLabel {
                                                     objectName: "companionSmartObservationStatusLabel"
-                                                    text: Boolean(backend.companionService.activityStatus.smartObservationEnabled)
+                                                    text: Boolean(desktop.companionStatus.smartObservationEnabled)
                                                           ? "已授权" : "未授权"
-                                                    color: Boolean(backend.companionService.activityStatus.smartObservationEnabled)
+                                                    color: Boolean(desktop.companionStatus.smartObservationEnabled)
                                                            ? desktop.focusColor : "#8b6b58"
                                                     font.bold: true
                                                 }
-                                                Button {
+                                                LiliesPaperButton {
                                                     objectName: "companionSmartObservationAuthorizeButton"
-                                                    visible: !Boolean(backend.companionService.activityStatus.smartObservationEnabled)
+                                                    visible: !Boolean(desktop.companionStatus.smartObservationEnabled)
                                                     text: "了解并授权"
                                                     flat: true
                                                     onClicked: smartObservationConfirm.open()
@@ -5058,39 +5314,54 @@ Window {
                                     }
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        Button {
+                                        Switch {
+                                            objectName: "companionActivityEnabledSwitch"
+                                            text: "主动说话"
+                                            checked: Boolean(desktop.companionStatus.enabled)
+                                            onClicked: backend.companionService.setActivityEnabled(checked)
+                                        }
+                                        Switch {
+                                            objectName: "companionPauseSwitch"
+                                            text: "暂停感知"
+                                            checked: Boolean(desktop.companionStatus.paused)
+                                            onClicked: backend.companionService.setPaused(checked)
+                                        }
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        LiliesPaperButton {
                                             objectName: "companionRequestNowButton"
                                             text: backend.companionService.busy
-                                                  ? "正在整理…" : "生成一条场景陪伴"
+                                                  ? "正在想…" : "来聊一句"
                                             enabled: !backend.companionService.busy
-                                                     && !Boolean(backend.companionService.activityStatus.modalityProbeBusy)
+                                                     && !Boolean(desktop.companionStatus.modalityProbeBusy)
                                             onClicked: backend.companionService.requestNow()
                                         }
-                                        Label {
+                                        PaperLabel {
                                             Layout.fillWidth: true
                                             text: String(
-                                                backend.companionService.activityStatus.observationModeLabel
+                                                desktop.companionStatus.observationModeLabel
                                                 || "应用感知状态未知")
                                             color: Boolean(
-                                                backend.companionService.activityStatus.configuredEnabled)
+                                                desktop.companionStatus.configuredEnabled)
                                                 && !Boolean(
-                                                    backend.companionService.activityStatus.paused)
+                                                    desktop.companionStatus.paused)
                                                 ? desktop.focusColor : "#8b6b58"
                                             wrapMode: Text.Wrap
                                         }
                                     }
-                                    Label {
+                                    PaperLabel {
                                         objectName: "companionRequestNowHint"
                                         Layout.fillWidth: true
-                                        text: "这是只使用当前应用类别的场景级生成，不截图，也不是截图能力测试；仍会遵守暂停与敏感窗口静默。"
+                                        text: "只看应用类别，不截图。暂停或敏感界面下不会出现。"
                                         color: "#746f67"
-                                        font.pixelSize: 11
+                                        font.pixelSize: 12
                                         lineHeight: 1.2
                                         wrapMode: Text.Wrap
                                     }
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        Button {
+                                        LiliesPaperButton {
                                             objectName: "companionRequestScreenNowButton"
                                             text: "观察当前窗口一次"
                                             enabled: Boolean(
@@ -5104,14 +5375,41 @@ Window {
                                         }
                                         Item { Layout.fillWidth: true }
                                     }
-                                    Label {
+                                    PaperLabel {
                                         objectName: "companionRequestScreenNowHint"
                                         Layout.fillWidth: true
-                                        text: "只截取一次当前的非浏览器活动窗口；若授权、隐私规则、窗口状态或图像能力检查不通过，就直接失败，绝不退回泛化文字。点击后会先收起此窗口，约 350 毫秒后再观察，让原应用恢复前台。"
+                                        text: "需先授权。收起此页后，只观察当前的非浏览器窗口；检查不通过时不发送。"
                                         color: "#746f67"
-                                        font.pixelSize: 11
+                                        font.pixelSize: 12
                                         lineHeight: 1.2
                                         wrapMode: Text.Wrap
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 12
+                                        Label { text: "气泡依据"; font.pixelSize: 12; color: "#7c8491" }
+                                        ContextLabel {
+                                            objectName: "companionLatestBasisLabel"
+                                            Layout.fillWidth: true
+                                            evidence: desktop.companionStatus.bubbleEvidence || ({})
+                                            extraDetail: "这条气泡的依据，与是否已授权截图是两回事。"
+                                        }
+                                        LiliesPaperButton {
+                                            objectName: "companionProvidedTextButton"
+                                            text: "给她一段文字"
+                                            onClicked: providedTextDialog.open()
+                                        }
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 12
+                                        Label { text: "最近截图请求"; font.pixelSize: 12; color: "#7c8491" }
+                                        ContextLabel {
+                                            objectName: "companionCaptureBasisLabel"
+                                            Layout.fillWidth: true
+                                            evidence: desktop.companionStatus.captureEvidence || ({})
+                                            extraDetail: "这是最近一次截图请求的记录，不代表正在持续观看。"
+                                        }
                                     }
                                     Rectangle {
                                         objectName: "companionRequestFeedback"
@@ -5120,17 +5418,17 @@ Window {
                                         radius: 9
                                         color: {
                                             var kind = String(
-                                                backend.companionService.activityStatus.requestFeedbackKind
+                                                desktop.companionStatus.requestFeedbackKind
                                                 || "ready")
                                             if (kind === "quiet" || kind === "warning")
                                                 return "#fbf1e8"
                                             if (kind === "shown")
                                                 return "#edf5f0"
-                                            return "#f6f2eb"
+                                            return "#f5f6f8"
                                         }
                                         border.color: {
                                             var kind = String(
-                                                backend.companionService.activityStatus.requestFeedbackKind
+                                                desktop.companionStatus.requestFeedbackKind
                                                 || "ready")
                                             if (kind === "quiet" || kind === "warning")
                                                 return "#dfc1a8"
@@ -5138,7 +5436,7 @@ Window {
                                                 return "#bfd1c7"
                                             return desktop.hairlineColor
                                         }
-                                        Label {
+                                        PaperLabel {
                                             id: companionRequestFeedbackText
                                             objectName: "companionRequestFeedbackText"
                                             anchors.left: parent.left
@@ -5147,34 +5445,130 @@ Window {
                                             anchors.leftMargin: 10
                                             anchors.rightMargin: 10
                                             text: String(
-                                                backend.companionService.activityStatus.requestFeedback
+                                                desktop.companionStatus.requestFeedback
                                                 || "主动陪伴已就绪")
-                                            color: "#665f57"
+                                            color: "#767e89"
                                             font.pixelSize: 12
                                             lineHeight: 1.18
                                             wrapMode: Text.Wrap
                                         }
                                     }
-                                    Label {
+                                }
+                            }
+                            PaperSection {
+                                objectName: "companionObservationCard"
+                                title: "观察状态"
+                                visible: companionNavigation.matches("diagnostics")
+                                Layout.fillWidth: true
+                                ColumnLayout {
+                                    width: parent.width
+                                    spacing: 14
+                                    PaperLabel {
+                                        objectName: "companionObservationSummary"
+                                        Layout.fillWidth: true
+                                        text: "当前 · " + String(desktop.companionStatus.stateLabel || "等待")
+                                        font.pixelSize: 17
+                                        color: "#434852"
+                                        wrapMode: Text.Wrap
+                                    }
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        QuietAction {
+                                            objectName: "companionObservationConsentButton"
+                                            text: desktop.companionStatus.smartObservationEnabled
+                                                  ? "关闭截图授权" : "了解并授权截图"
+                                            onClicked: {
+                                                if (desktop.companionStatus.smartObservationEnabled)
+                                                    backend.companionService.authorizeSmartObservation(false)
+                                                else
+                                                    smartObservationConfirm.open()
+                                            }
+                                        }
+                                        Switch {
+                                            objectName: "companionObservationPauseSwitch"
+                                            text: "暂停感知"
+                                            checked: Boolean(desktop.companionStatus.paused)
+                                            onClicked: backend.companionService.setPaused(checked)
+                                        }
+                                    }
+                                    PaperLabel {
+                                        objectName: "companionObservationRecentContext"
+                                        Layout.fillWidth: true
+                                        text: "最近发送 · " + String(desktop.companionStatus.lastContextLabel || "尚未发送")
+                                        wrapMode: Text.Wrap
+                                    }
+                                    PaperLabel {
+                                        objectName: "companionObservationPrivacySummary"
+                                        Layout.fillWidth: true
+                                        text: desktop.companionStatus.smartObservationEnabled
+                                              ? "截图已授权，不代表本次已截图。浏览器不截图；命中隐私规则时停止观察。"
+                                              : "截图未授权，只使用应用类别，不读取窗口正文。浏览器不截图；命中隐私规则时停止观察。"
+                                        font.pixelSize: 13
+                                        wrapMode: Text.Wrap
+                                    }
+                                    PaperLabel {
+                                        objectName: "companionObservationStateDetail"
+                                        Layout.fillWidth: true
+                                        visible: text.length > 0
+                                        text: String(desktop.companionStatus.stateDetail || "")
+                                        wrapMode: Text.Wrap
+                                    }
+                                    PaperLabel {
+                                        objectName: "companionObservationFailure"
+                                        Layout.fillWidth: true
+                                        property var captureStatus: desktop.companionStatus
+                                        visible: ["failed", "cancelled", "discarded", "skipped"].indexOf(
+                                                     String(captureStatus.lastCaptureOutcome || "never")) >= 0
+                                        text: "最近观察未完成 · " + String(captureStatus.lastCaptureReasonLabel || "展开记录查看原因")
+                                        color: "#985c69"
+                                        font.pixelSize: 13
+                                        wrapMode: Text.Wrap
+                                    }
+                                    QuietAction {
+                                        id: observationDetailsToggle
+                                        objectName: "companionObservationDetailsToggle"
+                                        text: checked ? "收起详细记录  −" : "展开详细记录  +"
+                                        checkable: true
+                                        selected: checked
+                                        Accessible.name: checked ? "收起观察详细记录" : "展开观察详细记录"
+                                    }
+                                    // Keep the existing evidence and controls alive when
+                                    // folded. Disclosure never changes privacy settings,
+                                    // resets a draft, starts a capture or calls a model.
+                                    ColumnLayout {
+                                    objectName: "companionObservationDetails"
+                                    Layout.fillWidth: true
+                                    spacing: 14
+                                    visible: observationDetailsToggle.checked
+                                    PaperLabel {
+                                        Layout.fillWidth: true
+                                        text: "单次观察会先收起此窗口，约 350 毫秒后让原应用恢复前台。授权、隐私、窗口状态或图像能力检查不通过时会停止，不用泛化文字冒充观察结果。"
+                                        color: "#818793"
+                                        font.pixelSize: 13
+                                        lineHeight: 1.4
+                                        wrapMode: Text.Wrap
+                                    }
+                                    PaperLabel {
                                         Layout.fillWidth: true
                                         text: String(
-                                            backend.companionService.activityStatus.observationModeDetail
+                                            desktop.companionStatus.observationModeDetail
                                             || "")
                                         color: "#746f67"
                                         wrapMode: Text.Wrap
                                     }
-                                    Label {
+                                    PaperLabel {
                                         Layout.fillWidth: true
                                         text: "自动出现条件 · 当前窗口稳定约 2 分钟，并在你停顿 6–60 秒时轻声出现。默认不截图、不读取划词或窗口正文。"
                                         color: "#8a8177"
-                                        font.pixelSize: 11
+                                        font.pixelSize: 12
                                         lineHeight: 1.2
                                         wrapMode: Text.Wrap
                                     }
-                                    Label {
+                                    PaperLabel {
                                         objectName: "companionEarliestAutomaticLabel"
                                         Layout.fillWidth: true
-                                        property var opportunity: backend.companionService.activityStatus.automaticOpportunity || ({})
+                                        property var opportunity: desktop.companionStatus.automaticOpportunity || ({})
                                         text: {
                                             if (Boolean(opportunity.available))
                                                 return "最早约 "
@@ -5196,48 +5590,36 @@ Window {
                                         font.bold: true
                                         wrapMode: Text.Wrap
                                     }
-                                    Label {
+                                    PaperLabel {
                                         objectName: "companionEarliestAutomaticCaveat"
                                         Layout.fillWidth: true
                                         text: "这是三个等待条件给出的最早估计，不承诺届时一定触发；还要遇到自然停顿和非敏感窗口。"
                                         color: "#8a8177"
-                                        font.pixelSize: 11
+                                        font.pixelSize: 12
                                         lineHeight: 1.2
                                         wrapMode: Text.Wrap
                                     }
-                                    Switch {
-                                        objectName: "companionActivityEnabledSwitch"
-                                        text: "根据当前应用与自然停顿主动说话"
-                                        checked: Boolean(backend.companionService.activityStatus.enabled)
-                                        onClicked: backend.companionService.setActivityEnabled(checked)
-                                    }
-                                    Switch {
-                                        objectName: "companionPauseSwitch"
-                                        text: "暂时暂停感知"
-                                        checked: Boolean(backend.companionService.activityStatus.paused)
-                                        onClicked: backend.companionService.setPaused(checked)
-                                    }
-                                    Label {
+                                    PaperLabel {
                                         Layout.fillWidth: true
                                         text: "状态 · " + String(
-                                                  backend.companionService.activityStatus.stateLabel || "等待")
-                                              + (backend.companionService.activityStatus.stateDetail
-                                                 ? ("\n" + String(backend.companionService.activityStatus.stateDetail))
+                                                  desktop.companionStatus.stateLabel || "等待")
+                                              + (desktop.companionStatus.stateDetail
+                                                 ? ("\n" + String(desktop.companionStatus.stateDetail))
                                                  : "")
                                               + "\n最近一次 · " + String(
-                                                  backend.companionService.activityStatus.lastContextLabel
+                                                  desktop.companionStatus.lastContextLabel
                                                   || "尚未发送")
                                         color: "#746f67"
                                         wrapMode: Text.Wrap
                                     }
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        Label {
+                                        PaperLabel {
                                             objectName: "companionLastCaptureStatusLabel"
                                             Layout.fillWidth: true
                                             Layout.minimumWidth: 0
                                             text: {
-                                                var status = backend.companionService.activityStatus
+                                                var status = desktop.companionStatus
                                                 var outcome = String(status.lastCaptureOutcome || "never")
                                                 var outcomeLabels = {
                                                     "used": "模型已采用",
@@ -5288,23 +5670,23 @@ Window {
                                         }
                                         LiliesPaperButton {
                                             objectName: "companionModalityRecheckButton"
-                                            text: Boolean(backend.companionService.activityStatus.modalityProbeBusy)
+                                            text: Boolean(desktop.companionStatus.modalityProbeBusy)
                                                   ? "检测中…" : "重新检测图像能力"
-                                            enabled: Boolean(backend.companionService.activityStatus.smartObservationEnabled)
-                                                     && !Boolean(backend.companionService.activityStatus.modalityProbeBusy)
+                                            enabled: Boolean(desktop.companionStatus.smartObservationEnabled)
+                                                     && !Boolean(desktop.companionStatus.modalityProbeBusy)
                                                      && !backend.companionService.busy
                                             onClicked: backend.companionService.retrySmartObservationProbe()
                                         }
                                     }
-                                    Label {
+                                    PaperLabel {
                                         objectName: "companionLastCapturePresentationStatusLabel"
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         visible: String(
-                                                     backend.companionService.activityStatus
+                                                     desktop.companionStatus
                                                      .lastCaptureOutcome || "never") !== "never"
                                         text: {
-                                            var status = backend.companionService.activityStatus
+                                            var status = desktop.companionStatus
                                             var presentation = String(
                                                 status.lastCapturePresentationLabel
                                                 || "最终呈现状态未知")
@@ -5315,31 +5697,31 @@ Window {
                                                        ? (" · " + reason) : "")
                                         }
                                         color: "#746f67"
-                                        font.pixelSize: 11
+                                        font.pixelSize: 12
                                         lineHeight: 1.2
                                         wrapMode: Text.Wrap
                                     }
                                     RowLayout {
                                         objectName: "companionDeliveryStatusRow"
                                         Layout.fillWidth: true
-                                        Label {
+                                        PaperLabel {
                                             objectName: "companionDeliveryStatusLabel"
                                             Layout.fillWidth: true
                                             text: "投递 · " + companionSettingsScroll.formatCompanionDelivery(
-                                                      backend.companionService.deliveryStatus)
-                                            color: Number(backend.companionService.deliveryStatus.unreadCount || 0) > 0
+                                                      desktop.companionDelivery)
+                                            color: Number(desktop.companionDelivery.unreadCount || 0) > 0
                                                    ? "#8b5f3f" : "#746f67"
                                             font.bold: Number(
-                                                backend.companionService.deliveryStatus.unreadCount || 0) > 0
+                                                desktop.companionDelivery.unreadCount || 0) > 0
                                             wrapMode: Text.Wrap
                                         }
                                         LiliesPaperButton {
                                             objectName: "companionReopenUnreadButton"
                                             text: "重新显示未读"
                                             enabled: Number(
-                                                backend.companionService.deliveryStatus.unreadCount || 0) > 0
+                                                desktop.companionDelivery.unreadCount || 0) > 0
                                                 && !Boolean(
-                                                    backend.companionService.deliveryStatus.suppressed)
+                                                    desktop.companionDelivery.suppressed)
                                             onClicked: backend.companionService.reopenUnread()
                                         }
                                         LiliesPaperButton {
@@ -5347,26 +5729,36 @@ Window {
                                             text: "标记已读"
                                             flat: true
                                             enabled: Number(
-                                                backend.companionService.deliveryStatus.unreadCount || 0) > 0
+                                                desktop.companionDelivery.unreadCount || 0) > 0
                                             onClicked: backend.companionService.markUnreadRead()
                                         }
                                     }
-                                    Label {
+                                    PaperLabel {
                                         objectName: "companionDeliveryPrivacyHint"
                                         Layout.fillWidth: true
                                         text: "这里只显示投递状态和未读数量，不显示气泡正文或窗口标题。"
                                         color: "#8a8177"
-                                        font.pixelSize: 11
+                                        font.pixelSize: 12
                                         wrapMode: Text.Wrap
                                     }
+                                    }
+                                }
+                            }
+                            PaperSection {
+                                title: "出现频率"
+                                visible: companionNavigation.matches("frequency")
+                                Layout.fillWidth: true
+                                ColumnLayout {
+                                    width: parent.width
+                                    spacing: 14
                                     GridLayout {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         columns: 2
                                         columnSpacing: 10
-                                        rowSpacing: 7
-                                        Label { text: "频率" }
-                                        ComboBox {
+                                        rowSpacing: 14
+                                        PaperLabel { text: "频率" }
+                                        PaperComboBox {
                                             id: companionFrequency
                                             objectName: "companionFrequencyDraft"
                                             Layout.fillWidth: true
@@ -5391,7 +5783,7 @@ Window {
                                                     model[index])
                                             }
                                         }
-                                        Label {
+                                        PaperLabel {
                                             Layout.columnSpan: 2
                                             Layout.fillWidth: true
                                             Layout.minimumWidth: 0
@@ -5401,30 +5793,31 @@ Window {
                                                      ? String(companionSettingsScroll.customMinutesDraft)
                                                        + " 分钟 / 日 "
                                                        + String(companionSettingsScroll.customDailyDraft)
-                                                       + " 条 · 应用后生效"
-                                                     : String(backend.companionService.preferences.minimumMinutes)
+                                                       + " 条"
+                                                       + (companionSettingsScroll.frequencyDraftDirty ? " · 应用后生效" : " · 已保存")
+                                                     : String(desktop.companionPreferences.minimumMinutes)
                                                        + " 分钟 / 日 "
-                                                       + String(backend.companionService.preferences.dailyLimit) + " 条")
+                                                       + String(desktop.companionPreferences.dailyLimit) + " 条")
                                             color: "#746f67"
                                             wrapMode: Text.Wrap
                                         }
                                     }
-                                    Label {
+                                    PaperLabel {
                                         objectName: "companionFrequencySaveError"
                                         Layout.fillWidth: true
                                         visible: companionSettingsScroll.frequencyDraftError.length > 0
                                         text: companionSettingsScroll.frequencyDraftError
                                         color: "#9b4638"
-                                        font.pixelSize: 11
+                                        font.pixelSize: 12
                                         wrapMode: Text.Wrap
                                     }
-                                    Label {
+                                    PaperLabel {
                                         objectName: "companionFrequencyConflictNotice"
                                         Layout.fillWidth: true
                                         visible: companionSettingsScroll.frequencyDraftConflict
                                         text: "频率已在其他位置更新。你的修改仍保留，普通“应用”不会覆盖新设置；可恢复最新设置，或明确选择“仍然应用”。"
                                         color: "#9b4638"
-                                        font.pixelSize: 11
+                                        font.pixelSize: 12
                                         wrapMode: Text.Wrap
                                     }
                                     GridLayout {
@@ -5434,8 +5827,8 @@ Window {
                                         columns: 2
                                         columnSpacing: 10
                                         rowSpacing: 7
-                                        Label { text: "最短间隔" }
-                                        SpinBox {
+                                        PaperLabel { text: "最短间隔" }
+                                        PaperNumber {
                                             id: customCompanionMinutes
                                             objectName: "customCompanionMinutesDraft"
                                             Layout.fillWidth: true
@@ -5469,15 +5862,15 @@ Window {
                                                 }
                                             }
                                             background: Rectangle {
-                                                color: "#fffaf2"
+                                                color: "#f5f6f8"
                                                 radius: 8
                                                 border.width: customCompanionMinutes.activeFocus ? 2 : 1
                                                 border.color: customCompanionMinutes.activeFocus
                                                               ? desktop.focusColor : desktop.hairlineColor
                                             }
                                         }
-                                        Label { text: "每日上限" }
-                                        SpinBox {
+                                        PaperLabel { text: "每日上限" }
+                                        PaperNumber {
                                             id: customCompanionDaily
                                             objectName: "customCompanionDailyDraft"
                                             Layout.fillWidth: true
@@ -5511,19 +5904,19 @@ Window {
                                                 }
                                             }
                                             background: Rectangle {
-                                                color: "#fffaf2"
+                                                color: "#f5f6f8"
                                                 radius: 8
                                                 border.width: customCompanionDaily.activeFocus ? 2 : 1
                                                 border.color: customCompanionDaily.activeFocus
                                                               ? desktop.focusColor : desktop.hairlineColor
                                             }
                                         }
-                                        Label {
+                                        PaperLabel {
                                             Layout.columnSpan: 2
                                             Layout.fillWidth: true
                                             text: "允许范围 · 5–180 分钟 / 每日 1–50 条；应用或离开输入框时校正"
                                             color: "#8a8177"
-                                            font.pixelSize: 11
+                                            font.pixelSize: 12
                                             wrapMode: Text.Wrap
                                         }
                                         RowLayout {
@@ -5532,6 +5925,7 @@ Window {
                                             LiliesPaperButton {
                                                 objectName: "applyCustomCompanionFrequency"
                                                 text: "应用"
+                                                primary: enabled
                                                 enabled: companionSettingsScroll.frequencyDraftDirty
                                                 onClicked: companionSettingsScroll.applyCustomFrequencyDraft()
                                             }
@@ -5560,18 +5954,19 @@ Window {
                             PaperSection {
                                 objectName: "companionApplicationPolicyGroup"
                                 title: "应用策略"
+                                visible: companionNavigation.matches("policy")
                                 Layout.fillWidth: true
                                 ColumnLayout {
                                     width: parent.width
                                     spacing: 8
-                                    Label {
+                                    PaperLabel {
                                         Layout.fillWidth: true
                                         text: "这里只显示脱敏后的应用标识与当前策略，不显示窗口标题或内容。安全敏感应用的默认静默不能被放宽。"
                                         color: "#8b6b58"
-                                        font.pixelSize: 11
+                                        font.pixelSize: 12
                                         wrapMode: Text.Wrap
                                     }
-                                    Label {
+                                    PaperLabel {
                                         objectName: "companionApplicationPolicyEmpty"
                                         Layout.fillWidth: true
                                         visible: Number(
@@ -5600,7 +5995,7 @@ Window {
                                                 ColumnLayout {
                                                     Layout.fillWidth: true
                                                     spacing: 2
-                                                    Label {
+                                                    PaperLabel {
                                                         objectName: "companionApplicationPolicyIdentity_"
                                                                     + index
                                                         Layout.fillWidth: true
@@ -5610,7 +6005,7 @@ Window {
                                                         elide: Text.ElideMiddle
                                                         maximumLineCount: 1
                                                     }
-                                                    Label {
+                                                    PaperLabel {
                                                         objectName: "companionApplicationPolicyValue_"
                                                                     + index
                                                         Layout.fillWidth: true
@@ -5622,7 +6017,7 @@ Window {
                                                         maximumLineCount: 1
                                                     }
                                                 }
-                                                Button {
+                                                LiliesPaperButton {
                                                     objectName: "companionApplicationPolicyAllow_"
                                                                 + index
                                                     text: "允许气泡"
@@ -5632,7 +6027,7 @@ Window {
                                                                    String(modelData.application),
                                                                    "bubble")
                                                 }
-                                                Button {
+                                                LiliesPaperButton {
                                                     objectName: "companionApplicationPolicyReset_"
                                                                 + index
                                                     text: "恢复默认"
@@ -5648,50 +6043,51 @@ Window {
 
                             PaperSection {
                                 title: "兴趣、场景与内容"
+                                visible: companionNavigation.matches("interests")
                                 Layout.fillWidth: true
                                 ColumnLayout {
                                     width: parent.width
                                     RowLayout {
-                                        Label { text: "兴趣 " + Math.round(companionInterest.value) }
+                                        PaperLabel { text: "兴趣 " + Math.round(companionInterest.value) }
                                         Slider {
                                             id: companionInterest
                                             objectName: "companionInterestWeight"
                                             Layout.fillWidth: true
                                             from: 0; to: 100; stepSize: 1
-                                            value: backend.companionService.preferences.interestWeight === undefined
-                                                   || backend.companionService.preferences.interestWeight === null
+                                            value: desktop.companionPreferences.interestWeight === undefined
+                                                   || desktop.companionPreferences.interestWeight === null
                                                    ? 60
-                                                   : Number(backend.companionService.preferences.interestWeight)
+                                                   : Number(desktop.companionPreferences.interestWeight)
                                             onMoved: backend.companionService.setMix(
                                                 Math.round(value), Math.round(companionScene.value), Math.round(companionHalfLife.value))
                                         }
-                                        Label { text: "场景 " + Math.round(companionScene.value) }
+                                        PaperLabel { text: "场景 " + Math.round(companionScene.value) }
                                         Slider {
                                             id: companionScene
                                             objectName: "companionSceneWeight"
                                             Layout.fillWidth: true
                                             from: 0; to: 100; stepSize: 1
-                                            value: backend.companionService.preferences.sceneWeight === undefined
-                                                   || backend.companionService.preferences.sceneWeight === null
+                                            value: desktop.companionPreferences.sceneWeight === undefined
+                                                   || desktop.companionPreferences.sceneWeight === null
                                                    ? 40
-                                                   : Number(backend.companionService.preferences.sceneWeight)
+                                                   : Number(desktop.companionPreferences.sceneWeight)
                                             onMoved: backend.companionService.setMix(
                                                 Math.round(companionInterest.value), Math.round(value), Math.round(companionHalfLife.value))
                                         }
                                     }
                                     RowLayout {
-                                        Label { text: "场景动量半衰期" }
+                                        PaperLabel { text: "场景动量半衰期" }
                                         Slider {
                                             id: companionHalfLife
                                             Layout.fillWidth: true
                                             from: 5; to: 180; stepSize: 1
-                                            value: Number(backend.companionService.preferences.momentumHalfLifeMinutes || 30)
+                                            value: Number(desktop.companionPreferences.momentumHalfLifeMinutes || 30)
                                             onMoved: backend.companionService.setMix(
                                                 Math.round(companionInterest.value), Math.round(companionScene.value), Math.round(value))
                                         }
-                                        Label { text: Math.round(companionHalfLife.value) + " 分钟" }
+                                        PaperLabel { text: Math.round(companionHalfLife.value) + " 分钟" }
                                     }
-                                    TextField {
+                                    PaperTextField {
                                         id: companionInterests
                                         objectName: "companionInterestsDraft"
                                         Layout.fillWidth: true
@@ -5700,7 +6096,7 @@ Window {
                                         property bool draftDirty: false
                                         property bool draftSyncing: false
                                         function backendDraftText() {
-                                            var saved = backend.companionService.preferences.interests
+                                            var saved = desktop.companionPreferences.interests
                                             return saved ? saved.join("，") : ""
                                         }
                                         function syncDraftFromBackend(force) {
@@ -5755,7 +6151,7 @@ Window {
                                         delegate: RowLayout {
                                             required property var modelData
                                             property int savedWeight: {
-                                                var weights = backend.companionService.preferences.categoryWeights || ({})
+                                                var weights = desktop.companionPreferences.categoryWeights || ({})
                                                 return weights[modelData] === undefined ? 100 : Number(weights[modelData])
                                             }
                                             Layout.fillWidth: true
@@ -5770,7 +6166,7 @@ Window {
                                                 value: parent.savedWeight
                                                 onMoved: backend.companionService.setCategoryWeight(modelData, Math.round(value))
                                             }
-                                            Label { text: parent.savedWeight; color: "#746f67" }
+                                            PaperLabel { text: parent.savedWeight; color: "#746f67" }
                                         }
                                     }
                                 }
@@ -5778,50 +6174,51 @@ Window {
 
                             PaperSection {
                                 title: "智能观察与本地记忆"
+                                visible: companionNavigation.matches("memory")
                                 Layout.fillWidth: true
                                 ColumnLayout {
                                     width: parent.width
-                                    Button {
-                                        text: Boolean(backend.companionService.activityStatus.smartObservationEnabled)
+                                    LiliesPaperButton {
+                                        text: Boolean(desktop.companionStatus.smartObservationEnabled)
                                               ? "关闭智能屏幕观察"
                                               : "查看说明并授权智能屏幕观察"
                                         onClicked: {
-                                            if (Boolean(backend.companionService.activityStatus.smartObservationEnabled))
+                                            if (Boolean(desktop.companionStatus.smartObservationEnabled))
                                                 backend.companionService.authorizeSmartObservation(false)
                                             else
                                                 smartObservationConfirm.open()
                                         }
                                     }
-                                    Label {
+                                    PaperLabel {
                                         Layout.fillWidth: true
                                         text: "默认关闭。自动陪伴在窗口稳定、自然停顿且本地隐私规则允许时，才会尝试一次非浏览器活动窗口截图；最长边 1600px，并发送给你已登录的 ChatGPT/Codex 订阅中的 Luna 或 Terra，请求结束立即清理暂存。手动“生成一条场景陪伴”只使用应用类别，不截图。浏览器像素观察在 v0.3.36 暂不开放；命中已知密码、支付、会议、远程桌面、隐私浏览、UAC、受保护内容或全屏游戏规则时会静默。"
                                         color: "#8b6b58"
                                         wrapMode: Text.Wrap
                                     }
-                                    Button {
+                                    LiliesPaperButton {
                                         objectName: "companionBrowserSingleCaptureButton"
                                         enabled: false
                                         text: "浏览器像素观察暂不开放"
                                     }
-                                    Label {
+                                    PaperLabel {
                                         objectName: "companionBrowserCaptureWarning"
                                         Layout.fillWidth: true
                                         text: "普通网页、登录页与隐私窗口都不会进入像素截图路径。允许气泡的网页场景只提供“网页浏览”这一应用类别，不读取网页像素；隐私规则要求静默时则不会出现气泡。"
                                         color: "#8b5f3f"
                                         wrapMode: Text.Wrap
                                     }
-                                    Label {
+                                    PaperLabel {
                                         Layout.fillWidth: true
-                                        text: backend.companionService.activityStatus.modality
-                                              && backend.companionService.activityStatus.modality.imageModel
-                                              ? ("图像模型 · " + backend.companionService.activityStatus.modality.imageModel)
+                                        text: desktop.companionStatus.modality
+                                              && desktop.companionStatus.modality.imageModel
+                                              ? ("图像模型 · " + desktop.companionStatus.modality.imageModel)
                                               : "没有可用图像模型时，自动陪伴只使用应用级信号；单次窗口观察会直接失败，不生成泛化文字"
                                         color: "#746f67"
                                         wrapMode: Text.Wrap
                                     }
                                     RowLayout {
-                                        Label { text: "观察记忆" }
-                                        ComboBox {
+                                        PaperLabel { text: "观察记忆" }
+                                        PaperComboBox {
                                             Layout.preferredWidth: 230
                                             textRole: "text"
                                             valueRole: "value"
@@ -5831,7 +6228,7 @@ Window {
                                                 { text: "每次观察都记", value: "all" }
                                             ]
                                             currentIndex: {
-                                                var wanted = String(backend.companionService.preferences.screenMemoryMode || "significant")
+                                                var wanted = String(desktop.companionPreferences.screenMemoryMode || "significant")
                                                 for (var i = 0; i < model.length; ++i)
                                                     if (model[i].value === wanted) return i
                                                 return 1
@@ -5846,15 +6243,16 @@ Window {
 
                             PaperSection {
                                 title: "实时内容源"
+                                visible: companionNavigation.matches("sources")
                                 Layout.fillWidth: true
                                 ColumnLayout {
                                     width: parent.width
                                     Switch {
                                         text: "允许联网更新标题、来源、日期、链接与短摘要"
-                                        checked: Boolean(backend.companionService.activityStatus.onlineContentEnabled)
+                                        checked: Boolean(desktop.companionStatus.onlineContentEnabled)
                                         onClicked: backend.companionService.authorizeOnlineContent(checked)
                                     }
-                                    Label {
+                                    PaperLabel {
                                         Layout.fillWidth: true
                                         text: "默认关闭；不会保存完整文章。离线或来源过旧时，莉莉丝不会把内容称作“最新”。"
                                         color: "#8b6b58"
@@ -5862,12 +6260,12 @@ Window {
                                     }
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        TextField {
+                                        PaperTextField {
                                             id: customFeedLabel
                                             Layout.preferredWidth: 120
                                             placeholderText: "订阅名称"
                                         }
-                                        TextField {
+                                        PaperTextField {
                                             id: customFeedUrl
                                             Layout.fillWidth: true
                                             placeholderText: "RSS / Atom 地址"
@@ -5877,7 +6275,7 @@ Window {
                                                 clear()
                                             }
                                         }
-                                        Button {
+                                        LiliesPaperButton {
                                             text: "添加"
                                             onClicked: {
                                                 backend.companionService.addCustomSource(customFeedLabel.text, customFeedUrl.text)
@@ -5891,18 +6289,18 @@ Window {
                                         delegate: RowLayout {
                                             required property var modelData
                                             Layout.fillWidth: true
-                                            Label {
+                                            PaperLabel {
                                                 Layout.fillWidth: true
                                                 text: modelData.label
                                                 color: "#5f5952"
                                                 elide: Text.ElideRight
                                             }
-                                            Button {
+                                            LiliesPaperButton {
                                                 text: "更新"
-                                                enabled: Boolean(backend.companionService.activityStatus.onlineContentEnabled)
+                                                enabled: Boolean(desktop.companionStatus.onlineContentEnabled)
                                                 onClicked: backend.companionService.refreshSource(modelData.id)
                                             }
-                                            Button {
+                                            LiliesPaperButton {
                                                 visible: Boolean(modelData.custom)
                                                 text: "移除"
                                                 flat: true
@@ -5916,28 +6314,67 @@ Window {
                         }
                     }
 
+                    }
+
+                    ColumnLayout {
+                        spacing: 18
+                        SettingsNavigation {
+                            id: settingsNavigation
+                            objectName: "settingsNavigation"
+                            heading: "设置"
+                            sections: [
+                                {id: "daily", title: "常用功能"},
+                                {id: "pet", title: "莉莉丝"},
+                                {id: "desktop", title: "桌面"},
+                                {id: "model", title: "对话与阅读"},
+                                {id: "data", title: "数据与恢复"}
+                            ]
+                            entries: [
+                                {id: "library", section: "daily", title: "常用功能库", keywords: "菜单 固定 任务 专注 日历 Slack 看桌面 盒中世界 陪伴"},
+                                {id: "quick-search", section: "daily", title: "盒子快搜", keywords: "快捷键 搜索 应用 任务 论文 对话 提醒"},
+                                {id: "movement", section: "pet", title: "拖动与移动", keywords: "跟手 卡顿 鼠标 避让 自主移动"},
+                                {id: "floating", section: "pet", title: "显示位置", keywords: "置顶 窗口 桌宠 浮层 静默"},
+                                {id: "shell", section: "desktop", title: "桌面模式", keywords: "透明 桌宠 展开 桌面 外壳"},
+                                {id: "peek", section: "desktop", title: "看桌面／返回工作", keywords: "快捷键 窗口 恢复 最小化"},
+                                {id: "scene", section: "desktop", title: "动态桌面", keywords: "壁纸 图标 布局 电影 视频 初遇"},
+                                {id: "permission", section: "model", title: "操作权限", keywords: "Agent 确认 白名单 谨慎 标准 信任"},
+                                {id: "model", section: "model", title: "对话模型", keywords: "GPT 订阅 Luna Terra 0.5B 离线"},
+                                {id: "selection", section: "model", title: "论文划词", keywords: "阅读 解释 Luna 订阅 选区"},
+                                {id: "data", section: "data", title: "私有数据", keywords: "F盘 路径 迁移 记忆 聊天 缓存"},
+                                {id: "recovery", section: "data", title: "恢复", keywords: "退出 Windows 任务栏 登录 外壳 健康检查 紧急"}
+                            ]
+                            onFilterChanged: Qt.callLater(function() { mainSettingsScroll.contentItem.contentY = 0 })
+                        }
                     ScrollView {
                         id: mainSettingsScroll
                         objectName: "mainSettingsPage"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
                         Layout.minimumWidth: 0
                         clip: true
                         rightPadding: 9
                         contentWidth: availableWidth
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                        ScrollBar.vertical: LiliesPaperScrollBar { }
+                        ScrollBar.vertical: LiliesPaperScrollBar {
+                            parent: mainSettingsScroll
+                            x: mainSettingsScroll.width - width
+                            y: mainSettingsScroll.topPadding
+                            height: mainSettingsScroll.availableHeight
+                        }
                         ColumnLayout {
                         width: mainSettingsScroll.availableWidth
                         Layout.minimumWidth: 0
-                        spacing: 14
+                        spacing: 18
                         PaperSection {
                             id: desktopShellDiscoveryCard
                             objectName: "compactDesktopDiscoveryCard"
                             title: "桌面模式"
+                            visible: settingsNavigation.matches("shell")
                             Layout.fillWidth: true
                             ColumnLayout {
                                 width: parent.width
-                                spacing: 8
-                                Label {
+                                spacing: 14
+                                PaperLabel {
                                     objectName: "desktopShellDescription"
                                     Layout.fillWidth: true
                                     text: backend.shellMode === "compact"
@@ -5954,31 +6391,50 @@ Window {
                                         text: backend.shellMode === "compact" ? "展开莉莉丝桌面" : "收成透明桌宠"
                                         onClicked: backend.toggleDesktopShell()
                                     }
-                                    Label {
+                                    PaperLabel {
                                         Layout.fillWidth: true
                                         text: "已打开的应用保持原样。"
-                                        color: "#746f67"
+                                        color: "#7d8490"
                                         wrapMode: Text.Wrap
                                     }
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: "只想临时看看桌面？用“看桌面 / 返回工作”。"
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
                             }
                         }
                         PaperSection {
+                            title: "盒子快搜"
+                            visible: settingsNavigation.matches("quick-search")
+                            ColumnLayout {
+                                anchors.left: parent.left; anchors.right: parent.right
+                                spacing: 10
+                                PaperLabel { Layout.fillWidth: true; text: "找应用、任务、旧话和阅读卡，不用等待模型。"; wrapMode: Text.Wrap }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    PaperTextField { id: boxSearchHotkeyInput; objectName: "boxSearchHotkeyInput"; Layout.fillWidth: true
+                                        text: backend.boxSearchHotkey; placeholderText: "Ctrl+Alt+K"; onAccepted: backend.setBoxSearchHotkey(text) }
+                                    LiliesPaperButton { text: "保存"; onClicked: backend.setBoxSearchHotkey(boxSearchHotkeyInput.text) }
+                                    LiliesPaperButton { text: "打开"; onClicked: backend.openBoxSearch() }
+                                }
+                                PaperLabel { Layout.fillWidth: true; visible: backend.boxSearchHotkeyError !== ""
+                                    text: backend.boxSearchHotkeyError; color: "#995363"; wrapMode: Text.Wrap }
+                            }
+                        }
+                        PaperSection {
                             title: "常用功能库"
+                            visible: settingsNavigation.matches("library")
                             Layout.fillWidth: true
                             ColumnLayout {
                                 width: parent.width
-                                spacing: 8
-                                Label {
+                                spacing: 14
+                                PaperLabel {
                                     Layout.fillWidth: true
-                                    text: "再选最多 3 个，放在莉莉丝身边。用箭头调整顺序。"
-                                    color: "#746f67"
+                                    text: "点功能名称或“打开”即可使用；勾选最多 3 个，放在莉莉丝身边。"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
                                 RowLayout {
@@ -5992,7 +6448,7 @@ Window {
                                             radius: 15
                                             color: "#e9eaee"
                                             border.width: 0
-                                            Label { id: coreLabel; anchors.centerIn: parent; text: modelData; color: "#737983" }
+                                            PaperLabel { id: coreLabel; anchors.centerIn: parent; text: modelData; color: "#737983" }
                                         }
                                     }
                                 }
@@ -6015,6 +6471,9 @@ Window {
                                         }
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
+                                        Layout.topMargin: 7
+                                        Layout.bottomMargin: 7
+                                        spacing: 12
                                         CheckBox {
                                             objectName: "functionLibraryPin_"
                                                         + String(functionChoice.modelData.action)
@@ -6023,6 +6482,19 @@ Window {
                                                              + String(functionChoice.modelData.label || "功能")
                                             Layout.minimumWidth: 34
                                             Layout.preferredWidth: 34
+                                            indicator: Rectangle {
+                                                x: 4; y: (parent.height - height) / 2
+                                                width: 20; height: 20; radius: 6
+                                                color: parent.checked ? "#985c69" : "#ffffff"
+                                                border.width: parent.checked ? 0 : 1
+                                                border.color: parent.visualFocus ? "#985c69" : "#cfd2db"
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: "✓"; color: "white"
+                                                    font.pixelSize: 14
+                                                    visible: parent.parent.checked
+                                                }
+                                            }
                                             checked: Boolean(functionChoice.modelData.selected)
                                             // The radial menu has three fixed actions and
                                             // exactly three user-selectable slots.  Keep
@@ -6042,49 +6514,58 @@ Window {
                                             }
                                         }
                                         ColumnLayout {
+                                            objectName: "functionLibraryLaunchArea_" + functionChoice.modelData.action
                                             Layout.fillWidth: true
                                             Layout.minimumWidth: 0
-                                            spacing: 2
-                                            Label {
+                                            spacing: 6
+                                            TapHandler {
+                                                acceptedButtons: Qt.LeftButton
+                                                gesturePolicy: TapHandler.DragThreshold
+                                                cursorShape: Qt.PointingHandCursor
+                                                onTapped: desktop.openFunctionLibraryAction(functionChoice.modelData.action)
+                                            }
+                                            PaperLabel {
                                                 Layout.fillWidth: true
                                                 Layout.minimumWidth: 0
                                                 text: String(functionChoice.modelData.label || "功能")
                                                 color: desktop.inkColor
                                                 font.weight: Font.Medium
+                                                font.pixelSize: 14
                                                 elide: Text.ElideRight
                                             }
-                                            Label {
+                                            PaperLabel {
                                                 Layout.fillWidth: true
                                                 Layout.minimumWidth: 0
                                                 text: String(functionChoice.modelData.description || "")
-                                                color: "#82796f"
+                                                color: "#858a94"
+                                                font.pixelSize: 12
+                                                lineHeight: 1.3
                                                 wrapMode: Text.Wrap
                                                 maximumLineCount: 2
                                                 elide: Text.ElideRight
                                             }
-                                            Label {
+                                            PaperLabel {
                                                 objectName: "functionLibraryStatus_" + functionChoice.modelData.action
                                                 Layout.fillWidth: true
                                                 Layout.minimumWidth: 0
                                                 visible: functionChoice.modelData.action === "companion"
                                                 text: visible
-                                                      ? String(backend.companionService.activityStatus.compactStatusLabel
+                                                      ? String(desktop.companionStatus.compactStatusLabel
                                                                || "陪伴 · 等待")
                                                       : ""
-                                                color: backend.companionService.activityStatus.configuredEnabled
-                                                       && !backend.companionService.activityStatus.paused
+                                                color: desktop.companionStatus.configuredEnabled
+                                                       && !desktop.companionStatus.paused
                                                        ? desktop.focusColor : "#8b6b58"
-                                                font.pixelSize: 11
+                                                font.pixelSize: 12
                                             }
                                         }
                                         LiliesPaperButton {
                                             objectName: "functionLibraryOpen_" + functionChoice.modelData.action
-                                            visible: functionChoice.modelData.action === "companion"
                                             text: "打开"
-                                            Accessible.name: "打开主动陪伴设置"
+                                            Accessible.name: "打开" + String(functionChoice.modelData.label || "功能")
                                             Layout.minimumWidth: 52
                                             Layout.preferredWidth: 52
-                                            onClicked: chatWindow.page = 3
+                                            onClicked: desktop.openFunctionLibraryAction(functionChoice.modelData.action)
                                         }
                                         LiliesPaperButton {
                                             objectName: "functionLibraryMoveUp_"
@@ -6119,21 +6600,23 @@ Window {
                                     LiliesPaperButton { text: "清空可选常用"; onClicked: backend.clearQuickActions() }
                                     LiliesPaperButton { text: "恢复环形位置"; onClicked: backend.resetComponentLayouts() }
                                     Item { Layout.fillWidth: true }
-                                    Label {
+                                    PaperLabel {
                                         text: "已选择 " + String(Math.max(0, backend.quickActions.length - 3)) + " / 3"
-                                        color: "#746f67"
+                                        color: "#7d8490"
                                     }
                                 }
                             }
                         }
                         PaperSection {
-                            title: "自主移动"
+                            title: "拖动与移动"
+                            visible: settingsNavigation.matches("movement")
                             Layout.fillWidth: true
                             ColumnLayout {
                                 width: parent.width
+                                spacing: 14
                                 RowLayout {
-                                    Label { text: "拖动方式" }
-                                    ComboBox {
+                                    PaperLabel { text: "拖动方式" }
+                                    PaperComboBox {
                                         Layout.preferredWidth: 210
                                         model: ["Windows 原生（兼容）", "直接跟手（推荐）"]
                                         currentIndex: backend.petDragMode === "system" ? 0 : 1
@@ -6141,17 +6624,17 @@ Window {
                                             ["system", "direct"][currentIndex])
                                     }
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: backend.petDragMode === "system"
                                           ? "交给 Windows 移动。如果拖不动，请切回直接跟手。"
                                           : "跟随鼠标位置移动，不加缓动；松手后才保存位置。"
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
                                 RowLayout {
-                                    Label { text: "避开鼠标" }
-                                    ComboBox {
+                                    PaperLabel { text: "避开鼠标" }
+                                    PaperComboBox {
                                         Layout.preferredWidth: 180
                                         model: ["关闭", "轻微（默认）", "活泼"]
                                         currentIndex: backend.petAvoidanceMode === "off" ? 0
@@ -6159,25 +6642,27 @@ Window {
                                         onActivated: backend.setPetAvoidanceMode(["off", "gentle", "lively"][currentIndex])
                                     }
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: "她会给鼠标让路。点住她或打开菜单时，就不会跑走了。"
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
                             }
                         }
                         PaperSection {
                             title: "看桌面／返回工作"
+                            visible: settingsNavigation.matches("peek")
                             Layout.fillWidth: true
                             ColumnLayout {
                                 width: parent.width
+                                spacing: 14
                                 RowLayout {
-                                    Button {
+                                    LiliesPaperButton {
                                         text: backend.desktopPeekStatus.active ? "返回工作" : "看桌面"
                                         onClicked: backend.toggleDesktopPeek()
                                     }
-                                    Label {
+                                    PaperLabel {
                                         Layout.fillWidth: true
                                         text: backend.desktopPeekStatus.active
                                               ? ("已临时收起 " + String(backend.desktopPeekStatus.windowCount || backend.desktopPeekStatus.minimized || 0) + " 个窗口")
@@ -6187,44 +6672,46 @@ Window {
                                     }
                                 }
                                 RowLayout {
-                                    Label { text: "全局快捷键" }
-                                    TextField {
+                                    PaperLabel { text: "全局快捷键" }
+                                    PaperTextField {
                                         id: desktopPeekHotkeyInput
                                         Layout.preferredWidth: 180
                                         text: backend.desktopPeekHotkey
                                         placeholderText: "Ctrl+Alt+D"
                                         onAccepted: backend.setDesktopPeekHotkey(text)
                                     }
-                                    Button { text: "保存"; onClicked: backend.setDesktopPeekHotkey(desktopPeekHotkeyInput.text) }
+                                    LiliesPaperButton { text: "保存"; onClicked: backend.setDesktopPeekHotkey(desktopPeekHotkeyInput.text) }
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: "第二次触发只恢复本次由 Lilies 收起、身份仍匹配且仍处于最小化状态的窗口；期间新开的窗口和你手动恢复的窗口不动。"
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
                             }
                         }
                         PaperSection {
                             title: "私有数据"
+                            visible: settingsNavigation.matches("data")
                             Layout.fillWidth: true
                             ColumnLayout {
                                 width: parent.width
-                                Label {
+                                spacing: 14
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: backend.privateDataPath
                                     color: "#4c7466"
                                     wrapMode: Text.WrapAnywhere
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: "迁移状态 · " + String(backend.dataMigrationStatus.status || "等待")
                                           + (backend.dataMigrationStatus.integrity
                                              ? " · SQLite " + String(backend.dataMigrationStatus.integrity) : "")
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: "聊天、分区记忆、截图暂存、内容缓存与运行日志只写入 F 盘；F 盘不可用时进入受限恢复，不会静默回退到 C 盘。"
                                     color: "#8b6b58"
@@ -6234,21 +6721,24 @@ Window {
                         }
                         PaperSection {
                             title: "动态桌面"
+                            visible: settingsNavigation.matches("scene")
                             Layout.fillWidth: true
                             ColumnLayout {
+                                width: parent.width
+                                spacing: 14
                                 RowLayout {
-                                    Button { text: "实时纸雕"; enabled: backend.renderer !== "scene2d"; onClicked: backend.setRenderer("scene2d") }
-                                    Button { text: "电影循环"; enabled: backend.renderer !== "video"; onClicked: backend.setRenderer("video") }
-                                    Button { text: "重播初遇"; onClicked: backend.replayIntro() }
+                                    LiliesPaperButton { text: "实时纸雕"; enabled: backend.renderer !== "scene2d"; onClicked: backend.setRenderer("scene2d") }
+                                    LiliesPaperButton { text: "电影循环"; enabled: backend.renderer !== "video"; onClicked: backend.setRenderer("video") }
+                                    LiliesPaperButton { text: "重播初遇"; onClicked: backend.replayIntro() }
                                 }
-                                Label {
+                                PaperLabel {
                                     text: "当前渲染 · " + Number(backend.frameRate).toFixed(0) + " FPS"
                                           + (backend.sceneActive ? "" : " · 已因完全遮挡暂停")
                                     color: backend.sceneActive ? "#4c7466" : "#8b6b58"
                                 }
                                 RowLayout {
-                                    Label { text: "图标布局" }
-                                    ComboBox {
+                                    PaperLabel { text: "图标布局" }
+                                    PaperComboBox {
                                         id: layoutPicker
                                         Layout.preferredWidth: 170
                                         model: backend.desktopLayouts
@@ -6260,23 +6750,26 @@ Window {
                                         }
                                         onActivated: backend.activateDesktopLayout(model[index].layoutId)
                                     }
-                                    TextField { id: newLayoutName; Layout.preferredWidth: 130; placeholderText: "新布局名称" }
+                                    PaperTextField { id: newLayoutName; Layout.preferredWidth: 130; placeholderText: "新布局名称" }
                                 }
                                 RowLayout {
-                                    Button {
+                                    LiliesPaperButton {
                                         text: "复制新建"
                                         onClicked: { backend.createDesktopLayout(newLayoutName.text); newLayoutName.text = "" }
                                     }
-                                    Button { text: "删除布局"; onClicked: backend.deleteDesktopLayout(backend.activeDesktopLayout) }
-                                    Button { text: "恢复隐藏图标"; onClicked: backend.unhideAllIcons() }
-                                    Button { text: "添加扫描目录"; onClicked: extraRootDialog.open() }
+                                    LiliesPaperButton { text: "删除布局"; onClicked: backend.deleteDesktopLayout(backend.activeDesktopLayout) }
+                                    LiliesPaperButton { text: "恢复隐藏图标"; onClicked: backend.unhideAllIcons() }
+                                    LiliesPaperButton { text: "添加扫描目录"; onClicked: extraRootDialog.open() }
                                 }
                             }
                         }
                         PaperSection {
-                            title: "桌宠浮层"
+                            title: "显示位置"
+                            visible: settingsNavigation.matches("floating")
                             Layout.fillWidth: true
                             ColumnLayout {
+                                width: parent.width
+                                spacing: 14
                                 ButtonGroup { id: petFloatModeGroup }
                                 RowLayout {
                                     RadioButton {
@@ -6314,7 +6807,7 @@ Window {
                                             radius: 4
                                             color: desktop.petPresenceStatusColor
                                         }
-                                        Label {
+                                        PaperLabel {
                                             objectName: "petPresenceStatusLabel"
                                             Layout.fillWidth: true
                                             text: desktop.petPresenceStatusText
@@ -6326,15 +6819,15 @@ Window {
                                         }
                                     }
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: backend.petFloatMode === "always"
                                           ? "莉莉丝会浮在 WPS、浏览器等界面上；人物、盒子和功能可点击，周围透明区域不拦截操作。"
                                           : "莉莉丝仍可点击，但遵循普通窗口层级，可以被其他应用自然遮挡。"
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: "全屏游戏、会议和受保护界面仍会触发静默保护；这不会改变置顶模式，也不会中断已经开始的专注计时。"
                                     color: "#8e887e"
@@ -6345,21 +6838,24 @@ Window {
                             }
                         }
                         PaperSection {
-                            title: "Agent 权限"
+                            title: "操作权限"
+                            visible: settingsNavigation.matches("permission")
                             Layout.fillWidth: true
                             ColumnLayout {
+                                width: parent.width
+                                spacing: 14
                                 RowLayout {
-                                    Label { text: "模式" }
-                                    ComboBox {
+                                    PaperLabel { text: "模式" }
+                                    PaperComboBox {
                                         model: ["谨慎", "标准", "信任白名单"]
                                         currentIndex: ["cautious", "standard", "trusted"].indexOf(backend.permissionMode)
                                         onActivated: backend.setPermissionMode(["cautious", "standard", "trusted"][currentIndex])
                                     }
                                 }
-                                Label {
+                                PaperLabel {
                                     visible: backend.permissionMode === "trusted"
                                     text: "白名单只影响写操作；破坏性动作仍会逐次确认。"
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                 }
                                 Repeater {
                                     model: backend.trustedActions
@@ -6374,12 +6870,14 @@ Window {
                             }
                         }
                         PaperSection {
-                            title: "莉莉丝对话模型"
+                            title: "对话模型"
+                            visible: settingsNavigation.matches("model")
                             Layout.fillWidth: true
                             ColumnLayout {
                                 width: parent.width
+                                spacing: 14
                                 Layout.minimumWidth: 0
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                     text: backend.modelStatus.subscriptionReady
@@ -6388,61 +6886,63 @@ Window {
                                     color: backend.modelStatus.modelInstalled ? "#4c7466" : "#9f3129"
                                     wrapMode: Text.Wrap
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                     text: backend.modelStatus.subscriptionReady
                                           ? "记忆卡片与最近对话由本机注入；每次 GPT 会话相互隔离"
                                           : ("本机 CPU · " + (backend.modelStatus.context || 2048) + " 上下文 · 无需下载")
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                     text: backend.modelStatus.subscriptionReady
                                           ? ("ChatGPT " + (backend.modelStatus.subscriptionPlan || "订阅") + " · Terra-medium · 空闲五分钟后卸载")
                                           : "发起对话前检测到 GPT 不可用，将使用本机 0.5B 离线备用"
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                     objectName: "modelFallbackDescription"
                                     text: "主对话由 GPT 模拟莉莉丝；发起一轮前若检测到断网或订阅不可用，本机 Qwen2.5 0.5B 才接替。"
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
                                 RowLayout {
-                                    Button { text: "检测"; onClicked: backend.refreshModelStatus() }
-                                    Button { text: "本地 0.5B 备用"; enabled: false }
+                                    LiliesPaperButton { text: "检测"; onClicked: backend.refreshModelStatus() }
+                                    LiliesPaperButton { text: "本地 0.5B 备用"; enabled: false }
                                 }
                             }
                         }
                         PaperSection {
                             title: "论文划词 · Luna-medium"
+                            visible: settingsNavigation.matches("selection")
                             Layout.fillWidth: true
                             ColumnLayout {
                                 width: parent.width
+                                spacing: 14
                                 Switch {
                                     text: "鼠标划选文字后自动解释"
                                     checked: backend.selectionEnabled
                                     onClicked: backend.setSelectionEnabled(checked)
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: backend.selectionStatus
                                     color: backend.selectionSubscriptionReady && backend.selectionEnabled ? "#4c7466" : "#8b6b58"
                                     wrapMode: Text.Wrap
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: "每次只发送这一次划选的文字，不带聊天记录或论文上下文。只监听常见浏览器、PDF 与论文阅读器，不会干扰游戏；程序会短暂复制选区并立即恢复原剪贴板。"
-                                    color: "#746f67"
+                                    color: "#7d8490"
                                     wrapMode: Text.Wrap
                                 }
-                                Label {
+                                PaperLabel {
                                     Layout.fillWidth: true
                                     text: "划选内容会通过本机 Codex App Server 发送给 OpenAI，并计入你的 GPT/Codex 订阅用量；密码管理器中的划选会被忽略。"
                                     color: "#8b6b58"
@@ -6450,7 +6950,7 @@ Window {
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Label {
+                                    PaperLabel {
                                         Layout.fillWidth: true
                                         text: backend.selectionSubscriptionReady
                                               ? "已使用 ChatGPT 订阅登录 · 无需 API Key"
@@ -6458,7 +6958,7 @@ Window {
                                         color: backend.selectionSubscriptionReady ? "#4c7466" : "#8b6b58"
                                         wrapMode: Text.Wrap
                                     }
-                                    Button {
+                                    LiliesPaperButton {
                                         text: "重新检测订阅"
                                         onClicked: backend.refreshSelectionSubscription()
                                     }
@@ -6467,25 +6967,32 @@ Window {
                         }
                         PaperSection {
                             title: "恢复"
+                            visible: settingsNavigation.matches("recovery")
                             Layout.fillWidth: true
                             ColumnLayout {
-                                Label { text: "紧急恢复：Ctrl + Alt + Shift + F12"; color: "#746f67" }
-                                Label {
+                                width: parent.width
+                                spacing: 14
+                                PaperLabel { text: "紧急恢复：Ctrl + Alt + Shift + F12"; color: "#7d8490" }
+                                PaperLabel {
                                     text: backend.shellHealth.message || "尚未运行健康检查"
                                     color: backend.shellHealth.ok ? "#4c7466" : "#8b6b58"
                                 }
-                                RowLayout {
-                                    Button { text: "临时显示 Windows 系统栏"; onClicked: backend.revealSystemDrawer() }
-                                    Button { text: "运行视觉模式健康检查"; onClicked: backend.runShellHealthCheck() }
-                                    Button { text: "退出并恢复 Windows"; onClicked: backend.exitAndRestore() }
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    LiliesPaperButton { text: "临时显示 Windows 系统栏"; onClicked: backend.revealSystemDrawer() }
+                                    LiliesPaperButton { text: "运行视觉模式健康检查"; onClicked: backend.runShellHealthCheck() }
+                                    LiliesPaperButton { text: "退出并恢复 Windows"; onClicked: backend.exitAndRestore() }
                                 }
-                                RowLayout {
-                                    Button {
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    LiliesPaperButton {
                                         text: "下次登录启用实验外壳"
                                         enabled: backend.shellHealth.ok && !backend.loginShellEnabled
                                         onClicked: loginShellConfirm.open()
                                     }
-                                    Button {
+                                    LiliesPaperButton {
                                         text: "恢复原登录外壳"
                                         enabled: backend.loginShellEnabled
                                         onClicked: backend.disableLoginShell()
@@ -6494,8 +7001,16 @@ Window {
                             }
                         }
                         Item { Layout.fillHeight: true }
-                        Label { text: "组件接口 · " + backend.socketEndpoint; color: "#8b857b" }
+                        PaperLabel {
+                            visible: settingsNavigation.matches("data")
+                            Layout.fillWidth: true
+                            text: "组件接口 · " + backend.socketEndpoint
+                            color: "#8b9099"
+                            font.pixelSize: 12
+                            wrapMode: Text.WrapAnywhere
                         }
+                        }
+                    }
                     }
 
                     ColumnLayout {
@@ -6688,24 +7203,114 @@ Window {
             }
         }
 
-        Dialog {
+        PaperDialog {
+            id: providedTextDialog
+            objectName: "providedTextDialog"
+            anchors.centerIn: parent
+            width: Math.min(540, chatWindow.width - 40)
+            height: Math.min(480, chatWindow.height - 40)
+            title: "给她一段文字"
+            property string notice: ""
+            contentItem: ColumnLayout {
+                spacing: 14
+                Label {
+                    Layout.fillWidth: true
+                    text: "只处理你放在这里的文字。不截图，不自动读取剪贴板，也不带之前的对话。"
+                    textFormat: Text.PlainText; wrapMode: Text.Wrap
+                    font.pixelSize: 13; color: "#7c8491"
+                }
+                ScrollView {
+                    Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                    TextArea {
+                        id: providedTextInput
+                        objectName: "providedTextInput"
+                        placeholderText: "粘贴或写下一段想弄懂的内容…"
+                        wrapMode: TextEdit.Wrap; textFormat: TextEdit.PlainText
+                        selectByMouse: true; padding: 12; font.pixelSize: 15; color: "#353b45"
+                        background: Rectangle { color: "white"; radius: 12; border.color: "#e6e8ee" }
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: providedTextDialog.notice || (providedTextInput.length > 5000 ? "最多 5000 字，请缩短后再发。" : providedTextInput.length + " / 5000")
+                    textFormat: Text.PlainText; wrapMode: Text.Wrap; color: "#7c8491"; font.pixelSize: 12
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    QuietAction { text: "先留着"; onClicked: providedTextDialog.close() }
+                    Item { Layout.fillWidth: true }
+                    QuietAction {
+                        objectName: "providedTextSendButton"; text: "解释这段"; primary: true
+                        enabled: providedTextInput.text.trim() !== "" && providedTextInput.length <= 5000 && !Boolean(backend.selectionBubble.busy)
+                        onClicked: {
+                            var result = backend.explainProvidedText(providedTextInput.text,
+                                Math.round(petWindow.x + petWindow.width / 2), Math.round(petWindow.y))
+                            if (result.ok) { providedTextDialog.notice = ""; providedTextDialog.close() }
+                            else providedTextDialog.notice = result.error
+                        }
+                    }
+                }
+            }
+        }
+
+        PaperDialog {
             id: smartObservationConfirm
-            title: "授权智能屏幕观察"
-            modal: true
-            // Basic Dialog normally derives implicitWidth from contentItem;
-            // this wrapped paragraph in turn derives its implicit size from
-            // the dialog's available width.  Give the paper confirmation a
-            // stable intrinsic width and keep only the actual width adaptive.
+            objectName: "smartObservationConfirmDialog"
+            title: "允许莉莉丝观察窗口？"
+            anchors.centerIn: parent
             implicitWidth: 540
-            width: Math.min(implicitWidth, Math.max(320, chatWindow.width - 24))
-            contentWidth: Math.min(500, Math.max(280, chatWindow.width - 60))
-            standardButtons: Dialog.Yes | Dialog.No
+            // Keep the preferred surface independent from a wrapped label's
+            // height. The viewport scrolls instead of feeding a DPI-dependent
+            // implicitHeight/availableWidth loop back into the dialog.
+            implicitHeight: 560
+            width: Math.min(implicitWidth, chatWindow.width - 36)
+            height: Math.min(implicitHeight, chatWindow.height - 36)
+            onOpened: observationConsentScroll.contentItem.contentY = 0
             onAccepted: backend.companionService.authorizeSmartObservation(true)
-            contentItem: Label {
-                width: smartObservationConfirm.contentWidth
-                padding: 16
-                wrapMode: Text.Wrap
-                text: "启用后，自动陪伴会在窗口稳定、自然停顿且本地隐私规则允许时，偶尔尝试一次非浏览器活动窗口截图。手动“生成一条场景陪伴”始终是应用类别级生成，不截图。图片会缩到最长边 1600px，并发送给你已登录的 ChatGPT/Codex 订阅中的 Luna；若 Luna 不支持图片则尝试 Terra。截图只暂存在 F 盘，请求完成、失败或取消后都会删除。浏览器像素观察在 v0.3.36 暂不开放；命中已知敏感窗口规则时会跳过，但规则识别仍有边界，授权前请确认当前使用环境。\n\n是否授权自动观察？"
+            contentItem: ScrollView {
+                id: observationConsentScroll
+                objectName: "smartObservationConsentScroll"
+                implicitHeight: 400
+                clip: true
+                rightPadding: 8
+                contentWidth: availableWidth
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.vertical: LiliesPaperScrollBar {
+                    parent: observationConsentScroll
+                    x: observationConsentScroll.width - width
+                    y: observationConsentScroll.topPadding
+                    height: observationConsentScroll.availableHeight
+                }
+                Label {
+                    id: observationConsentText
+                    objectName: "smartObservationConsentText"
+                    width: observationConsentScroll.availableWidth
+                    textFormat: Text.PlainText
+                    font.pixelSize: 14
+                    color: "#626b78"
+                    lineHeight: 1.45
+                    wrapMode: Text.Wrap
+                    text: "什么时候观察\n窗口稳定、你自然停顿且本地隐私规则允许时，偶尔尝试一次活动窗口截图。浏览器不截图；手动“来聊一句”只使用应用类别。\n\n发送给谁\n图片最长边缩至 1600px，发送给你已登录的 ChatGPT/Codex 订阅中的 Luna；Luna 不支持图片时尝试 Terra。\n\n保存多久\n截图只暂存在 F 盘，请求完成、失败或取消后都会删除。\n\n需要留意\n命中已知敏感窗口规则时会跳过，但规则识别仍有边界。授权前，请确认当前使用环境适合偶尔截图。"
+                }
+            }
+            footer: Item {
+                implicitHeight: 70
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 18; anchors.rightMargin: 18
+                    anchors.topMargin: 8; anchors.bottomMargin: 18
+                    QuietAction {
+                        objectName: "smartObservationDeclineButton"
+                        text: "暂不开启"
+                        onClicked: smartObservationConfirm.reject()
+                    }
+                    Item { Layout.fillWidth: true }
+                    QuietAction {
+                        objectName: "smartObservationAcceptButton"
+                        text: "授权观察"; primary: true
+                        onClicked: smartObservationConfirm.accept()
+                    }
+                }
             }
         }
 

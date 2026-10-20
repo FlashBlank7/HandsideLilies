@@ -47,7 +47,7 @@ def test_contextual_pose_resolver_has_fixed_priorities_and_safe_habitat_fallback
     }
     assert outcome["habitat"]["topSpaceListen"]["pose"] == "listening-live"
     assert outcome["habitat"]["unknown"]["pose"] == "resting"
-    assert outcome["pausedFocus"] == outcome["default"]
+    assert outcome["pausedFocus"] == {"pose": "resting", "context": "pause", "highMotion": False}
 
 
 def test_main_uses_the_resolver_for_pose_and_animation_budget() -> None:
@@ -56,4 +56,4 @@ def test_main_uses_the_resolver_for_pose_and_animation_budget() -> None:
     assert "pose: petPoseResolver.resolvedPose" in source
     assert "|| petPoseResolver.requiresHighMotion" in source
     assert "companionBubble: backend.companionService.bubble || ({})" in source
-    assert "readingStatus: backend.readingStatus || ({})" in source
+    assert "readingStatus: desktop.readingSnapshot || ({})" in source

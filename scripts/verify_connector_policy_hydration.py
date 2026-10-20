@@ -125,6 +125,14 @@ def settle(app: QApplication, milliseconds: int = 80) -> None:
 
 def visual(root: QObject, name: str) -> QQuickItem:
     item = root.findChild(QQuickItem, name)
+    if item is None and isinstance(root, QQuickWindow):
+        pending = [root.contentItem()]
+        while pending:
+            current = pending.pop()
+            if current.objectName() == name:
+                item = current
+                break
+            pending.extend(current.childItems())
     if item is None:
         raise RuntimeError(f"missing QML item: {name}")
     return item
@@ -136,14 +144,25 @@ def reveal_and_click(
     flickable = scroll.property("contentItem")
     if not isinstance(flickable, QQuickItem):
         raise RuntimeError("ScrollView has no Flickable")
-    mapped = item.mapToItem(flickable, QPointF(0, 0))
-    viewport = float(flickable.property("height") or scroll.height())
-    content = float(flickable.property("contentHeight") or viewport)
-    flickable.setProperty(
-        "contentY", max(0.0, min(max(0.0, content - viewport), mapped.y() - viewport * 0.5))
-    )
+    parent = item.parentItem()
+    in_scroll = False
+    while parent:
+        if parent == flickable:
+            in_scroll = True
+            break
+        parent = parent.parentItem()
+    if in_scroll:
+        mapped = item.mapToItem(flickable, QPointF(0, 0))
+        viewport = float(flickable.property("height") or scroll.height())
+        content = float(flickable.property("contentHeight") or viewport)
+        content_y = float(flickable.property("contentY"))
+        flickable.setProperty(
+            "contentY", max(0.0, min(max(0.0, content - viewport), content_y + mapped.y() - viewport * 0.5))
+        )
     settle(app)
     scene = item.mapToScene(QPointF(item.width() / 2, item.height() / 2))
+    assert item.isVisible() and item.isEnabled(), f"control is hidden/disabled: {item.objectName()}"
+    assert 0 <= scene.x() < window.width() and 0 <= scene.y() < window.height(), f"control is clipped: {item.objectName()}"
     QTest.mouseClick(
         window,
         Qt.MouseButton.LeftButton,
@@ -179,6 +198,8 @@ def main() -> int:
     window.setProperty("appBackend", backend)
     window.setVisible(True)
     settle(app, 200)
+    reveal_and_click(window, visual(window, "connectorSettingsTab"),
+                     visual(window, "connectorSetupScroll"), app)
 
     scope = visual(window, "connectorPolicyScope")
     interruption = visual(window, "connectorPolicyInterruption")

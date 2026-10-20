@@ -93,7 +93,7 @@ def main() -> int:
         "companion": {"pose": "presenting", "context": "companion", "highMotion": False},
         "selection": {"pose": "reading", "context": "selection", "highMotion": False},
         "chat": {"pose": "listening-live", "context": "chat", "highMotion": False},
-        "pausedFocus": {"pose": "resting", "context": "equipped", "highMotion": False},
+        "pausedFocus": {"pose": "resting", "context": "pause", "highMotion": False},
     }
     expected_habitat = {
         "edge": "edge-peek-live",

@@ -7,7 +7,6 @@ import json
 import math
 import os
 import sys
-import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -60,10 +59,13 @@ from .paths import (
     DataRootUnavailableError,
     configure_qt_cache_environment,
     data_root,
+    diagnostic_data_environment,
     disable_qt_disk_caches_for_recovery,
+    project_root,
     qml_path,
 )
 from .drag_proxy_snapshot import DragProxySnapshotCache
+from .drag_timing import DragTimingProbe
 from .windows_drag_proxy import WindowRect
 from .root_system_move_guard import RootSystemMoveGuard
 
@@ -1399,9 +1401,11 @@ class CompactPointerEventFilter(QObject):
         root: QQuickWindow,
         *,
         diagnostics_path: Path | None = None,
+        drag_timing_enabled: bool = False,
     ) -> None:
         super().__init__(root)
         self.root = root
+        self._drag_timing = DragTimingProbe(enabled=drag_timing_enabled)
         self._diagnostics_path = (
             Path(diagnostics_path) if diagnostics_path is not None else None
         )
@@ -2390,6 +2394,7 @@ class CompactPointerEventFilter(QObject):
     def beginDragProxyGesture(self) -> None:
         """Fence pending image work from the initial Qt character press."""
         if not self._closing_drag_bridge:
+            self._drag_timing.begin()
             self._begin_drag_proxy_gesture()
             # Direct drag needs Qt's mouse grab and coalescing filter, but not
             # a periodic hit-map walk or two origin callbacks on each move.
@@ -2444,6 +2449,7 @@ class CompactPointerEventFilter(QObject):
     def endDragProxyGesture(self) -> None:
         """Release the snapshot fence for a QML hide/cancel terminal path."""
 
+        self._drag_timing.cancel()
         self._end_drag_proxy_gesture()
 
     def _prepare_proxy_system_move(
@@ -3633,10 +3639,18 @@ class CompactPointerEventFilter(QObject):
         # so every new gesture still owns its first requested position.
         if target == self._last_direct_position:
             return True
+        timing_token = (
+            self._drag_timing.submission_started()
+            if self._drag_timing.active else None
+        )
         try:
             self.root.setPosition(target)
         except (AttributeError, RuntimeError, TypeError, ValueError):
+            if timing_token is not None:
+                self._drag_timing.submission_finished(timing_token, succeeded=False)
             return False
+        if timing_token is not None:
+            self._drag_timing.submission_finished(timing_token, succeeded=True)
         self._last_direct_position = target
         self._direct_move_commits += 1
         return True
@@ -3793,6 +3807,9 @@ class CompactPointerEventFilter(QObject):
             ),
             "nativeMouseMovesSuppressed": self._native_mouse_moves_suppressed,
             "directMoveCommits": self._direct_move_commits,
+            "directTiming": (
+                self._drag_timing.finish() if self._drag_timing.enabled else None
+            ),
             "proxyRealGeometryCommits": self._proxy_real_geometry_commits,
             "proxyBitmapWidth": self._proxy_bitmap_width,
             "proxyBitmapHeight": self._proxy_bitmap_height,
@@ -3901,6 +3918,7 @@ class CompactPointerEventFilter(QObject):
     def close_drag_diagnostics_writer(self) -> None:
         """Flush best-effort diagnostics during an ordinary app shutdown."""
 
+        self._drag_timing.cancel()
         # A destroyed QML delegate may not deliver its final ActiveChanged
         # edge during application teardown. Record the latest such gesture as
         # cancelled, then clear ownership so observer restoration cannot be
@@ -4001,6 +4019,10 @@ class CompactPointerEventFilter(QObject):
         """
 
         after = int(after_serial)
+        if self._drag_timing.active:
+            self._drag_timing.pointer_pulled(
+                self.serial, available=self.serial > after
+            )
         if self.serial <= after:
             return {"available": False, "serial": self.serial}
         return {
@@ -4270,6 +4292,8 @@ class CompactPointerEventFilter(QObject):
         self.serial += 1
         self._latest_global_x = float(point.x())
         self._latest_global_y = float(point.y())
+        if self._drag_timing.active:
+            self._drag_timing.pointer_delivered(self.serial)
         # Once QML has accepted the character press, native global positions
         # are the sole direct-drag authority.  Consuming only MouseMove here
         # prevents the same high-rate event stream from also traversing the
@@ -4296,7 +4320,7 @@ class QuickWindowResourceLifecycle(QObject):
 
     _RELEASE_QUIET_MS = 420
 
-    def __init__(self, root: QQuickWindow) -> None:
+    def __init__(self, root: QQuickWindow, backend: Backend | None = None) -> None:
         super().__init__(root)
         self.windows = (root, *tuple(root.findChildren(QQuickWindow)))
         self._pet_window = root.findChild(QQuickWindow, "petWindow")
@@ -4306,7 +4330,16 @@ class QuickWindowResourceLifecycle(QObject):
             window for window in self.windows if window is not self._pet_window
         )
         self._release_timers: dict[QQuickWindow, QTimer] = {}
+        self._pending_releases: set[QQuickWindow] = set()
+        self._release_deadlines: dict[QQuickWindow, float] = {}
         self._visibility_slots: dict[QQuickWindow, Callable[[bool], None]] = {}
+        self._pointer_interaction_active = (
+            backend.pet_pointer_interaction_active if backend is not None else False
+        )
+        if backend is not None:
+            backend.petPointerInteractionChanged.connect(
+                self._on_pointer_interaction_changed
+            )
         for window in self.windows:
             self._configure(window)
             # The compact pet is intentionally resident and receives a very
@@ -4315,7 +4348,7 @@ class QuickWindowResourceLifecycle(QObject):
             # after the dedicated drag filter had been removed.
             if window is self._pet_window:
                 continue
-            # Visibility is the only event this lifecycle owns. A generic
+            # Visibility is the only window signal this lifecycle needs. A generic
             # QObject event filter crossed C++ -> Python for every mouse,
             # resize and paint event in the desktop, Dock and panels merely
             # to discard it. A typed signal keeps the same release semantics
@@ -4335,6 +4368,12 @@ class QuickWindowResourceLifecycle(QObject):
         window.setPersistentSceneGraph(False)
 
     def _schedule_release(self, window: QQuickWindow) -> None:
+        self._pending_releases.add(window)
+        # Box/button gestures do not set the character's QML drag flags. The
+        # aggregate owner edge also covers those gestures without per-move
+        # event filters or a periodic timer while the pointer remains held.
+        if self._pointer_interaction_active:
+            return
         timer = self._release_timers.get(window)
         if timer is None:
             timer = QTimer(self)
@@ -4343,9 +4382,14 @@ class QuickWindowResourceLifecycle(QObject):
                 lambda target=window: self._release_after_quiet_period(target)
             )
             self._release_timers[window] = timer
+        self._release_deadlines[window] = (
+            time.monotonic() + self._RELEASE_QUIET_MS / 1000.0
+        )
         timer.start(self._RELEASE_QUIET_MS)
 
     def _cancel_release(self, window: QQuickWindow) -> None:
+        self._pending_releases.discard(window)
+        self._release_deadlines.pop(window, None)
         timer = self._release_timers.get(window)
         if timer is not None:
             timer.stop()
@@ -4361,7 +4405,31 @@ class QuickWindowResourceLifecycle(QObject):
         else:
             self._schedule_release(window)
 
+    @Slot(bool)
+    def _on_pointer_interaction_changed(self, active: bool) -> None:
+        if active == self._pointer_interaction_active:
+            return
+        self._pointer_interaction_active = active
+        if active:
+            for timer in self._release_timers.values():
+                timer.stop()
+            self._release_deadlines.clear()
+            return
+        # Start a full quiet interval after the LAST gesture owner releases,
+        # not after an earlier hide/timer tick. Never clean up synchronously
+        # inside a release callback, and never schedule a now-visible window.
+        for window in tuple(self._pending_releases):
+            try:
+                if not window.isVisible():
+                    self._schedule_release(window)
+                else:
+                    self._cancel_release(window)
+            except RuntimeError:
+                self._cancel_release(window)
+
     def _pet_interaction_active(self) -> bool:
+        if self._pointer_interaction_active:
+            return True
         pet = self._pet_window
         if pet is None:
             return False
@@ -4376,26 +4444,39 @@ class QuickWindowResourceLifecycle(QObject):
         try:
             hidden = not window.isVisible()
         except RuntimeError:
+            self._cancel_release(window)
             return
         if not hidden:
+            self._cancel_release(window)
             return
-        # Hiding the focus aura is part of the character press. Releasing its
-        # D3D scene graph from the next turn of Windows' modal move loop causes
-        # a visible first-frame hitch, and rebuilding it on release adds a
-        # second one. Wait until the pointer-critical gesture has been quiet.
+        if window not in self._pending_releases:
+            return
+        # A posted timeout can survive cancellation. Do not explicitly ask
+        # Qt/the driver to release resources during any held gesture. This
+        # controls our cleanup request, not Qt's own rendering decisions, and
+        # does not itself establish a native presentation-time improvement.
         if self._pet_interaction_active():
             self._schedule_release(window)
             return
+        deadline = self._release_deadlines.get(window)
+        if deadline is None:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            # Fence an old, already-posted timeout after a release/re-grab or
+            # hide/show cycle, and the early delivery allowed by coarse timers.
+            self._release_timers[window].start(max(1, math.ceil(remaining * 1000)))
+            return
+        self._cancel_release(window)
         self._release_if_still_hidden(window)
 
     @staticmethod
     def _release_if_still_hidden(window: QQuickWindow) -> None:
         try:
             if not window.isVisible():
-                # The persistent properties are documented as hints.  An
-                # explicit release on the next GUI event turn is what asks the
-                # Windows render loop and D3D driver to relinquish the hidden
-                # window's resources deterministically.
+                # Request cleanup after the quiet interval. Qt and the graphics
+                # driver still own actual reclamation; this call is not proof
+                # of when a render thread/device allocation has disappeared.
                 window.releaseResources()
         except RuntimeError:
             # The QML engine may destroy a transient window before this queued
@@ -4907,13 +4988,39 @@ class DesktopSurfacePresentationProbe(QObject):
 
 def configure_quick_window_resource_lifecycle(
     root: QQuickWindow,
+    backend: Backend | None = None,
 ) -> QuickWindowResourceLifecycle:
     """Install and return the app-owned hidden-window lifecycle controller."""
 
-    return QuickWindowResourceLifecycle(root)
+    return QuickWindowResourceLifecycle(root, backend)
 
 
-PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOW_COUNT = 16
+# The two continuity surfaces are independent, initially hidden windows. Keep
+# their identities in the cold-start gate, not just a permissive count range:
+# a missing feature plus an accidental duplicate must not cancel each other.
+PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOWS = (
+    "desktopRootWindow",
+    "boxSearchWindow",
+    "boxWorldSceneWindow",
+    "chatWindow",
+    "companionBubbleWindow",
+    "focusDiversionBubbleWindow",
+    "paperDock",
+    "petWindow",
+    "selectionBubble",
+    "selectionQuestion",
+    "sharedWorldWindow",
+    "v03AllWindowsDrawer",
+    "v03ConnectorSetup",
+    "v03FocusTimerAura",
+    "v03PaperFoldDock",
+    "v03WindowPreviewShelf",
+    "v03WorkPanel",
+    "windowShelf",
+)
+PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOW_COUNT = len(
+    PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOWS
+)
 
 
 def packaged_compact_startup_contract(
@@ -4964,8 +5071,11 @@ def packaged_compact_startup_contract(
 
     expected_window_count = PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOW_COUNT
     window_count = len(persistent_hints)
+    expected_windows = sorted(PACKAGED_SELF_TEST_EXPECTED_QUICK_WINDOWS)
+    window_names = sorted(str(hint["objectName"]) for hint in persistent_hints)
+    identities_match = window_names == expected_windows
     persistent_hints_disabled = bool(
-        window_count == expected_window_count
+        window_count > 0
         and all(
             hint["persistentGraphics"] is False
             and hint["persistentSceneGraph"] is False
@@ -4975,9 +5085,11 @@ def packaged_compact_startup_contract(
     quick_windows = {
         "expectedWindowCount": expected_window_count,
         "windowCount": window_count,
+        "expectedWindows": expected_windows,
+        "windowIdentitiesMatch": identities_match,
         "persistentHintsDisabled": persistent_hints_disabled,
         "persistentHints": persistent_hints,
-        "passed": persistent_hints_disabled,
+        "passed": identities_match and persistent_hints_disabled,
     }
 
     low_power: bool | None = None
@@ -5045,6 +5157,14 @@ def packaged_compact_startup_contract(
 
 
 def tray_icon() -> QIcon:
+    # Use the same multi-resolution artwork as Explorer and the shortcuts.
+    # Keep the small drawn fallback for incomplete source checkouts only.
+    for filename in ("lilies-app.ico", "lilies-app.png"):
+        path = project_root() / "assets" / "icons" / filename
+        if path.is_file():
+            icon = QIcon(str(path))
+            if not icon.isNull() and icon.availableSizes():
+                return icon
     pixmap = QPixmap(96, 96)
     pixmap.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pixmap)
@@ -5070,6 +5190,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     shell_mode.add_argument("--login-shell", action="store_true", help="start from experimental login shell")
     parser.add_argument("--restore", action="store_true", help="restore Windows shell state and exit")
     parser.add_argument("--benchmark", metavar="JSON_PATH", help="measure renderer FPS and write a JSON report")
+    parser.add_argument(
+        "--drag-timing", action="store_true",
+        help="opt in to bounded application-side drag timings (not screen latency)",
+    )
     parser.add_argument("--benchmark-seconds", type=float, default=8.0, help=argparse.SUPPRESS)
     parser.add_argument("--benchmark-renderer", choices=("scene2d", "video"), help=argparse.SUPPRESS)
     parser.add_argument("--self-test", metavar="JSON_PATH", help="run packaged identity and QML checks")
@@ -5275,12 +5399,26 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.peek_data_dir) if args.peek_data_dir else None,
         )
     if args.restore:
+        from .core.recovery import finish_recovery_report
+
         try:
             restore_root = data_root()
         except DataRootUnavailableError:
-            restore_root = WINDOWS_PRIVATE_DATA_ROOT
-        restore_from_backup(restore_root / "shell-backup.json")
-        return 0
+            # No fallback disk access through an unavailable/redirected F root.
+            # We may still request visible Windows chrome, but cannot assert
+            # that an unknown original configuration or journal was recovered.
+            restore_root = None
+        shell_result = restore_from_backup(
+            restore_root / "shell-backup.json" if restore_root is not None else None,
+            wait_seconds=8.0,
+        )
+        report = finish_recovery_report(shell_result, restore_root)
+        if sys.stdout is not None:
+            try:
+                print(json.dumps(report, ensure_ascii=True))
+            except OSError:
+                pass
+        return 0 if report["ok"] else 4
 
     # A normal, desktop-only or pet-only shortcut activates the already
     # running process.  This happens before Backend creates a new socket token,
@@ -5296,10 +5434,22 @@ def main(argv: list[str] | None = None) -> int:
         or args.self_test
         or args.windows_startup_probe
     )
-    diagnostic_data: tempfile.TemporaryDirectory[str] | None = None
-    if diagnostic_run and not os.environ.get("LILIES_DATA_DIR"):
-        diagnostic_data = tempfile.TemporaryDirectory(prefix="lilies-diagnostic-")
-        os.environ["LILIES_DATA_DIR"] = diagnostic_data.name
+    if diagnostic_run:
+        try:
+            with diagnostic_data_environment():
+                return _run_application(args, argv, diagnostic_run=True)
+        except DataRootUnavailableError:
+            # No Qt, real-shell recovery or modal UI belongs to a failed probe.
+            return 3
+    return _run_application(args, argv, diagnostic_run=False)
+
+
+def _run_application(
+    args: argparse.Namespace,
+    argv: list[str] | None,
+    *,
+    diagnostic_run: bool,
+) -> int:
 
     data_root_purpose = (
         DataRootPurpose.DIAGNOSTIC
@@ -5320,6 +5470,10 @@ def main(argv: list[str] | None = None) -> int:
             data_root(purpose=data_root_purpose)
         )
     except DataRootUnavailableError as exc:
+        if diagnostic_run:
+            # A failing isolated probe owns no real shell state. Do not read
+            # the person's backup, restore their desktop or open a modal UI.
+            return 3
         startup_data_error = exc
         qt_cache_routing = {
             "passed": False,
@@ -5356,7 +5510,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Lilies in the box")
-    app.setApplicationVersion("0.3.55")
+    app.setApplicationVersion("0.3.57")
     app.setWindowIcon(tray_icon())
 
     if startup_data_error is not None:
@@ -5421,6 +5575,8 @@ def main(argv: list[str] | None = None) -> int:
     except DataRootUnavailableError as exc:
         if activation_socket is not None:
             activation_socket.close()
+        if diagnostic_run:
+            return 3
         # Restricted recovery mode deliberately owns no database, cache or
         # runtime directory. It only restores Explorer chrome and explains why
         # Lilies refused to fall back to the system drive.
@@ -5434,6 +5590,8 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         if activation_socket is not None:
             activation_socket.close()
+        if diagnostic_run:
+            return 4
         QMessageBox.warning(
             None,
             "Lilies in the box",
@@ -5497,7 +5655,9 @@ def main(argv: list[str] | None = None) -> int:
             *tuple(root_window.findChildren(QQuickWindow)),
         ):
             diagnostic_window.hide()
-    quick_window_lifecycle = configure_quick_window_resource_lifecycle(root_window)
+    quick_window_lifecycle = configure_quick_window_resource_lifecycle(
+        root_window, backend
+    )
     app._lilies_quick_window_lifecycle = quick_window_lifecycle
     pet_window = root_window.findChild(QQuickWindow, "petWindow")
     if pet_window is None:
@@ -5529,6 +5689,7 @@ def main(argv: list[str] | None = None) -> int:
         diagnostics_path=(
             backend.data_directory / "runtime" / "pet-drag-latest.json"
         ),
+        drag_timing_enabled=bool(args.drag_timing),
     )
     pointer_event_filter.dragProxyRuntimeStateChanged.connect(
         backend.reportDragProxyRuntimeState
@@ -6638,7 +6799,4 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(int(max(3.0, float(args.benchmark_seconds)) * 1000), finish_benchmark)
     if args.smoke and os.environ.get("LILIES_SMOKE_HOLD") != "1":
         QTimer.singleShot(2200, app.quit)
-    exit_code = app.exec()
-    if diagnostic_data is not None:
-        diagnostic_data.cleanup()
-    return exit_code
+    return app.exec()

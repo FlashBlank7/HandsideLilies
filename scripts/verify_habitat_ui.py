@@ -135,23 +135,23 @@ def main() -> int:
     work_area = {"left": 0, "top": 0, "right": 1920, "bottom": 1040}
     cases = (
         ("offscreen", {"left": -820, "top": 220, "right": 180, "bottom": 780}, 32, False,
-         "offscreen-window-edge", "edge-peek-live", "", False),
+         "offscreen-window-edge", "edge-peek-live", "poseEdgeLeanV1", False),
         ("micro", {"left": 180, "top": 240, "right": 500, "bottom": 450}, 32, False,
-         "micro-window-edge", "edge-peek-live", "", False),
+         "micro-window-edge", "edge-peek-live", "poseMicroCornerGripV1", False),
         ("small", {"left": 180, "top": 240, "right": 620, "bottom": 560}, 32, False,
          "small-title", "title-sit", "poseTitleSit", False),
         ("portrait", {"left": 300, "top": 160, "right": 980, "bottom": 960}, 32, False,
          "portrait-title", "title-sit", "poseTitleSit", False),
         ("medium", {"left": 180, "top": 240, "right": 1180, "bottom": 850}, 32, False,
-         "medium-perch", "perch-prone", "", False),
+         "medium-perch", "perch-prone", "poseWindowDangleV1", False),
         ("large", {"left": 80, "top": 260, "right": 1800, "bottom": 1000}, 32, False,
-         "large-perch", "perch-prone", "", False),
+         "large-perch", "perch-prone", "poseWideWindowSprawlV1", False),
         ("top-space", {"left": 180, "top": 8, "right": 1180, "bottom": 780}, 32, False,
          "top-space-listen", "edge-peek-live", "poseListeningLive", False),
         ("narrow", {"left": 180, "top": 240, "right": 1180, "bottom": 850}, 18, False,
-         "narrow-caption-edge", "edge-peek-live", "", False),
+         "narrow-caption-edge", "edge-peek-live", "poseEdgeLeanV1", False),
         ("maximized", work_area, 32, True,
-         "maximized-edge", "edge-peek-live", "", True),
+         "maximized-edge", "edge-peek-live", "poseEdgeLeanV1", True),
     )
     expected_presentations = {
         "offscreen-window-edge": ("cautious-return", "cautious-peek", 4.6, 0.70),
@@ -614,6 +614,8 @@ def main() -> int:
             for value in results.values()
         ),
         "proceduralLayeredProfiles": procedural_profiles,
+        "microUsesCompleteArtwork": profile_artwork.get("micro-window-edge") == "poseMicroCornerGripV1",
+        "mediumUsesCompleteArtwork": profile_artwork.get("medium-perch") == "poseWindowDangleV1",
         "microUsesVerifiedFallback": False,
         "microUsesProceduralLayeredFallback": (
             profile_artwork.get("micro-window-edge") == ""
@@ -623,15 +625,8 @@ def main() -> int:
         ),
         "passed": (
             len(results) == 9
-            and len(unique_artwork) == 2
-            and procedural_profiles == [
-                "large-perch",
-                "maximized-edge",
-                "medium-perch",
-                "micro-window-edge",
-                "narrow-caption-edge",
-                "offscreen-window-edge",
-            ]
+            and len(unique_artwork) == 6
+            and procedural_profiles == []
             and len(set(profile_variants.values())) == 9
             and len(visual_signatures) == len(results)
             and len(constrained_signatures) == 4

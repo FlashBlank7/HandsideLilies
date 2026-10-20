@@ -152,6 +152,8 @@ def main() -> int:
 
     try:
         chat_window.setProperty("page", 3)
+        navigation = root.findChild(QQuickItem, "companionNavigation")
+        navigation.setProperty("section", "frequency")
         backend.setChatOpen(True)
         chat_window.show()
         chat_window.requestActivate()
@@ -645,6 +647,8 @@ def main() -> int:
 
         # Aggregate preferencesChanged is also emitted for unrelated sliders.
         # A real TextField edit remains the user's draft until it is committed.
+        navigation.setProperty("section", "interests")
+        app.processEvents()
         _type_text_field(chat_window, interests, "draft,topic")
         typed_interest = str(interests.property("text"))
         backend.companion.changed.emit()
@@ -665,6 +669,8 @@ def main() -> int:
         app.processEvents()
         committed_interests = list(backend.companion.preferences["interests"])
         canonical_interest_text = str(interests.property("text")) == "draft，topic"
+        navigation.setProperty("section", "frequency")
+        app.processEvents()
         late_editor.forceActiveFocus()
         app.processEvents()
         backend.companion.setInterests("external,clean")
@@ -707,6 +713,8 @@ def main() -> int:
         chat_window.setProperty("page", 3)
         backend.setChatOpen(True)
         chat_window.show()
+        app.processEvents()
+        navigation.setProperty("section", "daily")
         app.processEvents()
         feedback_before_screen_click = str(
             backend.companion.activityStatus.get("requestFeedback", "")

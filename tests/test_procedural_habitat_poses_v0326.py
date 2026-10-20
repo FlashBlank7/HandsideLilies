@@ -1,67 +1,49 @@
-from __future__ import annotations
-
+"""Regression: complete poses and a continuous mesh replace cut-up PNG strips."""
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_procedural_habitat_poses_are_distinct_and_work_with_every_outfit() -> None:
-    environment = dict(os.environ)
-    environment["QT_QPA_PLATFORM"] = "offscreen"
-    environment["QSG_RHI_BACKEND"] = "software"
-    environment["PYTHONUTF8"] = "1"
+def test_regenerated_habitat_poses_keep_contact_mask_cord_and_outfit(tmp_path):
     completed = subprocess.run(
-        [
-            sys.executable,
-            str(PROJECT_ROOT / "scripts" / "verify_procedural_habitat_poses.py"),
-        ],
-        cwd=PROJECT_ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        check=False,
+        [sys.executable, str(PROJECT_ROOT/'scripts/verify_pose_repair.py'),
+         '--root', str(PROJECT_ROOT), '--output', str(tmp_path/'pose-repair')],
+        cwd=PROJECT_ROOT, env={**os.environ, 'PYTHONUTF8':'1'},
+        capture_output=True, text=True, encoding='utf-8', errors='replace',
+        timeout=45, creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),
     )
-    assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
-    report = json.loads(
-        (PROJECT_ROOT / "artifacts" / "procedural-habitat-pose-gate.json").read_text(
-            encoding="utf-8"
-        )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert report['passed']
+    assert len(report['poses']) == 10
+    assert len(report['outfits']) == 6
+    for pose in report['poses']:
+        assert pose['passed'] and pose['ready']
+        assert pose['contactError'] < .5
+        assert pose['cordInside'] and pose['cornerTransparent']
+    assert all(outfit['passed'] for outfit in report['outfits'])
+
+
+def test_breathing_does_not_reintroduce_independent_face_body_crops(tmp_path):
+    source = (PROJECT_ROOT/'qml/V03PetBody.qml').read_text(encoding='utf-8')
+    assert 'ContinuousPetImage {' in source
+    assert 'id: headRegion' not in source
+    assert 'id: shoulderRegion' not in source
+    assert 'id: skirtRegion' not in source
+    component = (PROJECT_ROOT/'qml/ContinuousPetImage.qml').read_text(encoding='utf-8')
+    assert 'GridMesh' in component
+    assert 'visible: !root.deformationReady' in component
+    completed = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT/'scripts/verify_continuous_pet.py'),
+         '--root', str(PROJECT_ROOT), '--output', str(tmp_path/'continuous')],
+        cwd=PROJECT_ROOT, env={**os.environ,'PYTHONUTF8':'1'},
+        capture_output=True, text=True, encoding='utf-8',errors='replace',
+        timeout=20,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),
     )
-    assert report["passed"] is True
-    assert report["variantCount"] == 9
-    assert report["outfitCount"] == 6
-    assert report["uniqueGeometrySignatureCount"] == 9
-    assert report["uniqueRegionalSignatureCountWithoutBodyRotation"] == 9
-    assert report["uniquePixelSignatureCountWithoutBodyRotation"] == 9
-    assert report["optionalAssetUrlsEmpty"] == {
-        "poseEdgeLeanV1": True,
-        "poseMicroCornerGripV1": True,
-        "poseWideWindowSprawlV1": True,
-        "poseWindowDangleV1": True,
-        "poseWindowProneV2": True,
-    }
-    for variant_id, variant in report["variants"].items():
-        assert variant["passed"] is True
-        assert len(variant["outfits"]) == 6
-        for outfit in variant["outfits"].values():
-            assert outfit["passed"] is True
-            assert outfit["usesPoseArtwork"] is False
-            assert outfit["poseArtworkKey"] == ""
-            assert outfit["anchorError"] <= 0.05
-            if variant_id.startswith("window-perch"):
-                assert outfit["renderedContactY"] <= 0.50
-                assert outfit["renderedContactY"] != outfit["backendContactY"]
-                assert outfit["contactInShoulderRegion"] is True
-                assert outfit["belowContactExtent"] >= 60.0
-            assert outfit["boundsInside"] is True
-            assert outfit["hitAreaEnabled"] is True
-            assert outfit["hitValid"] is True
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report=json.loads(completed.stdout.strip().splitlines()[-1])
+    assert report['passed'] and report['directionsChecked']==9

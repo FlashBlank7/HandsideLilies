@@ -12,14 +12,17 @@ Window {
 
     property var appBackend: null
     signal connectorRequested(string providerName)
-    property color paper: "#fffaf2"
-    property color paperRaised: "#fffdf9"
-    property color ink: "#4a4641"
-    property color mutedInk: "#887f76"
-    property color hairline: "#dacdbd"
-    property color cord: "#91332f"
+    property color paper: "#fafafb"
+    property color paperRaised: "#ffffff"
+    property color ink: "#353b45"
+    property color mutedInk: "#7c8491"
+    property color hairline: "#e6e8ee"
+    property color cord: "#985c69"
     property color calm: "#668779"
     property string lastNotice: ""
+    property bool sessionControlsOpen: false
+    property bool reminderControlsOpen: false
+    property bool growthRulesOpen: false
     property string activeSection: "work"
     property string requestedSection: "work"
     property string pendingSection: "work"
@@ -39,14 +42,14 @@ Window {
     readonly property string sectionHeading: activeSection === "world" ? "盒中世界"
         : activeSection === "growth" ? "共鸣与衣橱"
         : activeSection === "connectors" ? "日历与 Slack 信笺"
-        : "任务与专注"
+        : "手边的事"
     readonly property string sectionCaption: activeSection === "world"
-        ? "现实里的完成，会在这只盒子里留下确定的陈设与共同痕迹。"
+        ? "完成的事，会变成盒子里的陈设和回忆。"
         : activeSection === "growth"
-          ? "共鸣只记录真实完成；服装、姿态和盒中陈设都按明确里程碑解锁。"
+          ? "按完成记录解锁服装和姿态。休息和延期都不扣分。"
           : activeSection === "connectors"
-            ? "外部事项只在你主动连接后出现；任何写入都必须先看预览再确认。"
-            : "现实事项完成后，成长会被准确记录；失败、延期和休息都不会扣分。"
+            ? "连接后查看日程和消息。修改或发送前，仍需你确认。"
+            : ""
     readonly property real presentationAreaWidth: {
         var areaWidth = Number(presentationArea.width)
         return isFinite(areaWidth) && areaWidth > 0 ? areaWidth : Screen.width
@@ -61,7 +64,7 @@ Window {
     // remote session).  The page content keeps its comfortable 640px paper
     // width and becomes horizontally scrollable below that threshold instead
     // of forcing the whole native window beyond the monitor edges.
-    minimumWidth: Math.max(320, Math.min(720, presentationAreaWidth - 24))
+    minimumWidth: Math.max(320, Math.min(480, presentationAreaWidth - 24))
     minimumHeight: Math.max(320, Math.min(540, presentationAreaHeight - 24))
     width: Math.max(minimumWidth, Math.min(920, presentationAreaWidth - 32))
     height: Math.max(minimumHeight, Math.min(720, presentationAreaHeight - 40))
@@ -243,6 +246,8 @@ Window {
             return false
         if (normalized === "slack-inbox" && !Boolean(slackInfo.connected))
             return false
+        if (normalized === "focus" || normalized === "reading")
+            sessionControlsOpen = true
         pendingAnchor = normalized
         selectSection(descriptor.section)
         if (visible)
@@ -356,6 +361,25 @@ Window {
     }
 
     property var taskItems: value("taskItems", value("tasks", []))
+    property var archivedTasks: value("archivedTaskItems", [])
+    property var lastCompletedTask: ({})
+    property bool taskActionCooling: false
+    Timer { id: taskActionCooldown; interval: 400; onTriggered: root.taskActionCooling = false }
+    function completeTask(task) {
+        if (taskActionCooling) return
+        taskActionCooling = true
+        taskActionCooldown.restart()
+        var previous = task
+        if (invoke("tasksComplete", [task.id || task.taskId, task.occurrenceId || ""]))
+            lastCompletedTask = previous
+    }
+    TaskEditor {
+        id: taskEditor
+        onSaveRequested: function(taskId, changes) {
+            if (root.invoke("tasksUpdate", [taskId, changes])) taskEditor.close()
+            else errorText = root.lastNotice
+        }
+    }
     property var reminderItems: value("reminderItems", value("reminders", []))
     property var focusInfo: value("focusStatus", ({ active: false, elapsedSeconds: 0, durationMinutes: 25 }))
     property var readingInfo: value("readingStatus", ({ active: false, elapsedSeconds: 0 }))
@@ -370,6 +394,7 @@ Window {
     property int resonancePoints: Number(growthInfo.points !== undefined ? growthInfo.points
                                                                          : (growthInfo.value || 0))
     readonly property string resonanceStage: String(growthInfo.stage || "初遇")
+    readonly property bool showConnectorsTab: Boolean(calendarInfo.connected) || Boolean(slackInfo.connected) || activeSection === "connectors"
     readonly property string resonanceNextStage: String(growthInfo.nextStage || "")
     readonly property var resonanceNextAt: growthInfo.nextAt
     readonly property bool resonanceFinalStage: resonanceNextStage === ""
@@ -433,8 +458,9 @@ Window {
         property string anchorName: ""
         activeFocusOnTab: anchorName !== ""
         Layout.fillWidth: true
-        implicitHeight: cardLayout.implicitHeight + 28
-        radius: 15
+        Layout.alignment: Qt.AlignTop
+        implicitHeight: cardLayout.implicitHeight + 40
+        radius: 16
         color: root.paperRaised
         border.color: root.highlightedAnchor === anchorName && anchorName !== ""
                       ? root.cord : root.hairline
@@ -445,23 +471,24 @@ Window {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            anchors.margins: 14
-            spacing: 9
+            anchors.margins: 20
+            spacing: 14
 
             Text {
                 visible: paperCard.heading !== ""
                 Layout.fillWidth: true
                 text: paperCard.heading
                 color: root.ink
-                font.pixelSize: 15
-                font.weight: Font.DemiBold
+                font.pixelSize: 17
+                font.weight: Font.Medium
             }
             Text {
                 visible: paperCard.caption !== ""
                 Layout.fillWidth: true
                 text: paperCard.caption
                 color: root.mutedInk
-                font.pixelSize: 11
+                font.pixelSize: 13
+                lineHeight: 1.4
                 wrapMode: Text.WordWrap
             }
         }
@@ -470,10 +497,11 @@ Window {
     component QuietButton: Button {
         id: quietButton
         property bool accent: false
-        implicitHeight: 36
+        implicitHeight: 40
         leftPadding: 14
         rightPadding: 14
-        font.pixelSize: 12
+        font.pixelSize: 14
+        opacity: enabled ? 1 : 0.45
         contentItem: Text {
             text: quietButton.text
             color: quietButton.accent ? "white" : root.ink
@@ -484,8 +512,9 @@ Window {
         }
         background: Rectangle {
             radius: 11
-            color: quietButton.accent ? root.cord : (quietButton.hovered ? "#eee6db" : "#f8f3ec")
-            border.color: quietButton.accent ? root.cord : root.hairline
+            color: quietButton.accent ? root.cord : (quietButton.hovered ? "#eceef2" : "#f4f5f7")
+            border.width: quietButton.visualFocus ? 1 : 0
+            border.color: root.cord
         }
     }
 
@@ -496,14 +525,14 @@ Window {
         implicitWidth: pillText.implicitWidth + 18
         implicitHeight: 24
         radius: 12
-        color: good ? "#e5f0eb" : "#f1ebe2"
-        border.color: good ? "#a8c0b7" : root.hairline
+        color: good ? "#edf3f0" : "#f0f1f4"
+        border.width: 0
         Text {
             id: pillText
             anchors.centerIn: parent
             text: statusPill.label
             color: statusPill.good ? "#4c7565" : root.mutedInk
-            font.pixelSize: 10
+            font.pixelSize: 12
         }
     }
 
@@ -521,34 +550,125 @@ Window {
         }
     }
 
+    component PaperTab: TabButton {
+        id: tab
+        width: visible ? Math.max(0, root.width - 48) / (root.showConnectorsTab ? 4 : 3) : 0
+        implicitHeight: 42
+        contentItem: Text {
+            text: tab.text
+            font.pixelSize: 14
+            color: tab.checked ? root.cord : root.mutedInk
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        background: Rectangle {
+            radius: 10
+            color: tab.checked ? "#f2e9ec" : tab.hovered ? "#f0f1f4" : "transparent"
+            border.width: tab.visualFocus ? 1 : 0
+            border.color: root.cord
+        }
+    }
+
+    component PaperPicker: ComboBox {
+        id: picker
+        implicitHeight: 40
+        leftPadding: 12; rightPadding: 26
+        font.pixelSize: 14
+        contentItem: Text {
+            text: picker.displayText
+            font: picker.font
+            color: root.ink
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        indicator: Item {
+            x: picker.width - 21; y: (picker.height - height) / 2
+            width: 10; height: 8
+            Rectangle { x: 0; y: 3; width: 6; height: 1.5; rotation: 45; color: root.mutedInk; antialiasing: true }
+            Rectangle { x: 4; y: 3; width: 6; height: 1.5; rotation: -45; color: root.mutedInk; antialiasing: true }
+        }
+        background: Rectangle {
+            color: picker.down ? "#eceef2" : "#f4f5f7"
+            radius: 10
+            border.width: picker.visualFocus ? 1 : 0
+            border.color: root.cord
+        }
+    }
+
+    component PaperNumber: SpinBox {
+        id: number
+        implicitHeight: 40
+        implicitWidth: 140
+        leftPadding: 34; rightPadding: 34
+        font.pixelSize: 14
+        palette.text: root.ink
+        background: Rectangle {
+            radius: 10
+            color: "#f4f5f7"
+            border.width: number.visualFocus ? 1 : 0
+            border.color: root.cord
+        }
+        up.indicator: Rectangle {
+            x: number.width - width
+            height: number.height; implicitWidth: 32
+            color: number.up.pressed ? "#e5e7ed" : "transparent"
+            radius: 10
+            Text { anchors.centerIn: parent; text: "+"; font.pixelSize: 20; color: root.mutedInk }
+        }
+        down.indicator: Rectangle {
+            height: number.height; implicitWidth: 32
+            color: number.down.pressed ? "#e5e7ed" : "transparent"
+            radius: 10
+            Text { anchors.centerIn: parent; text: "−"; font.pixelSize: 20; color: root.mutedInk }
+        }
+    }
+
+    component PaperInput: TextField {
+        id: input
+        implicitHeight: 40
+        padding: 12
+        font.pixelSize: 14
+        color: root.ink
+        placeholderTextColor: "#9297a1"
+        selectByMouse: true
+        background: Rectangle {
+            radius: 10
+            color: "#ffffff"
+            border.color: input.activeFocus ? root.cord : root.hairline
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: root.paper
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 18
-            spacing: 12
+            anchors.margins: 24
+            spacing: 18
 
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 2
+                    spacing: 8
                     Text {
                         objectName: "workPanelSectionHeading"
                         text: root.sectionHeading
                         color: root.ink
-                        font.pixelSize: 22
-                        font.weight: Font.DemiBold
+                        font.pixelSize: 26
+                        font.weight: Font.Medium
                     }
                     Text {
                         objectName: "workPanelSectionCaption"
+                        visible: text !== ""
                         Layout.fillWidth: true
                         text: root.sectionCaption
                         color: root.mutedInk
-                        font.pixelSize: 11
+                        font.pixelSize: 13
+                        lineHeight: 1.4
                         wrapMode: Text.WordWrap
                     }
                 }
@@ -583,19 +703,20 @@ Window {
                 Layout.fillWidth: true
                 background: Rectangle { color: "transparent" }
                 onCurrentIndexChanged: root.syncSectionFromTab(currentIndex)
-                TabButton {
+                PaperTab {
                     objectName: "workPanelWorkTab"
                     text: root.narrowViewport ? "任务" : "任务与专注"
                 }
-                TabButton {
+                PaperTab {
                     objectName: "workPanelGrowthTab"
                     text: root.narrowViewport ? "共鸣" : "共鸣与衣橱"
                 }
-                TabButton {
+                PaperTab {
                     objectName: "workPanelConnectorsTab"
+                    visible: root.showConnectorsTab
                     text: root.narrowViewport ? "信笺" : "日历与 Slack"
                 }
-                TabButton {
+                PaperTab {
                     objectName: "workPanelWorldTab"
                     text: root.narrowViewport ? "盒中" : "盒中世界"
                 }
@@ -614,18 +735,53 @@ Window {
 
                     ColumnLayout {
                         id: workContent
-                        width: Math.max(workScroll.availableWidth, 640)
+                        width: workScroll.availableWidth
                         spacing: 12
+
+                        ActivityHero {
+                            Layout.fillWidth: true
+                            appBackend: root.appBackend
+                            defaultMinutes: focusMinutes.value
+                            onAddTaskRequested: newTaskTitle.forceActiveFocus()
+                            onActionFailed: function(reason) { root.lastNotice = reason }
+                        }
+
+                        ResumptionShelf {
+                            Layout.fillWidth: true
+                            appBackend: root.appBackend
+                        }
 
                         PaperCard {
                             heading: "任务收件箱"
-                            caption: "Calendar 和 Slack 不会自动变成任务；只有你确认后才会创建。"
+                            caption: ""
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                TextField {
+                                PaperPicker {
+                                    id: taskFilter
+                                    objectName: "workPanelTaskFilter"
+                                    model: ["进行中", "已完成", "已归档"]
+                                    implicitWidth: 124
+                                }
+                                Item { Layout.fillWidth: true }
+                                QuietButton {
+                                    objectName: "workPanelUndoComplete"
+                                    visible: Boolean(root.lastCompletedTask.occurrenceId)
+                                    text: "撤销刚才的完成"
+                                    onClicked: {
+                                        if (root.invoke("tasksReopen", [root.lastCompletedTask.id, root.lastCompletedTask.occurrenceId]))
+                                            root.lastCompletedTask = ({})
+                                    }
+                                }
+                            }
+
+                            GridLayout {
+                                columns: root.narrowViewport ? 3 : 4
+                                Layout.fillWidth: true
+                                PaperInput {
                                     id: newTaskTitle
                                     objectName: "workPanelTaskTitleInput"
+                                    Layout.columnSpan: root.narrowViewport ? 3 : 1
                                     Layout.fillWidth: true
                                     placeholderText: "写下一件要完成的事"
                                     selectByMouse: true
@@ -636,15 +792,17 @@ Window {
                                         border.color: newTaskTitle.activeFocus ? root.cord : root.hairline
                                     }
                                 }
-                                ComboBox {
+                                PaperPicker {
                                     id: taskPriority
                                     objectName: "workPanelTaskPriorityInput"
+                                    Layout.fillWidth: root.narrowViewport
                                     model: ["普通", "较高", "重要"]
                                     implicitWidth: 88
                                 }
-                                ComboBox {
+                                PaperPicker {
                                     id: taskCategory
                                     objectName: "workPanelTaskCategoryInput"
+                                    Layout.fillWidth: root.narrowViewport
                                     model: ["日常", "项目", "论文", "收件箱"]
                                     currentIndex: 0
                                     implicitWidth: 92
@@ -674,7 +832,8 @@ Window {
                                 id: taskList
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: Math.min(250, Math.max(54, contentHeight))
-                                model: root.taskItems
+                                model: taskFilter.currentIndex === 2 ? root.archivedTasks
+                                       : root.taskItems.filter(function(item) { return Boolean(item.completed) === (taskFilter.currentIndex === 1) })
                                 spacing: 5
                                 clip: true
                                 boundsBehavior: Flickable.StopAtBounds
@@ -683,9 +842,9 @@ Window {
                                     id: taskRow
                                     required property var modelData
                                     width: ListView.view ? ListView.view.width : 0
-                                    height: 42
+                                    height: 62
                                     radius: 10
-                                    color: taskHover.hovered ? "#f1e9de" : "#faf6ef"
+                                    color: taskHover.hovered ? "#eceef3" : "#f6f7f9"
                                     border.color: root.hairline
 
                                     RowLayout {
@@ -700,28 +859,59 @@ Window {
                                             color: taskRow.modelData.priority === "critical" ? root.cord
                                                    : (taskRow.modelData.priority === "high" ? "#b38262" : "#9caa9f")
                                         }
-                                        Text {
+                                        ColumnLayout {
                                             Layout.fillWidth: true
-                                            text: String(taskRow.modelData.title || "未命名任务")
-                                            color: taskRow.modelData.completed ? root.mutedInk : root.ink
-                                            font.strikeout: Boolean(taskRow.modelData.completed)
-                                            elide: Text.ElideRight
-                                            font.pixelSize: 12
-                                        }
-                                        Text {
-                                            text: String(taskRow.modelData.dueLabel || taskRow.modelData.dueAt || "")
-                                            color: root.mutedInk
-                                            font.pixelSize: 10
+                                            spacing: 4
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: String(taskRow.modelData.title || "未命名任务")
+                                                textFormat: Text.PlainText
+                                                color: taskRow.modelData.completed ? root.mutedInk : root.ink
+                                                font.strikeout: Boolean(taskRow.modelData.completed)
+                                                elide: Text.ElideRight; font.pixelSize: 14
+                                            }
+                                            Text {
+                                                visible: text !== ""
+                                                text: String(taskRow.modelData.dueLabel || "")
+                                                color: root.mutedInk; font.pixelSize: 11
+                                            }
                                         }
                                         QuietButton {
-                                            visible: !Boolean(taskRow.modelData.completed)
+                                            visible: !Boolean(taskRow.modelData.completed) && !Boolean(taskRow.modelData.archived)
+                                            objectName: "workPanelTaskFocus_" + String(taskRow.modelData.id)
+                                            text: "专注"; implicitHeight: 32
+                                            enabled: !Boolean(root.focusInfo.active)
+                                            onClicked: root.invoke("focusStartTask", [taskRow.modelData.id, focusMinutes.value])
+                                        }
+                                        QuietButton {
+                                            visible: !Boolean(taskRow.modelData.completed) && !Boolean(taskRow.modelData.archived)
+                                            enabled: !root.taskActionCooling
                                             objectName: "workPanelTaskComplete_"
                                                         + String(taskRow.modelData.id
                                                                  || taskRow.modelData.taskId || "")
                                             text: "完成"
                                             implicitHeight: 30
-                                            onClicked: root.invoke("tasksComplete", [taskRow.modelData.id || taskRow.modelData.taskId],
-                                                                   "任务服务尚未接入")
+                                            onClicked: root.completeTask(taskRow.modelData)
+                                        }
+                                        QuietButton {
+                                            objectName: "workPanelTaskMore_" + String(taskRow.modelData.id)
+                                            text: "更多"; implicitWidth: 64; implicitHeight: 32
+                                            Accessible.name: "编辑或整理任务"
+                                            onClicked: taskMenu.popup()
+                                            Menu {
+                                                id: taskMenu
+                                                MenuItem { objectName: "workPanelTaskEdit_" + String(taskRow.modelData.id); text: "编辑"; onTriggered: taskEditor.edit(taskRow.modelData) }
+                                                MenuItem {
+                                                    text: "撤销上次完成"
+                                                    enabled: Boolean(taskRow.modelData.latestCompletedOccurrenceId)
+                                                    onTriggered: root.invoke("tasksReopen", [taskRow.modelData.id, taskRow.modelData.latestCompletedOccurrenceId])
+                                                }
+                                                MenuItem {
+                                                    objectName: "workPanelTaskArchive_" + String(taskRow.modelData.id)
+                                                    text: taskRow.modelData.archived ? "恢复到任务列表" : "归档"
+                                                    onTriggered: root.invoke("tasksSetArchived", [taskRow.modelData.id, !taskRow.modelData.archived])
+                                                }
+                                            }
                                         }
                                     }
                                     HoverHandler { id: taskHover }
@@ -730,7 +920,7 @@ Window {
                                 Text {
                                     anchors.centerIn: parent
                                     visible: taskList.count === 0
-                                    text: "收件箱是空的"
+                                    text: taskFilter.currentIndex === 0 ? "暂时没有要做的事" : "这里还没有任务"
                                     color: root.mutedInk
                                     font.pixelSize: 12
                                 }
@@ -739,7 +929,25 @@ Window {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 12
+                            QuietButton {
+                                objectName: "workPanelSessionToggle"
+                                text: root.sessionControlsOpen ? "收起计时设置" : "专注与阅读设置"
+                                onClicked: root.sessionControlsOpen = !root.sessionControlsOpen
+                            }
+                            QuietButton {
+                                objectName: "workPanelReminderToggle"
+                                text: "提醒" + (root.reminderItems.length ? " · " + root.reminderItems.length : "")
+                                onClicked: root.reminderControlsOpen = !root.reminderControlsOpen
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        GridLayout {
+                            visible: root.sessionControlsOpen
+                            columns: root.narrowViewport ? 1 : 2
+                            Layout.fillWidth: true
+                            columnSpacing: 12
+                            rowSpacing: 12
 
                             PaperCard {
                                 id: focusCard
@@ -747,11 +955,11 @@ Window {
                                 anchorName: "focus"
                                 Layout.fillWidth: true
                                 heading: "专注"
-                                caption: "只记录显式会话。完成 25 分钟有效专注可获得 +8 共鸣，每日最多四次。"
+                                caption: root.focusInfo.taskTitle || "在任务旁点“专注”，就会记录在那件事上。"
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    SpinBox {
+                                    PaperNumber {
                                         id: focusMinutes
                                         objectName: "focusMinutesInput"
                                         from: 5
@@ -764,7 +972,7 @@ Window {
                                     Item { Layout.fillWidth: true }
                                     Text {
                                         text: root.focusInfo.active
-                                              ? ("已进行 " + Math.floor(Number(root.focusInfo.elapsedSeconds || 0) / 60) + " 分钟")
+                                              ? ("还剩 " + Math.ceil(Number(root.focusInfo.remainingSeconds || 0) / 60) + " 分钟")
                                               : "尚未开始"
                                         color: root.focusInfo.active ? root.calm : root.mutedInk
                                         font.pixelSize: 11
@@ -804,7 +1012,7 @@ Window {
                                 anchorName: "reading"
                                 Layout.fillWidth: true
                                 heading: "论文阅读"
-                                caption: "检测到 PDF 或 WPS 时只提出建议，不会擅自开始计时。每 20 分钟有效阅读可获得 +6 共鸣。"
+                                caption: "留一段时间，读手边这篇。"
 
                                 Text {
                                     Layout.fillWidth: true
@@ -832,13 +1040,16 @@ Window {
                         }
 
                         PaperCard {
+                            visible: root.reminderControlsOpen
                             heading: "提醒"
-                            caption: "提醒由本地调度器执行；模型不可用时仍然会准时工作。"
-                            RowLayout {
+                            caption: "到时间提醒你，不需要模型在线。"
+                            GridLayout {
+                                columns: root.narrowViewport ? 3 : 4
                                 Layout.fillWidth: true
-                                TextField {
+                                PaperInput {
                                     id: reminderTitle
                                     objectName: "workPanelReminderTitleInput"
+                                    Layout.columnSpan: root.narrowViewport ? 3 : 1
                                     Layout.fillWidth: true
                                     placeholderText: "提醒内容"
                                     background: Rectangle {
@@ -847,9 +1058,10 @@ Window {
                                         border.color: reminderTitle.activeFocus ? root.cord : root.hairline
                                     }
                                 }
-                                SpinBox {
+                                PaperNumber {
                                     id: reminderDelay
                                     objectName: "workPanelReminderDelayInput"
+                                    Layout.fillWidth: root.narrowViewport
                                     from: 1
                                     to: 1440
                                     value: 30
@@ -921,7 +1133,7 @@ Window {
 
                         PaperCard {
                             heading: "共鸣进度"
-                            caption: "共鸣来自不可变事件账本；重复事件、重启重放和双击完成不会重复奖励。"
+                            caption: "做过的事情，慢慢留在盒子里。"
 
                             RowLayout {
                                 Layout.fillWidth: true
@@ -961,7 +1173,12 @@ Window {
                                 }
                             }
 
+                            QuietButton {
+                                text: root.growthRulesOpen ? "收起积分规则" : "怎么算共鸣？"
+                                onClicked: root.growthRulesOpen = !root.growthRulesOpen
+                            }
                             GridLayout {
+                                visible: root.growthRulesOpen
                                 Layout.fillWidth: true
                                 columns: 3
                                 columnSpacing: 14

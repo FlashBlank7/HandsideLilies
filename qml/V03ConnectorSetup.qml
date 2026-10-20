@@ -11,13 +11,20 @@ Window {
     property var appBackend: null
     property string provider: "calendar"
     property string notice: ""
-    property color paper: "#fffaf2"
-    property color paperRaised: "#fffdf9"
-    property color ink: "#494540"
-    property color mutedInk: "#847d75"
-    property color hairline: "#d9cdbf"
-    property color cord: "#92362f"
-    property color calm: "#66877a"
+    property string section: "use"
+    property bool choosingItem: false
+    property bool creatingCalendar: false
+    property bool showAllItems: false
+    property string lastSelectionKey: ""
+    readonly property bool settingsPage: section === "settings"
+    readonly property bool narrow: width < 640
+    property color paper: "#fafafb"
+    property color paperRaised: "#ffffff"
+    property color ink: "#353b45"
+    property color mutedInk: "#758091"
+    property color hairline: "#e4e5ea"
+    property color cord: "#985d6d"
+    property color calm: "#567b6c"
 
     readonly property var calendarInfo: value("calendarStatus", ({
         connected: false,
@@ -32,6 +39,8 @@ Window {
         error: ""
     }))
     readonly property var currentInfo: provider === "slack" ? slackInfo : calendarInfo
+    readonly property bool connectionHealthy: Boolean(currentInfo.connected)
+                                               && String(currentInfo.error || currentInfo.errorMessage || "") === ""
     readonly property var calendarItems: value("calendarUpcoming", [])
     readonly property var slackItems: value("slackInbox", [])
     readonly property var connectorSelection: value("connectorSelectedItem", ({}))
@@ -48,7 +57,7 @@ Window {
                                                    && String(proposal.action || "").toLowerCase().indexOf("create") >= 0
     readonly property string assistanceValue: String((currentInfo.policyCanonical || ({})).assistance || "")
     readonly property string retentionValue: String((currentInfo.policyCanonical || ({})).retention || "")
-    readonly property bool mayAssist: retentionValue !== "metadata"
+    readonly property bool mayAssist: (retentionValue === "searchable-summary" || retentionValue === "extended-cache")
                                       && (assistanceValue === "assist"
                                           || assistanceValue === "confirm-execute")
     readonly property bool mayConfirmExecute: assistanceValue === "confirm-execute"
@@ -56,6 +65,10 @@ Window {
     property string selectedSlackId: ""
     readonly property var selectedCalendarItem: calendarItem(selectedCalendarId)
     readonly property var selectedSlackItem: slackItem(selectedSlackId)
+    readonly property var currentItems: provider === "slack" ? slackItems : calendarItems
+    readonly property string currentSelectedId: provider === "slack" ? selectedSlackId : selectedCalendarId
+    readonly property var currentSelectedItem: provider === "slack" ? selectedSlackItem : selectedCalendarItem
+    readonly property string assistExplanation: assistanceExplanation(currentSelectedItem)
     property string pendingAssistProvider: ""
     property string pendingAssistEventId: ""
     property string calendarAssistSuggestion: ""
@@ -68,11 +81,21 @@ Window {
     property string loadedProvider: ""
     property bool applyingProviderDraft: false
     property bool configurationReady: false
+    readonly property string slackManifestDraftKey: JSON.stringify({
+        scope: scopeBox.currentIndex, assistance: assistanceBox.currentIndex,
+        redirectUri: slackRedirectUri.text.trim(), provider: provider
+    })
+    onSlackManifestDraftKeyChanged: {
+        if (slackManifest.text !== "") {
+            slackManifest.text = ""
+            notice = "配置选项已改变，请重新生成预览。未保存或授权。"
+        }
+    }
 
     width: Math.min(900, Screen.width - 48)
     height: Math.min(760, Screen.height - 64)
-    minimumWidth: 720
-    minimumHeight: 560
+    minimumWidth: 480
+    minimumHeight: 480
     visible: false
     color: paper
     title: "莉莉丝 · 日历与 Slack 信笺"
@@ -125,6 +148,44 @@ Window {
 
     function normalizedProvider(value) {
         return String(value || "") === "google-calendar" ? "calendar" : String(value || "")
+    }
+
+    function showUsage() {
+        section = "use"
+        choosingItem = false
+        creatingCalendar = false
+        notice = ""
+    }
+
+    function canAssistItem(item) {
+        return mayAssist && item && item.assistanceState === "available"
+    }
+
+    function assistanceExplanation(item) {
+        if (assistanceValue !== "assist" && assistanceValue !== "confirm-execute")
+            return "当前只做提醒。需要总结或拟稿，可在“连接与隐私”中开启协助。"
+        if (retentionValue === "metadata")
+            return "当前不保存正文，无法总结或拟稿。你可以保留这个设置，直接查看原文。"
+        if (!canAssistItem(item))
+            return "这条内容没有可用的正文或摘要，暂时无法协助。调整留存设置不会补回旧内容。"
+        return "只会把这一项和你的要求交给模型，不附带其他消息或长期记忆。"
+    }
+
+    function chooseItem(eventId) {
+        var response = callBackend("connectorSelectItem", [provider, eventId], "这条内容暂时无法打开")
+        if (response.ok) {
+            synchronizeBackendSelection()
+            section = "use"
+            choosingItem = false
+            creatingCalendar = false
+            connectorSetupScroll.contentItem.contentY = 0
+        }
+    }
+
+    onSectionChanged: {
+        if (section !== "settings" && configurationReady)
+            slackXappToken.text = ""
+        Qt.callLater(function() { connectorSetupScroll.contentItem.contentY = 0 })
     }
 
     function canonicalAxis(axis, value) {
@@ -373,6 +434,10 @@ Window {
         var selectedProvider = normalizedProvider(connectorSelection.provider
                                                   || connectorSelection.connector)
         var selectedId = String(connectorSelection.id || connectorSelection.eventId || "")
+        var key = selectedProvider + ":" + selectedId
+        if (lastSelectionKey === key)
+            return
+        lastSelectionKey = key
         if (selectedProvider === "calendar" && selectedId !== "") {
             provider = "calendar"
             if (selectedCalendarId !== selectedId) {
@@ -393,11 +458,10 @@ Window {
             selectedSlackId = ""
             calendarAssistSuggestion = ""
         }
-        if (visible) {
-            Qt.callLater(function() {
-                root.raise()
-                root.requestActivate()
-            })
+        if (selectedId !== "") {
+            section = "use"
+            creatingCalendar = false
+            choosingItem = false
         }
     }
 
@@ -417,12 +481,14 @@ Window {
             return false
         }
         notice = successText
+        section = "use"
+        Qt.callLater(function() { connectorSetupScroll.contentItem.contentY = Math.max(0, proposalCard.y - 8) })
         return true
     }
 
     function proposeCalendarCreate() {
         if (!mayConfirmExecute) {
-            notice = "只有协助能力为 confirm-execute 时才能生成写入提案；未确认不会写入。"
+            notice = "请先在“连接与隐私”中将协助能力改为“确认执行”，并完成所需授权。"
             return
         }
         var payload = {
@@ -455,7 +521,7 @@ Window {
 
     function proposeCalendarUpdate() {
         if (!mayConfirmExecute) {
-            notice = "只有协助能力为 confirm-execute 时才能生成写入提案；未确认不会写入。"
+            notice = "请先在“连接与隐私”中开启“确认执行”并完成授权。"
             return
         }
         var originalStart = calendarTime(selectedCalendarItem, "start")
@@ -478,7 +544,7 @@ Window {
 
     function proposeSlackReply() {
         if (!mayConfirmExecute) {
-            notice = "只有协助能力为 confirm-execute 时才能生成发送提案；未确认不会发送。"
+            notice = "请先在“连接与隐私”中开启“确认执行”并完成授权。"
             return
         }
         var response = callBackend("slackProposeReply",
@@ -488,8 +554,9 @@ Window {
     }
 
     function requestAssist(providerName, eventId, instruction) {
-        if (!mayAssist) {
-            notice = "当前协助能力不允许处理所选条目。"
+        var item = providerName === "slack" ? slackItem(eventId) : calendarItem(eventId)
+        if (!canAssistItem(item)) {
+            notice = assistanceExplanation(item)
             return
         }
         pendingAssistProvider = normalizedProvider(providerName)
@@ -536,7 +603,13 @@ Window {
 
     onConnectorSelectionChanged: synchronizeBackendSelection()
     onConnectorAssistResultChanged: applyAssistResult()
-    onProviderChanged: activateProvider(provider)
+    onProviderChanged: {
+        activateProvider(provider)
+        creatingCalendar = false
+        choosingItem = false
+        showAllItems = false
+        notice = ""
+    }
     onCalendarInfoChanged: synchronizeProviderStatus("calendar")
     onSlackInfoChanged: synchronizeProviderStatus("slack")
     onCalendarItemsChanged: {
@@ -626,30 +699,26 @@ Window {
     }
 
     function generateSlackManifest() {
-        if (!saveConfiguration(false))
+        if (provider !== "slack")
             return
-        var generated = ""
-        if (appBackend) {
-            try {
-                var member = appBackend.slackManifestText
-                if (typeof member === "function")
-                    generated = String(member())
-                else if (member !== undefined && member !== null)
-                    generated = String(member)
-            } catch (error) {
-                generated = ""
-            }
+        // Do not call configurationMap(): it includes write-only xapp input.
+        // A preview must neither save a draft nor fall back to saved policy.
+        slackManifest.text = ""
+        var policy = policyMap()
+        var response = callBackend("slackGenerateManifest", [{
+            policy: {scope: policy.scope, assistance: policy.assistance},
+            redirectUri: slackRedirectUri.text.trim()
+        }], "配置预览没有生成，请检查回调地址和权限选项")
+        if (!response.ok)
+            return
+        var result = response.result
+        if (!result || result.ok !== true || typeof result.manifest !== "string"
+                || result.manifest.trim() === "") {
+            notice = "配置预览没有生成，未使用旧配置。"
+            return
         }
-        if (generated === "") {
-            var response = callBackend("slackGenerateManifest", [configurationMap()],
-                                       "暂时无法生成 Slack manifest")
-            if (response.ok && response.result !== undefined && response.result !== null)
-                generated = String(response.result)
-            if (generated === "")
-                generated = String(value("slackManifestText", ""))
-        }
-        slackManifest.text = generated
-        notice = generated === "" ? "manifest 尚未生成" : "manifest 已生成，可全选复制"
+        slackManifest.text = result.manifest
+        notice = "已生成本地预览；未保存配置、读取令牌或连接账号。"
     }
 
     function resolveProposal(confirmed) {
@@ -671,7 +740,7 @@ Window {
         if (!providerHasProposal || provider !== "slack")
             return
         if (!mayConfirmExecute) {
-            notice = "当前策略不是 confirm-execute，不能生成替换提案；未确认不会发送。"
+            notice = "当前未开启“确认执行”，不能更新发送预览。"
             return
         }
         var proposalId = String(proposal.id || proposal.proposalId || "")
@@ -685,6 +754,8 @@ Window {
     }
 
     function readableState(info) {
+        if (String(info.error || info.errorMessage || "") !== "")
+            return "连接异常"
         if (Boolean(info.connected))
             return "已连接"
         var state = String(info.authorizationState || info.state || "未配置")
@@ -696,6 +767,8 @@ Window {
             return "连接异常"
         if (state === "not-configured")
             return "未配置"
+        if (state === "configured")
+            return "尚未连接"
         return state
     }
 
@@ -744,6 +817,7 @@ Window {
                 color: root.ink
                 font.pixelSize: 15
                 font.weight: Font.DemiBold
+                wrapMode: Text.WordWrap
             }
 
             Label {
@@ -751,7 +825,8 @@ Window {
                 Layout.fillWidth: true
                 text: card.caption
                 color: root.mutedInk
-                font.pixelSize: 11
+                font.pixelSize: 13
+                lineHeight: 1.35
                 wrapMode: Text.WordWrap
             }
         }
@@ -767,22 +842,52 @@ Window {
     component QuietButton: Button {
         id: quietButton
         property bool accent: false
+        property bool selected: false
         implicitHeight: 37
         leftPadding: 15
         rightPadding: 15
         font.pixelSize: 12
         contentItem: Label {
             text: quietButton.text
-            color: quietButton.accent ? "#fffdf9" : root.ink
+            textFormat: Text.PlainText
+            color: quietButton.accent ? "#fffdf9" : (quietButton.selected ? root.cord : root.ink)
+            opacity: quietButton.enabled ? 1 : 0.45
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
         }
         background: Rectangle {
             radius: 10
             color: quietButton.accent ? root.cord
-                                      : (quietButton.hovered ? "#f2e9dd" : root.paperRaised)
+                                      : (quietButton.selected ? "#f2e8ed" : (quietButton.hovered ? "#f0f1f4" : root.paperRaised))
             border.color: quietButton.accent ? root.cord : root.hairline
             opacity: quietButton.enabled ? 1 : 0.45
+        }
+    }
+
+    component InputField: TextField {
+        implicitHeight: 40
+        leftPadding: 11
+        rightPadding: 11
+        font.pixelSize: 13
+        color: root.ink
+        placeholderTextColor: root.mutedInk
+        background: Rectangle {
+            radius: 9
+            color: "#f5f6f8"
+            border.color: parent.activeFocus ? root.cord : root.hairline
+        }
+    }
+
+    component NoteField: TextArea {
+        padding: 11
+        font.pixelSize: 13
+        textFormat: TextEdit.PlainText
+        placeholderTextColor: root.mutedInk
+        background: Rectangle {
+            radius: 9
+            color: "#f5f6f8"
+            border.color: parent.activeFocus ? root.cord : root.hairline
         }
     }
 
@@ -817,7 +922,8 @@ Window {
             Layout.fillWidth: true
             text: axis.explanation
             color: root.mutedInk
-            font.pixelSize: 10
+            font.pixelSize: 12
+            lineHeight: 1.35
             wrapMode: Text.WordWrap
         }
     }
@@ -831,15 +937,18 @@ Window {
             anchors.margins: 18
             spacing: 12
 
-            RowLayout {
+            GridLayout {
                 Layout.fillWidth: true
-                spacing: 12
+                columns: root.narrow ? 1 : 2
+                columnSpacing: 12
+                rowSpacing: 12
 
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 3
 
                     Label {
+                        Layout.fillWidth: true
                         text: "日历与 Slack 信笺"
                         color: root.ink
                         font.pixelSize: 22
@@ -847,26 +956,47 @@ Window {
                     }
 
                     Label {
-                        text: "外部连接默认关闭；授权、留存和写入能力彼此独立。"
+                        Layout.fillWidth: true
+                        text: "可选连接，不影响本地任务和阅读。"
                         color: root.mutedInk
-                        font.pixelSize: 11
+                        font.pixelSize: 13
+                        wrapMode: Text.WordWrap
                     }
                 }
 
-                TabBar {
-                    id: providerTabs
-                    currentIndex: root.provider === "slack" ? 1 : 0
-                    onCurrentIndexChanged: root.provider = currentIndex === 1 ? "slack" : "calendar"
-
-                    TabButton {
+                RowLayout {
+                    objectName: "connectorProviderTabs"
+                    Layout.fillWidth: root.narrow
+                    QuietButton {
+                        objectName: "connectorCalendarProvider"
                         text: "Google Calendar"
-                        width: implicitWidth + 24
+                        selected: root.provider === "calendar"
+                        onClicked: root.provider = "calendar"
                     }
-                    TabButton {
+                    QuietButton {
+                        objectName: "connectorSlackProvider"
                         text: "Slack"
-                        width: implicitWidth + 24
+                        selected: root.provider === "slack"
+                        onClicked: root.provider = "slack"
                     }
                 }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                QuietButton {
+                    objectName: "connectorUseTab"
+                    text: root.providerHasProposal ? "日程与信笺 · 待确认" : "日程与信笺"
+                    accent: !root.settingsPage
+                    onClicked: root.section = "use"
+                }
+                QuietButton {
+                    objectName: "connectorSettingsTab"
+                    text: "连接与隐私"
+                    accent: root.settingsPage
+                    onClicked: root.section = "settings"
+                }
+                Item { Layout.fillWidth: true }
             }
 
             ScrollView {
@@ -878,50 +1008,74 @@ Window {
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                 ColumnLayout {
-                    width: Math.max(640, parent.width - 12)
-                    spacing: 12
+                    width: connectorSetupScroll.availableWidth - 12
+                    spacing: 18
 
                     PaperCard {
-                        heading: root.provider === "calendar" ? "Google Calendar 状态" : "Slack 状态"
+                        objectName: "connectorOptionalIntro"
+                        visible: !root.settingsPage && !root.currentInfo.connected
+                                 && root.currentItems.length === 0 && !root.providerHasProposal
+                        heading: "需要时，再连接"
+                        caption: root.provider === "calendar"
+                                 ? "连接后可查看日程。需要你自己的 Google Desktop OAuth Client；目前不是一键登录。"
+                                 : "连接后可查看信笺。需要你创建 Slack custom app，组织管理员也可能限制接入。"
+                        QuietButton {
+                            objectName: "connectorStartSetup"
+                            text: "查看连接步骤"
+                            onClicked: root.section = "settings"
+                        }
+                    }
 
-                        RowLayout {
+                    PaperCard {
+                        visible: root.settingsPage || root.currentInfo.connected || root.currentItems.length > 0
+                        heading: root.settingsPage ? (root.provider === "calendar" ? "Google Calendar 状态" : "Slack 状态") : ""
+
+                        GridLayout {
                             Layout.fillWidth: true
-                            spacing: 10
+                            columns: root.settingsPage && root.narrow ? 1 : 3
+                            columnSpacing: 10
+                            rowSpacing: 8
 
                             Rectangle {
                                 implicitWidth: stateText.implicitWidth + 22
                                 implicitHeight: 27
                                 radius: 13
-                                color: Boolean(root.currentInfo.connected) ? "#e5efe9" : "#f2e8dd"
-                                border.color: Boolean(root.currentInfo.connected) ? root.calm : root.hairline
+                                color: root.connectionHealthy ? "#e5efe9" : "#f2e8dd"
+                                border.color: root.connectionHealthy ? root.calm : root.hairline
 
                                 Label {
                                     id: stateText
+                                    objectName: "connectorConnectionState"
                                     anchors.centerIn: parent
                                     text: root.readableState(root.currentInfo)
-                                    color: Boolean(root.currentInfo.connected) ? root.calm : root.mutedInk
+                                    color: root.connectionHealthy ? root.calm : root.mutedInk
                                     font.pixelSize: 11
                                     font.weight: Font.DemiBold
                                 }
                             }
 
                             Label {
+                                objectName: "connectorAccountLabel"
                                 Layout.fillWidth: true
                                 text: String(root.currentInfo.accountName
+                                             || root.currentInfo.displayName
                                              || root.currentInfo.workspace
                                              || root.currentInfo.account
-                                             || "尚未绑定账号")
+                                             || (root.currentInfo.connected ? "当前账号" : "尚未绑定账号"))
                                 color: root.ink
                                 font.pixelSize: 12
                                 elide: Text.ElideRight
                             }
 
                             Label {
+                                Layout.fillWidth: true
+                                visible: root.settingsPage
                                 text: String(root.currentInfo.lastSyncAt || "") === ""
                                       ? "尚未同步"
                                       : "最后同步：" + String(root.currentInfo.lastSyncAt)
                                 color: root.mutedInk
-                                font.pixelSize: 10
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
                             }
                         }
 
@@ -936,12 +1090,73 @@ Window {
                     }
 
                     PaperCard {
-                        visible: root.provider === "calendar"
+                        objectName: "connectorItemPicker"
+                        visible: !root.settingsPage && !root.creatingCalendar && !root.providerHasProposal
+                                 && (root.currentSelectedId === "" || root.choosingItem)
+                                 && (root.currentInfo.connected || root.currentItems.length > 0)
+                        heading: root.provider === "calendar" ? "选一条日程" : "选一封信笺"
+                        caption: root.currentItems.length === 0 ? "这里暂时没有内容。" : "点选后再决定查看、协助或准备修改，不会自动交给模型。"
+                        Repeater {
+                            model: root.currentItems.slice(0, root.showAllItems ? 30 : 6)
+                            delegate: QuietButton {
+                                required property var modelData
+                                required property int index
+                                Layout.fillWidth: true
+                                objectName: "connectorChooseItem_" + index
+                                text: String(modelData.summary || modelData.title || modelData.text
+                                             || (root.provider === "calendar" ? "日程" : "信笺"))
+                                      .replace(/\s+/g, " ").slice(0, 120)
+                                onClicked: root.chooseItem(root.itemId(modelData))
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            QuietButton {
+                                visible: root.currentItems.length > 6
+                                text: root.showAllItems ? "收起" : "显示更多"
+                                onClicked: root.showAllItems = !root.showAllItems
+                            }
+                            QuietButton {
+                                visible: root.provider === "calendar" && root.currentInfo.connected
+                                text: "刷新日程"
+                                onClicked: root.callBackend("calendarRefresh", [], "刷新没有开始")
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        visible: !root.settingsPage && !root.providerHasProposal && (root.currentInfo.connected || root.currentSelectedId !== "")
+                        Layout.fillWidth: true
+                        QuietButton {
+                            visible: root.currentSelectedId !== "" && !root.choosingItem
+                            text: "换一条"
+                            onClicked: { root.choosingItem = true; root.creatingCalendar = false }
+                        }
+                        QuietButton {
+                            objectName: "connectorOpenOriginal"
+                            visible: root.currentSelectedId !== "" && !root.choosingItem
+                            text: "打开原文"
+                            enabled: String(root.currentSelectedItem.link || "") !== ""
+                            onClicked: root.callBackend(root.provider === "calendar" ? "calendarOpenEvent" : "slackOpenMessage",
+                                                        [root.currentSelectedId], "原文没有打开，请检查链接或默认浏览器")
+                        }
+                        QuietButton {
+                            objectName: "connectorCreateCalendarToggle"
+                            visible: root.provider === "calendar" && root.currentInfo.connected
+                            text: root.creatingCalendar ? "收起新建" : "新建日程"
+                            onClicked: root.creatingCalendar = !root.creatingCalendar
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    PaperCard {
+                        objectName: "connectorGoogleSetupCard"
+                        visible: root.settingsPage && root.provider === "calendar"
                         heading: "Google Desktop OAuth"
                         caption: "使用你自己的 Desktop OAuth Client。授权在系统浏览器中完成，莉莉丝不会嵌入登录页。"
 
                         FieldLabel { text: "Desktop OAuth Client ID" }
-                        TextField {
+                        InputField {
                             id: googleClientId
                             objectName: "connectorGoogleClientId"
                             Layout.fillWidth: true
@@ -960,18 +1175,68 @@ Window {
                     }
 
                     PaperCard {
-                        visible: root.provider === "slack"
+                        objectName: "connectorSlackSetupCard"
+                        visible: root.settingsPage && root.provider === "slack"
                         heading: "Slack 本地个人接入"
                         caption: "使用你创建的 custom app 与 Socket Mode。令牌只交给 Windows 安全存储，不写入项目数据目录。"
 
+                        Label {
+                            Layout.fillWidth: true
+                            text: "先生成配置，在 Slack 创建应用；再填写应用信息并授权。生成预览不需要 Client ID 或令牌。"
+                            color: root.ink
+                            font.pixelSize: 13
+                            lineHeight: 1.35
+                            wrapMode: Text.WordWrap
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            QuietButton {
+                                objectName: "connectorGenerateSlackManifest"
+                                text: "生成应用配置"
+                                onClicked: root.generateSlackManifest()
+                            }
+                            QuietButton {
+                                objectName: "connectorCopySlackManifest"
+                                text: "复制全部"
+                                enabled: slackManifest.text !== ""
+                                onClicked: { slackManifest.selectAll(); slackManifest.copy() }
+                            }
+                        }
+                        ScrollView {
+                            objectName: "connectorSlackManifestScroll"
+                            visible: slackManifest.text !== ""
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 190
+                            clip: true
+                            NoteField {
+                                id: slackManifest
+                                objectName: "connectorSlackManifestPreview"
+                                readOnly: true
+                                selectByMouse: true
+                                wrapMode: TextEdit.NoWrap
+                                font.family: "Consolas"
+                                font.pixelSize: 12
+                                Accessible.name: "Slack App manifest 本地预览"
+                            }
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "预览使用下方所选的权限；导入前请核对。配置会启用 PKCE，Slack 提示该设置不能自行关闭。是否能连接仍需完成授权验证。"
+                            color: root.mutedInk
+                            font.pixelSize: 12
+                            lineHeight: 1.35
+                            wrapMode: Text.WordWrap
+                        }
+                        FieldLabel { text: "应用创建后，再填写以下信息" }
+
                         GridLayout {
                             Layout.fillWidth: true
-                            columns: 2
+                            columns: root.narrow ? 1 : 2
                             columnSpacing: 12
                             rowSpacing: 7
 
                             FieldLabel { text: "OAuth Client ID" }
-                            TextField {
+                            InputField {
                                 id: slackClientId
                                 objectName: "connectorSlackClientId"
                                 Layout.fillWidth: true
@@ -981,7 +1246,7 @@ Window {
                             }
 
                             FieldLabel { text: "Redirect URI" }
-                            TextField {
+                            InputField {
                                 id: slackRedirectUri
                                 objectName: "connectorSlackRedirectUri"
                                 Layout.fillWidth: true
@@ -992,7 +1257,7 @@ Window {
                             }
 
                             FieldLabel { text: "Socket Mode xapp Token" }
-                            TextField {
+                            InputField {
                                 id: slackXappToken
                                 objectName: "connectorSlackXappToken"
                                 Layout.fillWidth: true
@@ -1004,7 +1269,7 @@ Window {
                             }
 
                             FieldLabel { text: "当前用户 ID" }
-                            TextField {
+                            InputField {
                                 id: slackCurrentUserId
                                 objectName: "connectorSlackCurrentUserId"
                                 Layout.fillWidth: true
@@ -1014,7 +1279,7 @@ Window {
                             }
 
                             FieldLabel { text: "精选频道" }
-                            TextField {
+                            InputField {
                                 id: slackChannels
                                 objectName: "connectorSlackChannels"
                                 Layout.fillWidth: true
@@ -1026,7 +1291,7 @@ Window {
 
                         Label {
                             Layout.fillWidth: true
-                            text: "这个地址必须与 Slack App → OAuth & Permissions 中登记的 Redirect URL 完全一致。使用本机回调时请保留固定端口；也可以填写你已登记的自定义 URI。"
+                            text: "回调地址须与 Slack 中登记的地址完全一致。本版只接收带固定端口的 http://127.0.0.1 本机回调，不支持自定义 URI。"
                             color: root.mutedInk
                             font.pixelSize: 10
                             wrapMode: Text.WordWrap
@@ -1050,37 +1315,10 @@ Window {
                             }
                         }
 
-                        RowLayout {
-                            Layout.fillWidth: true
-
-                            QuietButton {
-                                text: "生成 App manifest"
-                                onClicked: root.generateSlackManifest()
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: "生成后可在 Slack App 管理页粘贴导入。"
-                                color: root.mutedInk
-                                font.pixelSize: 10
-                            }
-                        }
-
-                        TextArea {
-                            id: slackManifest
-                            visible: text !== ""
-                            Layout.fillWidth: true
-                            implicitHeight: Math.min(190, Math.max(90, contentHeight + 20))
-                            readOnly: true
-                            selectByMouse: true
-                            wrapMode: TextEdit.NoWrap
-                            font.family: "Consolas"
-                            font.pixelSize: 10
-                            placeholderText: "生成的 manifest 会显示在这里"
-                            Accessible.name: "Slack App manifest"
-                        }
                     }
 
                     PaperCard {
+                        visible: root.settingsPage
                         heading: "四项独立权限"
                         caption: "改变其中一项不会暗中升级其他项；共鸣成长也不会改动这里。"
 
@@ -1115,7 +1353,7 @@ Window {
                                 controlName: "connectorPolicyRetention"
                                 Layout.fillWidth: true
                                 label: "本地留存"
-                                explanation: "元数据不存正文；摘要与扩展缓存都会加密，扩展缓存仅保留已选来源。"
+                                explanation: "元数据不存正文，也无法总结或拟稿。摘要与扩展缓存会加密；改变设置不会补回旧内容。"
                                 model: ["元数据", "可搜索摘要", "扩展缓存"]
                                 currentIndex: 0
                             }
@@ -1133,13 +1371,14 @@ Window {
                     }
 
                     PaperCard {
-                        visible: root.provider === "calendar"
+                        objectName: "connectorCalendarCreateCard"
+                        visible: !root.settingsPage && !root.providerHasProposal && root.provider === "calendar" && root.creatingCalendar
                         heading: "准备新建日程"
                         caption: "填写内容只会生成一份创建预览；在最终预览中手动确认以前，Calendar 不会写入任何日程。"
 
                         GridLayout {
                             Layout.fillWidth: true
-                            columns: 2
+                            columns: root.narrow ? 1 : 2
                             columnSpacing: 12
                             rowSpacing: 8
 
@@ -1147,7 +1386,7 @@ Window {
                                 text: "标题"
                                 Layout.preferredWidth: 150
                             }
-                            TextField {
+                            InputField {
                                 id: calendarCreateTitle
                                 Layout.fillWidth: true
                                 placeholderText: "例如：项目复盘"
@@ -1156,7 +1395,7 @@ Window {
                             }
 
                             FieldLabel { text: "开始时间（ISO 8601）" }
-                            TextField {
+                            InputField {
                                 id: calendarCreateStart
                                 Layout.fillWidth: true
                                 placeholderText: "2026-09-01T10:00:00+09:00"
@@ -1165,7 +1404,7 @@ Window {
                             }
 
                             FieldLabel { text: "结束时间（ISO 8601）" }
-                            TextField {
+                            InputField {
                                 id: calendarCreateEnd
                                 Layout.fillWidth: true
                                 placeholderText: "2026-09-01T11:00:00+09:00"
@@ -1174,7 +1413,7 @@ Window {
                             }
 
                             FieldLabel { text: "IANA 时区" }
-                            TextField {
+                            InputField {
                                 id: calendarCreateTimeZone
                                 Layout.fillWidth: true
                                 text: "Asia/Tokyo"
@@ -1200,7 +1439,7 @@ Window {
                                 Layout.fillWidth: true
                                 text: root.mayConfirmExecute
                                       ? "生成后还必须核对最终差异并再次确认。"
-                                      : "当前策略不是 confirm-execute，不能生成写入提案；未确认绝不写入。"
+                                      : "需要在“连接与隐私”中开启“确认执行”并完成授权。"
                                 color: root.mayConfirmExecute ? root.mutedInk : root.cord
                                 font.pixelSize: 10
                                 wrapMode: Text.WordWrap
@@ -1219,9 +1458,11 @@ Window {
                     }
 
                     PaperCard {
-                        visible: root.provider === "calendar" && root.selectedCalendarId !== ""
+                        objectName: "connectorCalendarItemCard"
+                        visible: !root.settingsPage && !root.providerHasProposal && !root.creatingCalendar && !root.choosingItem
+                                 && root.provider === "calendar" && root.selectedCalendarId !== ""
                         heading: "准备修改所选日程"
-                        caption: "这里只允许提出标题、开始时间和结束时间的变化。生成预览不会写入；只有最终手动确认才会提交。协助建议还需将本地留存设为可搜索摘要或扩展缓存。"
+                        caption: "可以准备标题或时间的修改，最终确认后才提交。"
 
                         Label {
                             Layout.fillWidth: true
@@ -1233,7 +1474,7 @@ Window {
 
                         GridLayout {
                             Layout.fillWidth: true
-                            columns: 2
+                            columns: root.narrow ? 1 : 2
                             columnSpacing: 12
                             rowSpacing: 8
 
@@ -1241,7 +1482,7 @@ Window {
                                 text: "标题"
                                 Layout.preferredWidth: 150
                             }
-                            TextField {
+                            InputField {
                                 id: calendarUpdateTitle
                                 Layout.fillWidth: true
                                 placeholderText: "保留为空则不修改"
@@ -1250,7 +1491,7 @@ Window {
                             }
 
                             FieldLabel { text: "开始时间（ISO 8601）" }
-                            TextField {
+                            InputField {
                                 id: calendarUpdateStart
                                 Layout.fillWidth: true
                                 placeholderText: "保留为空则不修改"
@@ -1259,7 +1500,7 @@ Window {
                             }
 
                             FieldLabel { text: "结束时间（ISO 8601）" }
-                            TextField {
+                            InputField {
                                 id: calendarUpdateEnd
                                 Layout.fillWidth: true
                                 placeholderText: "保留为空则不修改"
@@ -1270,7 +1511,7 @@ Window {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            TextField {
+                            InputField {
                                 id: calendarAssistInstruction
                                 Layout.fillWidth: true
                                 placeholderText: "可选：请莉莉丝给出修改建议（不会自动写入）"
@@ -1278,9 +1519,10 @@ Window {
                                 Accessible.name: "日程协助说明"
                             }
                             QuietButton {
+                                objectName: "connectorCalendarAssistButton"
                                 text: Boolean(root.connectorAssistResult.busy)
                                       && root.pendingAssistProvider === "calendar" ? "协助中…" : "协助"
-                                enabled: root.mayAssist && calendarAssistInstruction.text.trim() !== ""
+                                enabled: root.canAssistItem(root.selectedCalendarItem) && calendarAssistInstruction.text.trim() !== ""
                                          && !(Boolean(root.connectorAssistResult.busy)
                                               && root.pendingAssistProvider === "calendar")
                                 onClicked: root.requestAssist("calendar", root.selectedCalendarId,
@@ -1288,7 +1530,17 @@ Window {
                             }
                         }
 
-                        TextArea {
+                        Label {
+                            objectName: "connectorCalendarAssistExplanation"
+                            Layout.fillWidth: true
+                            text: root.assistExplanation
+                            color: root.mutedInk
+                            font.pixelSize: 13
+                            lineHeight: 1.35
+                            wrapMode: Text.WordWrap
+                        }
+
+                        NoteField {
                             visible: root.calendarAssistSuggestion !== ""
                             Layout.fillWidth: true
                             implicitHeight: Math.min(150, Math.max(72, contentHeight + 20))
@@ -1297,7 +1549,7 @@ Window {
                             selectByMouse: true
                             wrapMode: TextEdit.Wrap
                             color: root.ink
-                            font.pixelSize: 11
+                            font.pixelSize: 13
                             Accessible.name: "日程协助建议"
                         }
 
@@ -1307,7 +1559,7 @@ Window {
                                 Layout.fillWidth: true
                                 text: root.mayConfirmExecute
                                       ? "请核对变更；未确认前不会写入 Calendar。"
-                                      : "当前策略不是 confirm-execute，不能生成更新提案；未确认绝不写入。"
+                                      : "需要在“连接与隐私”中开启“确认执行”并完成授权。"
                                 color: root.mayConfirmExecute ? root.mutedInk : root.cord
                                 font.pixelSize: 10
                                 wrapMode: Text.WordWrap
@@ -1323,15 +1575,11 @@ Window {
                     }
 
                     PaperCard {
-                        visible: root.provider === "calendar" && root.selectedCalendarId === ""
-                        heading: "修改已有日程"
-                        caption: "请在“工作与共鸣”的近期日程中选择“准备修改”。选择只会打开草稿，不会写入 Calendar。"
-                    }
-
-                    PaperCard {
-                        visible: root.provider === "slack" && root.selectedSlackId !== ""
+                        objectName: "connectorSlackItemCard"
+                        visible: !root.settingsPage && !root.providerHasProposal && !root.choosingItem
+                                 && root.provider === "slack" && root.selectedSlackId !== ""
                         heading: "准备回复所选 Slack 信笺"
-                        caption: "正文可在这里编辑。生成预览不会发送；只有核对最终正文并手动确认后才会回复原频道、私信或线程。协助拟稿还需将本地留存设为可搜索摘要或扩展缓存。"
+                        caption: "回复原频道、私信或线程。先准备正文，最终确认后才发送。"
 
                         Label {
                             Layout.fillWidth: true
@@ -1341,7 +1589,7 @@ Window {
                             elide: Text.ElideRight
                         }
 
-                        TextArea {
+                        NoteField {
                             Layout.fillWidth: true
                             implicitHeight: Math.min(130, Math.max(64, contentHeight + 18))
                             text: String(root.selectedSlackItem.text || root.selectedSlackItem.summary
@@ -1350,41 +1598,54 @@ Window {
                             selectByMouse: true
                             wrapMode: TextEdit.Wrap
                             color: root.mutedInk
-                            font.pixelSize: 11
+                            font.pixelSize: 13
                             Accessible.name: "所选 Slack 信笺正文"
                         }
 
                         FieldLabel { text: "回复正文" }
-                        TextArea {
+                        NoteField {
                             id: slackReplyText
+                            objectName: "connectorSlackReplyText"
                             Layout.fillWidth: true
                             implicitHeight: Math.min(190, Math.max(90, contentHeight + 20))
                             placeholderText: "输入最终回复正文"
                             selectByMouse: true
                             wrapMode: TextEdit.Wrap
                             color: root.ink
-                            font.pixelSize: 11
+                            font.pixelSize: 13
                             Accessible.name: "Slack 回复草稿正文"
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
-                            TextField {
+                            InputField {
                                 id: slackAssistInstruction
+                                objectName: "connectorSlackAssistInstruction"
                                 Layout.fillWidth: true
                                 placeholderText: "可选：说明希望怎样拟稿（不会自动发送）"
                                 selectByMouse: true
                                 Accessible.name: "Slack 回复协助说明"
                             }
                             QuietButton {
+                                objectName: "connectorSlackAssistButton"
                                 text: Boolean(root.connectorAssistResult.busy)
                                       && root.pendingAssistProvider === "slack" ? "协助中…" : "协助拟稿"
-                                enabled: root.mayAssist && slackAssistInstruction.text.trim() !== ""
+                                enabled: root.canAssistItem(root.selectedSlackItem) && slackAssistInstruction.text.trim() !== ""
                                          && !(Boolean(root.connectorAssistResult.busy)
                                               && root.pendingAssistProvider === "slack")
                                 onClicked: root.requestAssist("slack", root.selectedSlackId,
                                                               slackAssistInstruction.text)
                             }
+                        }
+
+                        Label {
+                            objectName: "connectorSlackAssistExplanation"
+                            Layout.fillWidth: true
+                            text: root.assistExplanation
+                            color: root.mutedInk
+                            font.pixelSize: 13
+                            lineHeight: 1.35
+                            wrapMode: Text.WordWrap
                         }
 
                         RowLayout {
@@ -1393,12 +1654,13 @@ Window {
                                 Layout.fillWidth: true
                                 text: root.mayConfirmExecute
                                       ? "生成后仍需核对最终正文并确认；未确认不会发送。"
-                                      : "当前策略不是 confirm-execute，不能生成发送提案；未确认绝不发送。"
+                                      : "需要在“连接与隐私”中开启“确认执行”并完成授权。"
                                 color: root.mayConfirmExecute ? root.mutedInk : root.cord
                                 font.pixelSize: 10
                                 wrapMode: Text.WordWrap
                             }
                             QuietButton {
+                                objectName: "connectorSlackProposeButton"
                                 text: "生成回复预览"
                                 accent: true
                                 enabled: root.mayConfirmExecute && slackReplyText.text.trim() !== ""
@@ -1408,17 +1670,13 @@ Window {
                     }
 
                     PaperCard {
-                        visible: root.provider === "slack" && root.selectedSlackId === ""
-                        heading: "回复 Slack 信笺"
-                        caption: "请在“工作与共鸣”的单条 Slack 信笺上选择“回复”。选择只会打开草稿，未确认不会发送。"
-                    }
-
-                    PaperCard {
-                        visible: root.providerHasProposal
+                        id: proposalCard
+                        objectName: "connectorProposalCard"
+                        visible: !root.settingsPage && root.providerHasProposal
                         heading: "最终操作预览"
                         caption: "下方内容在确认后才会提交。关闭窗口、拒绝或让提案过期都不会写入日历或发送 Slack 消息。"
 
-                        TextArea {
+                        NoteField {
                             Layout.fillWidth: true
                             implicitHeight: Math.min(270, Math.max(130, contentHeight + 24))
                             text: root.proposalText()
@@ -1427,7 +1685,7 @@ Window {
                             wrapMode: TextEdit.Wrap
                             color: root.ink
                             font.family: "Consolas"
-                            font.pixelSize: 11
+                            font.pixelSize: 13
                             Accessible.name: "连接器操作最终预览"
                         }
 
@@ -1436,7 +1694,7 @@ Window {
                             text: "可编辑的最终回复正文"
                         }
 
-                        TextArea {
+                        NoteField {
                             id: slackFinalText
                             visible: root.provider === "slack"
                             Layout.fillWidth: true
@@ -1446,12 +1704,15 @@ Window {
                             selectByMouse: true
                             wrapMode: TextEdit.Wrap
                             color: root.ink
-                            font.pixelSize: 11
+                            font.pixelSize: 13
                             Accessible.name: "Slack 最终回复正文"
                         }
 
-                        RowLayout {
+                        GridLayout {
                             Layout.fillWidth: true
+                            columns: root.narrow ? 1 : 4
+                            columnSpacing: 8
+                            rowSpacing: 8
                             QuietButton {
                                 visible: root.provider === "slack"
                                 text: "更新最终预览"
@@ -1463,11 +1724,13 @@ Window {
                             }
                             Item { Layout.fillWidth: true }
                             QuietButton {
+                                objectName: "connectorRejectProposalButton"
                                 text: "拒绝"
                                 enabled: !root.proposalExecuting
                                 onClicked: root.resolveProposal(false)
                             }
                             QuietButton {
+                                objectName: "connectorConfirmProposalButton"
                                 text: root.provider === "calendar"
                                       ? (root.calendarCreateProposal ? "确认并创建日程" : "确认并修改日程")
                                       : "确认并发送回复"
@@ -1502,40 +1765,49 @@ Window {
                 }
             }
 
-            RowLayout {
+            GridLayout {
+                visible: root.settingsPage
                 Layout.fillWidth: true
-                spacing: 9
+                columns: root.narrow ? 2 : 3
+                columnSpacing: 9
+                rowSpacing: 8
 
                 Label {
                     Layout.fillWidth: true
-                    text: "危险边界：这些操作只由你在本窗口发起，不会提供给模型作为工具。"
+                    Layout.columnSpan: root.narrow ? 2 : 1
+                    text: "清除或断开前会再次确认，不会删除外部日程和消息。"
                     color: root.mutedInk
                     font.pixelSize: 10
                     wrapMode: Text.WordWrap
                 }
 
                 QuietButton {
+                    objectName: "connectorClearContentButton"
                     text: "清除本地内容"
                     onClicked: clearContentDialog.open()
                 }
 
                 QuietButton {
+                    objectName: "connectorDisconnectButton"
                     text: "断开账号"
                     onClicked: disconnectDialog.open()
                 }
             }
 
-            RowLayout {
+            GridLayout {
+                visible: root.settingsPage
                 Layout.fillWidth: true
-                spacing: 9
+                columns: root.narrow ? 2 : 3
+                columnSpacing: 9
+                rowSpacing: 8
 
                 Label {
                     Layout.fillWidth: true
-                    text: root.provider === "calendar"
-                          ? "OAuth Token 仅存 Windows Credential Manager"
-                          : "xapp 与 OAuth Token 仅存 Windows Credential Manager"
+                    Layout.columnSpan: root.narrow ? 2 : 1
+                    text: "令牌只存入 Windows 凭据管理器。"
                     color: root.mutedInk
                     font.pixelSize: 10
+                    wrapMode: Text.WordWrap
                 }
 
                 QuietButton {
@@ -1546,7 +1818,7 @@ Window {
 
                 QuietButton {
                     objectName: "connectorBeginOAuthButton"
-                    text: root.provider === "calendar" ? "在浏览器中连接 Google" : "在浏览器中连接 Slack"
+                    text: root.currentInfo.connected ? "在浏览器中重新授权" : "在浏览器中连接"
                     accent: true
                     onClicked: root.beginOAuth()
                 }
@@ -1554,8 +1826,9 @@ Window {
         }
     }
 
-    Dialog {
+    PaperDialog {
         id: clearContentDialog
+        objectName: "connectorClearContentDialog"
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
         width: Math.min(520, root.width - 48)
@@ -1564,13 +1837,16 @@ Window {
         closePolicy: Popup.CloseOnEscape
         title: "再次确认：清除本地内容"
         standardButtons: Dialog.Cancel | Dialog.Ok
-
-        contentItem: Label {
-            text: "将删除当前 " + (root.provider === "calendar" ? "Calendar" : "Slack")
-                  + " 连接器在本机保存的正文、摘要与索引。不会删除外部服务中的内容，也不会断开账号。此本地清除无法撤销，是否继续？"
-            color: root.ink
-            font.pixelSize: 12
-            wrapMode: Text.WordWrap
+        contentWidth: width - leftPadding - rightPadding
+        contentItem: Column {
+            Label {
+                width: parent.width
+                text: "将删除当前 " + (root.provider === "calendar" ? "Calendar" : "Slack")
+                      + " 连接器在本机保存的正文、摘要与索引。不会删除外部服务中的内容，也不会断开账号。此本地清除无法撤销，是否继续？"
+                color: root.ink
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
         }
 
         onOpened: {
@@ -1592,8 +1868,9 @@ Window {
         onClosed: Qt.callLater(function() { root.requestActivate() })
     }
 
-    Dialog {
+    PaperDialog {
         id: disconnectDialog
+        objectName: "connectorDisconnectDialog"
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
         width: Math.min(540, root.width - 48)
@@ -1602,14 +1879,17 @@ Window {
         closePolicy: Popup.CloseOnEscape
         title: "再次确认：断开账号"
         standardButtons: Dialog.Cancel | Dialog.Ok
-
-        contentItem: Label {
-            text: root.provider === "slack"
-                  ? "将删除 Windows Credential Manager 中的 Slack OAuth token 并停止 Socket Mode。可保留 custom-app 配置，之后重新授权即可再次连接。不会发送或删除 Slack 消息。是否继续？"
-                  : "将删除 Windows Credential Manager 中的 Google OAuth token 并停止同步。不会删除 Calendar 中的日程。之后需要重新授权才能连接，是否继续？"
-            color: root.ink
-            font.pixelSize: 12
-            wrapMode: Text.WordWrap
+        contentWidth: width - leftPadding - rightPadding
+        contentItem: Column {
+            Label {
+                width: parent.width
+                text: root.provider === "slack"
+                      ? "将移除 Slack 凭据、清除本地留存并停止接收。custom-app 配置保留，之后需要重新连接。不会发送或删除 Slack 消息。是否继续？"
+                      : "将移除 Google 凭据、清除本地留存并停止同步。不会删除 Calendar 中的日程。之后需要重新授权才能连接，是否继续？"
+                color: root.ink
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
         }
 
         onOpened: {

@@ -2,17 +2,22 @@ param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Programs\Lilies in the box'),
     [switch]$StartAtLogin,
     [switch]$NoShortcuts,
-    [switch]$NoLaunch
+    [switch]$NoLaunch,
+    [string]$BuildId,
+    [string]$RecoverTransactionId,
+    [switch]$RollbackCommitted
 )
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$SourceRoot = Join-Path $ProjectRoot 'dist\LiliesInTheBox'
-$SourceExe = Join-Path $SourceRoot 'LiliesInTheBox.exe'
-$ExpectedFileVersion = '0.3.55.0'
-$ExpectedProductVersion = '0.3.55'
+$ExpectedFileVersion = '0.3.57.0'
+$ExpectedProductVersion = '0.3.57'
 $AllowedBase = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'Programs'))
 $Target = [IO.Path]::GetFullPath($InstallRoot)
+. (Join-Path $PSScriptRoot 'install_transaction.ps1')
+. (Join-Path $PSScriptRoot 'install_startup.ps1')
+$JournalRoot = 'F:\code\Lilies in the box\private-data\install-transactions'
+$TransactionParameters = @{ Target = $Target; AllowedBase = $AllowedBase; JournalRoot = $JournalRoot }
 
 function Assert-SafeChildPath([string]$Candidate, [string]$Base) {
     $prefix = $Base.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
@@ -35,121 +40,107 @@ function Assert-ReleaseExecutable([string]$Path) {
 }
 
 Assert-SafeChildPath $Target $AllowedBase
-# This preflight is deliberately before process shutdown, deletion, copying,
+# Recovery never needs a new build and never starts or terminates a process.
+# In particular, do not force-stop a user's app merely to roll files back.
+if ($RecoverTransactionId) {
+    $recoveryPaths = Get-LiliesTransactionPaths $Target $AllowedBase $JournalRoot $RecoverTransactionId
+    $recoveryExecutables = @($recoveryPaths.target, $recoveryPaths.stage, $recoveryPaths.previous, $recoveryPaths.failed) |
+        ForEach-Object { Join-Path $_ 'LiliesInTheBox.exe' }
+    Assert-LiliesImagesQuiescent $recoveryExecutables
+    Restore-LiliesInstallTransaction @TransactionParameters -TransactionId $RecoverTransactionId -RollbackCommitted:$RollbackCommitted `
+        -BeforeRestore { Assert-LiliesImagesQuiescent $recoveryExecutables }
+    return
+}
+if ($RollbackCommitted) { throw 'RollbackCommitted requires an exact RecoverTransactionId.' }
+if ($BuildId -cnotmatch '^v0357-[A-Za-z0-9-]{1,80}$') {
+    throw 'An exact side-by-side v0.3.57 BuildId is required; legacy dist directories are not install candidates.'
+}
+$SourceRoot = Get-LiliesPhysicalPath (Join-Path $ProjectRoot ('dist\' + $BuildId + '\LiliesInTheBox'))
+$SourceExe = Join-Path $SourceRoot 'LiliesInTheBox.exe'
+$VerifierPython = Get-LiliesPhysicalPath (Join-Path $ProjectRoot '.venv\Scripts\python.exe')
+if (-not (Test-Path -LiteralPath $VerifierPython -PathType Leaf)) {
+    throw 'The candidate verification environment is missing; no installation was attempted.'
+}
+# Read-only: compare the fresh source, compiled modules, resources and entire
+# package against this exact build's original receipt. No app import/start,
+# user database, generated report or Python bytecode cache is needed.
+$identityJson = & $VerifierPython -B (Join-Path $PSScriptRoot 'verify_candidate_bundle.py') `
+    check-candidate --root $ProjectRoot --build-id $BuildId
+if ($LASTEXITCODE -ne 0) { throw 'Candidate identity verification failed; existing installations are unchanged.' }
+$candidateIdentity = ($identityJson -join "`n") | ConvertFrom-Json
+if ($candidateIdentity.passed -ne $true -or $candidateIdentity.buildId -cne $BuildId -or
+    $candidateIdentity.package -ine $SourceRoot) { throw 'Candidate verifier returned mismatched identity.' }
+# This preflight is deliberately before process shutdown, staging, copying,
 # shortcuts and manifest writes.  An old or unversioned EXE must never be
-# relabelled as v0.3.55 by a successful-looking install manifest.
+# relabelled as v0.3.57 by a successful-looking install manifest.
 Assert-ReleaseExecutable $SourceExe
 
-$TargetExe = Join-Path $Target 'LiliesInTheBox.exe'
-if (Test-Path -LiteralPath $TargetExe -PathType Leaf) {
-    # CIM process enumeration is commonly denied to a normal user on managed
-    # Windows installations.  The personal build has a fixed executable name,
-    # so use the non-elevated process API and compare resolved paths instead.
-    $runningBeforeUpdate = @(Get-Process -Name 'LiliesInTheBox' -ErrorAction SilentlyContinue |
-        Where-Object {
-            try { [IO.Path]::GetFullPath($_.Path) -eq [IO.Path]::GetFullPath($TargetExe) }
-            catch { $false }
-        })
-    if ($NoLaunch -and $runningBeforeUpdate.Count -gt 0) {
-        throw 'Lilies is currently running. No-launch update was cancelled so the desktop companion and WPS selection monitor stay available.'
-    }
-    # A windowed executable invoked with `&` may return control before its
-    # process has initialized.  That allowed the old restore process to appear
-    # after enumeration and keep DLLs locked while the target directory was
-    # being replaced.  Run the already-version-checked source copy, wait for
-    # its exact PID, and only then terminate processes from the installed path.
-    $restoreProcess = Start-Process -FilePath $SourceExe `
-        -ArgumentList '--restore' -WindowStyle Hidden -PassThru
-    if (-not $restoreProcess.WaitForExit(20000)) {
-        Stop-Process -Id $restoreProcess.Id -Force -ErrorAction SilentlyContinue
-        throw 'Lilies shell restore timed out before installation.'
-    }
-    $restoreProcess.Refresh()
-    if ($restoreProcess.ExitCode -ne 0) {
-        throw "Lilies shell restore failed with exit code $($restoreProcess.ExitCode)."
-    }
-    $installedProcesses = @(Get-Process -Name 'LiliesInTheBox' -ErrorAction SilentlyContinue |
-        Where-Object {
-            try { [IO.Path]::GetFullPath($_.Path) -eq [IO.Path]::GetFullPath($TargetExe) }
-            catch { $false }
-        } |
-        ForEach-Object {
-            # The restore-only process can finish between enumeration and
-            # termination.  Treat that normal race as already stopped.
-            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-            $_
-        })
-    foreach ($installedProcess in $installedProcesses) {
-        Wait-Process -Id $installedProcess.Id -Timeout 10 -ErrorAction SilentlyContinue
-    }
-}
-if (Test-Path -LiteralPath $Target) {
-    Assert-SafeChildPath ([IO.Path]::GetFullPath($Target)) $AllowedBase
-    $removed = $false
-    for ($attempt = 1; $attempt -le 5; $attempt++) {
-        try {
-            Remove-Item -LiteralPath $Target -Recurse -Force
-            $removed = $true
-            break
-        } catch {
-            if ($attempt -eq 5) { throw }
-            Start-Sleep -Milliseconds 500
-        }
-    }
-    if (-not $removed) { throw "Could not replace install target: $Target" }
-}
-New-Item -ItemType Directory -Path $Target -Force | Out-Null
-Copy-Item -Path (Join-Path $SourceRoot '*') -Destination $Target -Recurse -Force
+# Exact package identity alone is not native or installer acceptance. The
+# remaining release gate must not be bypassed by a receipt's releaseReady
+# boolean or by a Force switch. Native startup/health acceptance is pending.
+throw 'v0.3.57 installation is not released: exact-build promotion and native acceptance are still required. Existing installations are unchanged. Explicit transaction recovery remains available.'
 
+$TargetExe = Join-Path $Target 'LiliesInTheBox.exe'
+# This check is read-only and fails closed on inaccessible process metadata.
+# Repeat it under the transaction lock before any shutdown or file activation.
+if ($NoLaunch) { Assert-LiliesImagesQuiescent @($TargetExe) }
+$shortcutPlan = $null
+if (-not $NoShortcuts) {
+    $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+    # Generate link bytes only in F-drive staging. Original Start Menu and
+    # Startup links are snapshotted before any program is stopped or swapped.
+    # An existing startup preference is preserved, never silently enabled.
+    $shortcutStaging = Join-Path $JournalRoot ('shortcut-payloads\' + [guid]::NewGuid().ToString('N'))
+    $shortcutPlan = New-LiliesManagedShortcutPlan $Target $startMenu $shortcutStaging ([bool]$StartAtLogin)
+}
 $manifest = [ordered]@{
     id = 'lilies-in-the-box'
-    version = '0.3.55'
+    version = '0.3.57'
     installedAt = [DateTimeOffset]::UtcNow.ToString('o')
     source = $SourceRoot
     executable = $TargetExe
+    buildId = $BuildId
+    sourceDigest = $candidateIdentity.sourceDigest
+    executableSha256 = $candidateIdentity.executableSha256
+    launchRequested = [bool](-not $NoLaunch)
 }
-$manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Target 'install-manifest.json') -Encoding UTF8
+# All copying and full-tree checks finish while the previous program still
+# exists. Metadata is included in the verified payload, not written afterward.
+$transaction = New-LiliesInstallTransaction @TransactionParameters -SourceRoot $SourceRoot `
+    -InstallManifestJson ($manifest | ConvertTo-Json -Compress) `
+    -ShortcutPlan $shortcutPlan `
+    -ValidatePayload { param($directory); Assert-ReleaseExecutable (Join-Path $directory 'LiliesInTheBox.exe') }
+Write-Output "Prepared transaction $($transaction.transactionId). Recovery journal: $($transaction.journal)"
+$RestoreExe = Join-Path $transaction.stage 'LiliesInTheBox.exe'
 
-if (-not $NoShortcuts) {
-    $shell = New-Object -ComObject WScript.Shell
-    $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
-    $shortcutPath = Join-Path $startMenu 'Lilies in the box.lnk'
-    $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = $TargetExe
-    # The primary entry respects the shell mode already selected by the user.
-    # Assign an empty value explicitly so upgrading an older shortcut clears
-    # the legacy forced-compact argument.
-    $shortcut.Arguments = ''
-    $shortcut.WorkingDirectory = $Target
-    $shortcut.Description = 'Lilies in the box'
-    $shortcut.Save()
-
-    $desktopShortcutPath = Join-Path $startMenu 'Lilies in the box - Desktop.lnk'
-    $desktopShortcut = $shell.CreateShortcut($desktopShortcutPath)
-    $desktopShortcut.TargetPath = $TargetExe
-    $desktopShortcut.Arguments = '--visual'
-    $desktopShortcut.WorkingDirectory = $Target
-    $desktopShortcut.Description = 'Open the full Lilies desktop explicitly'
-    $desktopShortcut.Save()
-
-    $petShortcutPath = Join-Path $startMenu 'Lilies in the box - Pet only.lnk'
-    $petShortcut = $shell.CreateShortcut($petShortcutPath)
-    $petShortcut.TargetPath = $TargetExe
-    $petShortcut.Arguments = '--compact'
-    $petShortcut.WorkingDirectory = $Target
-    $petShortcut.Description = '仅启动 Lilies 桌宠，不展开完整桌面'
-    $petShortcut.Save()
-    # Startup follows the user's persisted mode; it must not force the
-    # optional compact-only entry.  Existing v0.3.3 startup links are upgraded
-    # even when this install was not passed -StartAtLogin, otherwise their
-    # legacy --compact argument would return on the next sign-in.
-    $startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\Lilies in the box.lnk'
-    if ($StartAtLogin -or (Test-Path -LiteralPath $startup -PathType Leaf)) {
-        Copy-Item -LiteralPath $shortcutPath -Destination $startup -Force
-    }
+# One transaction covers the program and optional four fixed shortcuts.
+# On failure it restores their prior bytes together, preserving conflicts and
+# incomplete new files for inspection. No independent post-commit link writes.
+$launch = New-LiliesLaunchState $TargetExe
+try {
+    $installed = Complete-LiliesInstallTransaction @TransactionParameters -TransactionId $transaction.transactionId `
+        -BeforeActivate {
+            param($paths)
+            Stop-LiliesForUpgrade -TargetExecutable $TargetExe -RecoveryExecutable $RestoreExe -NoLaunch:$NoLaunch `
+                -ValidateRecovery {
+                    $preparedManifest = Read-LiliesInstallManifest $paths
+                    Assert-LiliesTreeMatches $paths.stage $preparedManifest.newSnapshot
+                }
+        } `
+        -AfterActivate {
+            if (-not $NoLaunch) {
+                Start-LiliesOwnedChild $launch
+                Assert-LiliesStartupHealth $launch $VerifierPython (Join-Path $PSScriptRoot 'verify_install_health.py')
+                Write-LiliesExclusiveJson (Join-Path $transaction.journal 'startup-health.json') $launch.health
+            }
+        } -BeforeRollback {
+            Restore-LiliesAfterStartupFailure $launch
+            $paths = Get-LiliesTransactionPaths $Target $AllowedBase $JournalRoot $transaction.transactionId
+            $executables = @($paths.target, $paths.stage, $paths.previous, $paths.failed) |
+                ForEach-Object { Join-Path $_ 'LiliesInTheBox.exe' }
+            Assert-LiliesImagesQuiescent $executables
+        }
+} finally {
+    Close-LiliesLaunchHandle $launch
 }
-
-if (-not $NoLaunch) {
-    Start-Process -FilePath $TargetExe
-}
-Write-Output "Installed Lilies in the box to $Target"
+Write-Output "Installed Lilies in the box to $Target. Previous program files retained at $($installed.previous)."

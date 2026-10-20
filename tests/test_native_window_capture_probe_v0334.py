@@ -141,10 +141,10 @@ def test_native_capture_probe_has_static_privacy_guards() -> None:
     cross_process_backend = inspect.getsource(capture_window_image_via_print_window)
     assert "PrintWindow(" in cross_process_backend
     assert "PW_CLIENTONLY" in cross_process_backend
-    assert "PW_RENDERFULLCONTENT" not in cross_process_backend
+    assert "PW_RENDERFULLCONTENT" in cross_process_backend
     assert cross_process_backend.count("validate_target()") == 3
     assert "expected_process_id" in cross_process_backend
     assert "IsWindowVisible(" in cross_process_backend
     assert "12_000_000" in cross_process_backend
-    assert "BitBlt" not in cross_process_backend
+    assert "BitBlt(" not in cross_process_backend
     assert "QScreen" not in cross_process_backend

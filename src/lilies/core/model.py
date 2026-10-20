@@ -339,6 +339,7 @@ class ChatService(QObject):
         self.database.set_setting("active_conversation", self.conversation_id)
         self._cancel = threading.Event()
         self._working = False
+        self._retry_state: dict[str, Any] | None = None
         self._process: subprocess.Popen[str] | None = None
         self._worker_log = None
         self._pending_lock = threading.Lock()
@@ -369,6 +370,38 @@ class ChatService(QObject):
         self.conversation_id = self.database.ensure_conversation(None)
         self.database.set_setting("active_conversation", self.conversation_id)
         return self.conversation_id
+
+    def open_conversation(self, conversation_id: str, message_id: str = "") -> dict[str, Any]:
+        if self._working:
+            raise RuntimeError("先停止当前回答，再打开旧对话")
+        page = self.database.conversation_page(conversation_id, anchor=message_id)
+        self.conversation_id = conversation_id
+        self.database.set_setting("active_conversation", conversation_id)
+        return page
+
+    def retry_last(self) -> bool:
+        """Regenerate an answer, not the user's command or its side effects."""
+        if self._working:
+            return False
+        messages = self.database.recent_messages(self.conversation_id, 2)
+        if not messages:
+            return False
+        answer = messages[-1] if messages[-1]["role"] == "assistant" else None
+        user = messages[-2] if answer and len(messages) == 2 else messages[-1]
+        if user["role"] != "user":
+            return False
+        if json.loads(user["metadata_json"]).get("hasImage"):
+            raise ValueError("这条消息带有未保存的图片，请重新选择图片后提问")
+        self._retry_state = {"answer": answer, "user": user}
+        self._start_generation(str(user["content"]), None)
+        return True
+
+    def _save_reply(self, text: str) -> None:
+        previous = (self._retry_state or {}).get("answer")
+        if previous:
+            self.database.replace_assistant_reply(previous["message_id"], previous["content"], text)
+        else:
+            self.database.add_message(self.conversation_id, "assistant", text)
 
     def status(self) -> dict[str, Any]:
         runtime = local_runtime()
@@ -405,14 +438,14 @@ class ChatService(QObject):
             self.installProgress.emit("ChatGPT 订阅暂不可用；正在使用电脑里已有的 Qwen2.5 0.5B 备用模型")
         self.statusChanged.emit(self.status())
 
-    def send(self, text: str, image_path: str | None = None) -> None:
+    def send(self, text: str, image_path: str | None = None) -> bool:
         text = text.strip()
         if not text or self._working:
-            return
+            return False
         selected_image = str(image_path or "").strip()
         if selected_image and not Path(selected_image).is_file():
             self.error.emit("选择的图片已经不存在")
-            return
+            return False
         self.database.add_message(
             self.conversation_id,
             "user",
@@ -421,6 +454,11 @@ class ChatService(QObject):
         )
         if self._propose_memory_candidate(text):
             self.memoryCandidateCreated.emit()
+        self._retry_state = None
+        self._start_generation(text, selected_image or None)
+        return True
+
+    def _start_generation(self, text: str, selected_image: str | None) -> None:
         self._cancel.clear()
         self._cancel_idle_unload()
         self._working = True
@@ -503,11 +541,20 @@ class ChatService(QObject):
                 + directory
                 + "\n目录只说明可查阅范围；需要具体旧事时调用只读 memory.recall。"
             )
+        history_rows = self.database.recent_messages(self.conversation_id, 11)
+        previous = (self._retry_state or {}).get("answer")
+        if previous:
+            history_rows = [value for value in history_rows if value["message_id"] != previous["message_id"]]
         history = [
             {"role": value["role"], "content": value["content"]}
-            for value in self.database.recent_messages(self.conversation_id, 10)[:-1]
+            for value in history_rows[-10:][:-1]
             if value["role"] in {"user", "assistant"}
         ]
+        if self._retry_state is not None:
+            system += (
+                "\n本轮是重新回答，只重新组织文字，不再次执行任何组件动作。"
+                "不能宣称本轮打开了应用、修改任务或完成其他操作；需要重新操作时请用户单独提出。"
+            )
         content = current_text
         if tool_context:
             content += "\n\n盒子组件已经完成的结果：" + tool_context + "。请据此简短回答，不要编造额外结果。"
@@ -685,18 +732,18 @@ class ChatService(QObject):
                     self.responseFinished.emit("")
                     return
                 self.chunk.emit(fixed_reply)
-                self.database.add_message(self.conversation_id, "assistant", fixed_reply)
+                self._save_reply(fixed_reply)
                 self.responseFinished.emit(fixed_reply)
                 return
             try:
-                tool_context = self._route_simple_tool(text, lease=lease)
+                tool_context = "" if self._retry_state is not None else self._route_simple_tool(text, lease=lease)
             except PermissionError:
                 full_reply = "好的，已取消这次操作。"
                 if not lease.commit(result={"completed": True}):
                     self.responseFinished.emit("")
                     return
                 self.chunk.emit(full_reply)
-                self.database.add_message(self.conversation_id, "assistant", full_reply)
+                self._save_reply(full_reply)
                 self.responseFinished.emit(full_reply)
                 return
             if tool_context:
@@ -705,7 +752,7 @@ class ChatService(QObject):
                     self.responseFinished.emit("")
                     return
                 self.chunk.emit(full_reply)
-                self.database.add_message(self.conversation_id, "assistant", full_reply)
+                self._save_reply(full_reply)
                 self.responseFinished.emit(full_reply)
                 return
 
@@ -737,7 +784,7 @@ class ChatService(QObject):
                                 bounded_context,
                             )
                         component_tools = self._component_tools
-                        if namespace == "box" and component_tools is not None:
+                        if namespace == "box" and component_tools is not None and self._retry_state is None:
                             return component_tools.handle_dynamic_tool(
                                 tool_name,
                                 arguments,
@@ -766,7 +813,7 @@ class ChatService(QObject):
                     parameter_names = {value.name for value in parameters}
                     if accepts_keywords or "dynamic_tools" in parameter_names:
                         dynamic_tools = [self.memory.dynamic_tool_spec()]
-                        if self._component_tools is not None:
+                        if self._component_tools is not None and self._retry_state is None:
                             component_spec = self._component_tools.dynamic_tool_spec()
                             if component_spec is not None:
                                 dynamic_tools.append(component_spec)
@@ -792,7 +839,7 @@ class ChatService(QObject):
                         result={"completed": bool(full_reply)}
                     )
                     if committed and full_reply:
-                        self.database.add_message(self.conversation_id, "assistant", full_reply)
+                        self._save_reply(full_reply)
                     if committed:
                         self._last_metrics = {
                             "provider": "codex-subscription",
@@ -902,7 +949,7 @@ class ChatService(QObject):
                 self.chunk.emit(safe_prefix)
             committed = lease.commit(result={"completed": bool(full_reply)})
             if committed and full_reply:
-                self.database.add_message(self.conversation_id, "assistant", full_reply)
+                self._save_reply(full_reply)
             if committed:
                 self._last_metrics = pending_metrics
             self.responseFinished.emit(full_reply if committed else "")
@@ -915,6 +962,7 @@ class ChatService(QObject):
             if broker_task_id and self._broker_task_id == broker_task_id:
                 self._broker_task_id = ""
             self.memory.clear_turn_budget(logical_turn_id)
+            self._retry_state = None
             self._working = False
             self._schedule_idle_unload()
 

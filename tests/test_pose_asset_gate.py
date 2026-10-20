@@ -139,8 +139,9 @@ def test_first_encounter_formal_pose_assets_pass_the_gate() -> None:
         optional = report["assets"][key]
         assert optional["passed"] is True
         assert optional["optional"] is True
-        assert optional["validated"] is False
-        assert optional["status"] == "dormant-missing"
+        assert optional["validated"] is True
+        assert optional["status"] == "verified"
+        assert optional["sha256"] == optional["declaredSha256"]
     legacy_keys = {
         "poseEdgePeek",
         "poseListeningLive",

@@ -16,6 +16,7 @@ import scripts.verify_compact_resources as compact_resource_verifier
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_NAMED_WINDOWS = [
+    "boxSearchWindow",
     "boxWorldSceneWindow",
     "chatWindow",
     "companionBubbleWindow",
@@ -24,6 +25,7 @@ EXPECTED_NAMED_WINDOWS = [
     "petWindow",
     "selectionBubble",
     "selectionQuestion",
+    "sharedWorldWindow",
     "v03AllWindowsDrawer",
     "v03ConnectorSetup",
     "v03FocusTimerAura",
@@ -77,11 +79,11 @@ def test_window_resource_lifecycle_calls_configurator_and_controls_passed(
 
     assert calls == [root]
     assert lifecycle["passed"] is True
-    assert lifecycle["windowCount"] == lifecycle["expectedWindowCount"] == 16
+    assert lifecycle["windowCount"] == lifecycle["expectedWindowCount"] == 18
     assert lifecycle["namedWindows"] == lifecycle["expectedNamedWindows"]
     assert lifecycle["namedWindows"] == EXPECTED_NAMED_WINDOWS
     assert lifecycle["persistentHintsDisabled"] is True
-    assert len(lifecycle["persistentHints"]) == 16
+    assert len(lifecycle["persistentHints"]) == 18
     assert all(
         value["persistentGraphics"] is False
         and value["persistentSceneGraph"] is False
@@ -135,11 +137,11 @@ def test_compact_unloads_desktop_scene_and_multimedia() -> None:
     assert report["visualSurfaceRecovery"] is True
     lifecycle = report["windowResourceLifecycle"]
     assert lifecycle["passed"] is True
-    assert lifecycle["windowCount"] == lifecycle["expectedWindowCount"] == 16
+    assert lifecycle["windowCount"] == lifecycle["expectedWindowCount"] == 18
     assert lifecycle["namedWindows"] == lifecycle["expectedNamedWindows"]
     assert lifecycle["namedWindows"] == EXPECTED_NAMED_WINDOWS
     assert lifecycle["persistentHintsDisabled"] is True
-    assert len(lifecycle["persistentHints"]) == 16
+    assert len(lifecycle["persistentHints"]) == 18
     assert all(
         value["persistentGraphics"] is False
         and value["persistentSceneGraph"] is False

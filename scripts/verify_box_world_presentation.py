@@ -282,7 +282,9 @@ def main() -> int:
     try:
         # Keep the SQLite/socket directory alive until the backend and Qt
         # objects have released every handle, then let the context remove it.
-        with tempfile.TemporaryDirectory(prefix="lilies-world-present-") as data_dir:
+        staging = PROJECT_ROOT / "artifacts" / "world-test-data"
+        staging.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="lilies-world-present-", dir=staging) as data_dir:
             os.environ["LILIES_DATA_DIR"] = data_dir
             try:
                 QQuickWindow.setDefaultAlphaBuffer(True)

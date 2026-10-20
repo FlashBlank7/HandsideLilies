@@ -41,7 +41,10 @@ def test_login_shell_requires_health_path_and_literal_confirmation(tmp_path, mon
 def test_watchdog_restores_unclean_exit_but_not_clean_exit(tmp_path, monkeypatch):
     restored: list[object] = []
     monkeypatch.setattr("lilies.watchdog._alive", lambda _pid: False)
-    monkeypatch.setattr("lilies.watchdog.restore_from_backup", restored.append)
+    def restore(path, **_kwargs):
+        restored.append(path)
+        return {"ok": True}
+    monkeypatch.setattr("lilies.watchdog.restore_from_backup", restore)
     backup = tmp_path / "backup.json"
     backup.write_text("{}", "utf-8")
     assert watch(12345, backup, tmp_path / "missing.clean") == 0
@@ -67,7 +70,8 @@ def test_recovery_monitor_reaps_and_rearms_an_exited_child(tmp_path, monkeypatch
     monkeypatch.setattr(shell.EmergencyHotkey, "start", lambda _self: None)
     database = Database(tmp_path / "test.db")
     controller = shell.ShellController(database, tmp_path, smoke=False)
-    controller.backup_path.write_text("{}", "utf-8")
+    controller.backup_path.write_text(json.dumps({"taskbarVisible": True, "desktopIconsVisible": True,
+                                                "loginShell": "explorer.exe"}), "utf-8")
     monkeypatch.setattr(controller, "restore_visual_state", lambda: None)
     clock = [100.0]
     spawned: list[_FakeWatchdog] = []
@@ -103,7 +107,8 @@ def test_compact_shell_does_not_arm_recovery_monitor_from_periodic_maintenance(
 ):
     monkeypatch.setattr(shell.EmergencyHotkey, "start", lambda _self: None)
     controller = shell.ShellController(Database(tmp_path / "test.db"), tmp_path, smoke=False)
-    controller.backup_path.write_text("{}", "utf-8")
+    controller.backup_path.write_text(json.dumps({"taskbarVisible": True, "desktopIconsVisible": True,
+                                                "loginShell": "explorer.exe"}), "utf-8")
     monkeypatch.setattr(controller, "restore_visual_state", lambda: None)
     controller.mode = "compact"
     spawned: list[object] = []

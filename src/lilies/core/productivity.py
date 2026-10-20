@@ -1002,6 +1002,21 @@ class TaskService:
         assert saved is not None
         return saved
 
+    def restore(self, task_id: str) -> dict[str, Any]:
+        """Unarchive only; no completion, reward or recurring instance changes."""
+        with self.database.connect() as db:
+            task = self._task(db, task_id)
+            if task is None:
+                raise KeyError(f"unknown task: {task_id}")
+            if not task["archived"]:
+                return task
+            pending = any(item["status"] == "pending" for item in task["occurrences"])
+            db.execute("UPDATE tasks SET archived=0,status=?,updated_at=? WHERE task_id=?",
+                       ("open" if pending else "completed", _now_iso(self.now), task_id))
+            result = self._task(db, task_id)
+        assert result is not None
+        return result
+
     @staticmethod
     def _task(db: sqlite3.Connection, task_id: str) -> dict[str, Any] | None:
         task = db.execute("SELECT * FROM tasks WHERE task_id=?", (str(task_id),)).fetchone()

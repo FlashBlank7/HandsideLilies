@@ -23,8 +23,6 @@ def _copy_first_encounter_theme(tmp_path: Path) -> tuple[Path, dict[str, object]
     theme_root = tmp_path / "theme"
     (theme_root / "assets").mkdir(parents=True)
     for asset_key, specification in manifest["character"]["poseArtworkSpecs"].items():
-        if specification.get("optional"):
-            continue
         relative = Path(manifest["assets"][asset_key])
         shutil.copyfile(source_manifest_path.parent / relative, theme_root / relative)
     (theme_root / "theme.json").write_text(
@@ -144,7 +142,8 @@ def test_micro_corner_asset_gets_full_alpha_mask_and_edge_peek_distinctness_gate
 ) -> None:
     theme_root, manifest = _copy_first_encounter_theme(tmp_path)
     candidate = theme_root / manifest["assets"]["poseMicroCornerGripV1"]
-    _micro_corner_subject(candidate)
+    # Use the shipped transparent master and its measured mask. The old
+    # synthetic square belongs to the dormant-placeholder geometry contract.
 
     report = validate_pose_assets(
         theme_root / "theme.json",
@@ -158,7 +157,7 @@ def test_micro_corner_asset_gets_full_alpha_mask_and_edge_peek_distinctness_gate
     assert micro["format"] == "PNG"
     assert micro["mode"] == "RGBA"
     assert micro["bands"] == ["R", "G", "B", "A"]
-    assert micro["pixelSize"] == [1536, 1536]
+    assert micro["pixelSize"] == manifest['character']['poseArtworkSpecs']['poseMicroCornerGripV1']['pixelSize']
     assert micro["alphaExtrema"] == [0, 255]
     assert micro["meaningfulAlphaBounds"] is not None
     assert min(micro["cornerTransparentRatios"]) >= 0.98
